@@ -1,0 +1,31 @@
+# simulation / synthesis build outputs
+obj_dir/
+xsim.dir/
+*.jou
+*.pb
+*.wdb
+*.log
+*.wcfg
+xelab.pb
+xvlog.pb
+
+# python cache
+__pycache__/
+*.pyc
+
+# compiled C reference/measurement tools (built from the .c beside them)
+step1-sw-parser/itch_parser
+step1-sw-parser/itch_hist
+step1-sw-parser/otable_sim
+step1-sw-parser/sym_conc
+
+# generated test vectors and real-data slices
+step1-sw-parser/test.itch
+step1-sw-parser/test.mold
+**/real*.itch
+**/real*.mold
+
+# large raw captures (see data/.gitignore); measurement .txt outputs are kept
+*.NASDAQ_ITCH50
+*.NASDAQ_ITCH50.gz
+*.progress

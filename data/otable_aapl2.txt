@@ -1,0 +1,15 @@
+== otable_sim: ../data/12302019.NASDAQ_ITCH50.gz  (268744780 msgs) ==
+peak live orders (all symbols): 26572
+
+config             cap  load%   maxset   overflow  ovf-ppm   live_pk    miss
+16b x4  raw     262144   10.1        4      24142 33919.79     26572 143905829
+16b x4  mix     262144   10.3        4        132   174.22     27105 143835212
+16b x8  raw     524288    5.2        8          3     3.77     27110 143797049
+16b x8  mix     524288    5.2        7          0     0.00     27110 143797046
+17b x4  raw     524288    5.2        4       1858  2569.05     27060 143871446
+17b x4  mix     524288    5.2        4         14    17.77     27109 143804735
+18b x4  mix    1048576    2.6        4          0     0.00     27110 143797046
+16b x2  mix     131072   20.3        2      26024 36574.04     26647 143907926
+
+note: overflow=0 means that (sets,ways,hash) never exceeds WAYS in any set.
+EXIT=0

@@ -1,0 +1,7 @@
+# raw captures — too big to commit (5-10 GB decompressed)
+*.NASDAQ_ITCH50
+*.NASDAQ_ITCH50.gz
+# transient progress logs
+*.progress
+# keep FINDINGS.md and the measurement outputs it links (hist_full.txt,
+# otable_sweep.txt, otable_aapl2.txt, sym_conc.txt) tracked.
