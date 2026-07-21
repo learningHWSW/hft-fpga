@@ -45,3 +45,4 @@ step6-strategy/bbo_in.log
 step6-strategy/orders_*.log
 step6-strategy/ouch_*.log
 step6-strategy/frames_*.log
+step5-board/t2t_*.log

@@ -65,10 +65,29 @@ synth:
 impl:
 	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(PERIOD)
 
-clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch real.mold syn/out
+# end-to-end simulation of the full chain, diffed against step 6's golden.
+# max_inflight is disabled (see tb_t2t.sv) because nothing drives the ack.
+STEP6 = ../step6-strategy
+test-t2t: real.eth
+	python3 $(STEP4B)/scripts/dump_bbo.py real.itch 13 > t2t_bbo.log
+	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
+	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
+	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o t2tsim --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	./obj_dir/t2tsim +eth=real.eth +loc=13 +base=2800000 +gap=24 +frm=t2t_rtl.log
+	diff t2t_gold.log t2t_rtl.log && echo "PASS: wire -> order frames == golden"
 
-.PHONY: test test-verilator golden test-real test-cdc stress synth impl clean
+# full tick-to-trade chain (t2t_top): two clocks, wire in -> order frame out
+T2T_PERIOD ?= 4.618
+synth-t2t:
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
+impl-t2t:
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
+
+clean:
+	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch real.mold syn/out syn/out_t2t
+
+.PHONY: test test-verilator golden test-real test-cdc test-t2t stress synth impl synth-t2t impl-t2t clean
 
 # ---------- clock crossing (CMAC 322 MHz -> core clock) ----------
 # Two clocks, so this is Verilator-only: the checks are about pointer

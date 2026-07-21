@@ -1,0 +1,43 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
+| Date         : Tue Jul 21 20:45:33 2026
+| Host         : LEE running 64-bit Ubuntu 24.04.3 LTS
+| Command      : report_utilization -hierarchical -file /home/jslee/hft-fpga/step5-board/syn/out_t2t/util_synth.rpt
+| Design       : t2t_top
+| Device       : xcu55c-fsvh2892-2L-e
+| Speed File   : -2L
+| Design State : Synthesized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++------------------+---------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+|     Instance     |           Module          | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++------------------+---------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+| t2t_top          |                     (top) |      35789 |      35789 |       0 |    0 | 14806 |     47 |     10 |    2 |          2 |
+|   (t2t_top)      |                     (top) |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|   u_fh           |                   fh_core |      33354 |      33354 |       0 |    0 | 11712 |     31 |      8 |    2 |          2 |
+|     u_beat_fifo  |                 drop_fifo |        225 |        225 |       0 |    0 |    53 |      8 |      0 |    0 |          0 |
+|     u_dec        |              itch_decoder |       1058 |       1058 |       0 |    0 |   684 |      0 |      0 |    0 |          0 |
+|     u_delta_fifo | drop_fifo__parameterized1 |        112 |        112 |       0 |    0 |    53 |      2 |      0 |    0 |          0 |
+|     u_ladder     |              price_ladder |      23222 |      23222 |       0 |    0 |  8798 |      0 |      0 |    2 |          2 |
+|     u_msg_fifo   | drop_fifo__parameterized0 |        510 |        510 |       0 |    0 |    53 |      5 |      0 |    0 |          0 |
+|     u_otab       |               order_table |        754 |        754 |       0 |    0 |   591 |     16 |      8 |    0 |          0 |
+|     u_split      |             mold_splitter |       7505 |       7505 |       0 |    0 |  1480 |      0 |      0 |    0 |          0 |
+|   u_ouch         |              ouch_builder |        148 |        148 |       0 |    0 |   395 |      0 |      0 |    0 |          0 |
+|   u_rx           |             eth_ip_udp_rx |        543 |        543 |       0 |    0 |   884 |      0 |      0 |    0 |          0 |
+|   u_rx_cdc       |                  cdc_fifo |        571 |        571 |       0 |    0 |   113 |      8 |      1 |    0 |          0 |
+|   u_strat        |                  strategy |        240 |        240 |       0 |    0 |   375 |      0 |      0 |    0 |          0 |
+|   u_tcp          |                    tcp_tx |        923 |        923 |       0 |    0 |  1239 |      0 |      0 |    0 |          0 |
+|   u_tx_cdc       |  cdc_fifo__parameterized0 |         31 |         31 |       0 |    0 |    88 |      8 |      1 |    0 |          0 |
++------------------+---------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+
+
