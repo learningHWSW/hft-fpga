@@ -16,7 +16,8 @@ Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 | Ethernet/IPv4/UDP receive front end — the wire path closes | ✅ done |
 | Synthesis and place & route for the real U55C part | ✅ done (see below) |
 | OpenNIC shell buildable for U55C on this toolchain | ✅ verified (see below) |
-| Meeting the OpenNIC user-box clock | ❌ open — the remaining gap |
+| Sustaining line rate (≥195.3 MHz post-route) | ✅ met — 216.5 MHz |
+| Meeting the CMAC box clock (322 MHz) directly | ❌ not met — crossed with a CDC FIFO instead |
 | Hardware replay / measured MAC-to-BBO latency | ⛔ needs a card |
 
 ### OpenNIC is a viable host — and it removes two blockers
@@ -312,6 +313,40 @@ Resources are a rounding error on this part; **timing is the whole story.** The
 design does not meet 250 MHz, and 166.8 MHz is also short of the 195.3 MHz that
 100 Gb/s actually requires — so as it stands this core cannot absorb a saturated
 wire, though it clears the ~4 Mmsg/s the real feed peaks at by a wide margin.
+
+### Registering the URAM address — the line-rate threshold is met
+
+Acting on the path above (give the best-level scan its own cycle so the
+quantity URAMs' address pins are driven by a flop, `S_BQ` → new `S_RDQ`):
+
+| | before | after |
+|---|---|---|
+| synth WNS @ 4.000 ns | −0.919 ns | −0.727 ns |
+| **post-route WNS** | −1.996 ns | **−0.618 ns** |
+| **post-route Fmax** | 166.8 MHz | **216.5 MHz** |
+| failing endpoints | 9,800 | 7,658 |
+| total negative slack | −8,763 ns | −1,653 ns |
+| LUTs | 34,273 | 37,542 |
+
+**216.5 MHz clears the 195.3 MHz that 100 Gb/s needs.** The core can absorb a
+saturated wire; 250 MHz is still missed, but 250 MHz was never the requirement
+— it is one of OpenNIC's box clocks, not a throughput bound (see §"the clock
+that actually matters"). The remaining gap is closed architecturally by an
+asynchronous FIFO between the CMAC's 322 MHz and the core's own slower clock,
+not by more timing work.
+
+One cycle of latency and ~3,300 LUTs bought 50 MHz. The read-modify-write
+structure is unchanged, so the two-stage best-level resolution is pure cost on
+paper — it pays only because URAM sites are fixed and whatever drives their
+address pins gets stretched across the die.
+
+The new worst path is the other end of the same memory: URAM data out →
+subtract/compare → occupancy bit (`askq_reg_uram_0/CLK` → `askocc_reg[2044]/D`,
+8 logic levels, 1.928 ns logic / 2.617 ns route). It is much more balanced than
+before — 42% logic against 58% route, where the old path was 27/73 — which
+means the easy placement win has been taken and further gains would need the
+ladder's read-modify-write split across cycles. Not worth doing until there is
+a reason to run faster than 216 MHz.
 
 Two things are worth taking from this. The largest single win came from
 *removing* arithmetic rather than pipelining it: `(price-base)/TICK < LEVELS`
