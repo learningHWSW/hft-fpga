@@ -123,17 +123,50 @@ period. Measuring cheaper mixers instead showed the multiply was unnecessary:
 a plain XOR fold gives the *same* zero overflow with a *lower* worst-case set
 occupancy (data/FINDINGS.md §4.3). Swapping it in removed 20 of the 22 DSPs.
 
-That moved the critical path again, and it now sits entirely inside the ladder:
+That moved the critical path into the ladder's output stage (group encode ->
+part-select -> within-group encode -> price arithmetic -> BBO compare -> output
+enable, all in one cycle), which was then split three ways: `S_BQ` resolves the
+best indices, `S_PX` converts index to price and captures the quantities,
+`S_OUT` only compares.
+
+### Place & route
+
+Synthesis timing is optimistic — it estimates routing. The real number is
+post-route, and it is **worse**, not better:
+
+| | post-synth | post-route |
+|---|---|---|
+| before the S_OUT split | −3.290 ns (156 MHz) | −4.490 ns (**132 MHz**) |
+| after the S_OUT split | −3.442 ns (153 MHz) | −3.765 ns (**146 MHz**) |
+
+The split is worth ~14 MHz on the number that counts, even though it made the
+synthesis estimate slightly worse — a reminder to judge timing after routing.
+
+Post-route resource use (the real figures):
+
+| | used | device | % |
+|---|---|---|---|
+| CLB LUTs | 43,330 | 1,303,680 | 3.32% |
+| CLB Registers | 12,184 | 2,607,360 | 0.47% |
+| Block RAM | 36 | 2,016 | 1.79% |
+| URAM | 2 | 960 | 0.21% |
+| DSP | 2 | 9,024 | 0.02% |
+
+Place & route completes cleanly and the design occupies ~3% of the device, so
+there is ample room for the CMAC/UDP front end and more symbols.
+
+**Timing remains the open item: 146 MHz against the 322.265625 MHz target.**
+The post-route critical path is now the price-to-index conversion:
 
 ```
-u_ladder/ask_gany_reg[15]  ->  u_ladder/o_ask_price_reg[0]/CE     (-3.290 ns)
+u_delta_fifo BRAM read  ->  in_band()/to_idx() ((price-base)/TICK)  ->  ladder qty URAM address
+-3.765 ns
 ```
 
-i.e. the S_OUT stage: group encode -> variable part-select -> within-group
-encode -> price arithmetic -> compare against the previous BBO -> output enable,
-all in one cycle. Splitting that (resolve the best index in one cycle, do price
-and compare in the next) is the next timing step. Timing is still the open
-item: **156 MHz against the 322 MHz requirement.**
+i.e. the ladder's IDLE state takes the FIFO's output and drives a memory
+address through a divide in the same cycle. The fix is the same shape as the
+previous ones: register the record first, convert to an index in the next
+cycle, then address the memory.
 
 Per-module after all three fixes:
 
