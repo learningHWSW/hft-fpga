@@ -92,8 +92,50 @@ the design was always at the edge for a single symbol.
 
 To still measure the surrounding logic, synthesis runs with the table scaled to
 an inferable size (`OT_SETS_BITS=9`, `OT_WAYS=8` by default; override on the
-`make synth` command line). See `syn/out/` for the utilization and timing
-reports.
+`make synth` command line). See `syn/out/` for the full reports.
+
+### Measured: `xcu55c-fsvh2892-2L-e`, target 3.103 ns (322.265625 MHz), OT = 2^9 × 8
+
+| | Used | Device | % |
+|---|---|---|---|
+| CLB LUTs | 317,572 | 1,303,680 | 24.4% |
+| CLB Registers | 576,039 | 2,607,360 | 22.1% |
+| Block RAM | **0** | 2,016 | 0% |
+| URAM | **0** | 960 | 0% |
+| DSP | 22 | 9,024 | 0.2% |
+
+**WNS −4.811 ns → Fmax ≈ 126 MHz, against the 322.27 MHz requirement (2.5× off).**
+
+Per module (LUT / FF):
+
+| Module | LUTs | FFs | LUTRAM |
+|---|---|---|---|
+| `order_table` | 227,359 | 564,963 | 0 |
+| `price_ladder` | 49,218 | 8,527 | 15,360 |
+| `drop_fifo` (delta) | 22,411 | 144 | 1,728 |
+| `mold_splitter` | 7,277 | 1,655 | 0 |
+| `drop_fifo` (beat) | 7,173 | 86 | 5,280 |
+| `itch_decoder` | 964 | 583 | 0 |
+
+Three concrete defects, none of which simulation could show:
+
+1. **No memory is inferred anywhere — 0 BRAM, 0 URAM.** The order table's
+   626 Kbit of storage became 565 k flip-flops. Cause: `bank[way][set]` is
+   written with a *variable way index*, so the tool cannot map it to a memory
+   primitive. Each way must be its own array with a decoded write enable
+   (a `generate` per way), which also unblocks the production size via XPM.
+2. **Asynchronous reads force distributed RAM.** `drop_fifo` reads
+   `mem[rptr]` combinationally and `price_ladder`'s qty arrays are async-read;
+   both become LUTRAM plus wide muxes instead of block RAM.
+3. **The critical path is one giant combinational cycle**: delta-FIFO read
+   pointer → async RAM read (`RAMD64E`) → price→index divide → occupancy-bit
+   update, 33 logic levels (13 × CARRY8). It needs pipelining, and the
+   best-of-book scan needs to be hierarchical rather than a flat 4096-bit
+   priority chain (which is also why synthesis takes ~40 min).
+
+Note the scale: this is 24% of the device with an order table **128× smaller**
+than the production point. The design as written is not implementable — fixing
+(1) and (2) is a prerequisite for any board work.
 
 ## Structure
 
@@ -105,9 +147,15 @@ syn/synth_ooc.tcl  — OOC synthesis/implementation for the real part
 syn/fh_core.xdc    — 322.265625 MHz CMAC datapath clock
 ```
 
-## Next
+## Next (priority order, set by the synthesis results above)
 
-1. Replace the order table's inferred array with XPM/URAM macros so the
-   production size synthesizes; re-run synthesis for real utilization.
-2. II=1 pipelining of the order table and ladder (already scoped in PLAN.md).
-3. CMAC + UDP/IP front end and QDMA reporting once a platform/card is available.
+1. **Make the order table map to real memory.** Split `bank` into per-way
+   arrays with a decoded write enable so each way is a single-write/single-read
+   memory; then move the production size onto `xpm_memory_sdpram` (URAM). This
+   removes ~227 k LUTs and ~565 k FFs and is the prerequisite for everything else.
+2. **Synchronous reads in `drop_fifo` and the ladder's qty arrays** so they
+   become block RAM instead of LUTRAM, and drop off the critical path.
+3. **Pipeline the ladder**: split price→index from the occupancy update, and
+   replace the flat 4096-bit best-of-book scan with a hierarchical one.
+4. Re-run synthesis; only then is the II=1 work (PLAN.md) worth measuring.
+5. CMAC + UDP/IP front end and QDMA reporting once a platform/card is available.
