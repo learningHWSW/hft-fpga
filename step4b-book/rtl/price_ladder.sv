@@ -146,8 +146,15 @@ module price_ladder #(
     bai     = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};
   end
 
-  typedef enum logic [2:0] { IDLE, S_REM, S_ADD, S_BQ, S_OUT } state_t;
+  typedef enum logic [2:0] { IDLE, S_REM, S_ADD, S_BQ, S_PX, S_OUT } state_t;
   state_t state;
+
+  // best-of-book resolved in stages so no single cycle carries
+  // encode -> part-select -> encode -> price arithmetic -> compare.
+  // S_BQ registers the index, S_PX the price and quantity, S_OUT only compares.
+  logic            q_has_bid, q_has_ask;
+  logic [LEVW-1:0] q_bbi, q_bai;
+  logic [31:0]     q_bid_price, q_bid_qty, q_ask_price, q_ask_qty;
 
   // latched record
   logic [47:0]     r_ts;
@@ -265,21 +272,30 @@ module price_ladder #(
           state <= S_BQ;
         end
 
-        // occupancy has settled; this cycle issues the best-level reads
-        S_BQ: state <= S_OUT;
+        // occupancy has settled: resolve the best levels and issue their reads.
+        // Only the two-level encode lands in this cycle.
+        S_BQ: begin
+          q_has_bid <= has_bid; q_bbi <= bbi;
+          q_has_ask <= has_ask; q_bai <= bai;
+          state <= S_PX;
+        end
 
+        // index -> price, and the quantities read in S_BQ land here
+        S_PX: begin
+          q_bid_price <= q_has_bid ? to_price(q_bbi, cfg_base) : 32'd0;
+          q_bid_qty   <= q_has_bid ? bq_rdata : 32'd0;
+          q_ask_price <= q_has_ask ? to_price(q_bai, cfg_base) : 32'd0;
+          q_ask_qty   <= q_has_ask ? aq_rdata : 32'd0;
+          state <= S_OUT;
+        end
+
+        // nothing left but the comparison against the current BBO
         S_OUT: begin
-          automatic logic        nb  = has_bid;
-          automatic logic [31:0] nbp = has_bid ? to_price(bbi, cfg_base) : 32'd0;
-          automatic logic [31:0] nbq = has_bid ? bq_rdata : 32'd0;
-          automatic logic        na  = has_ask;
-          automatic logic [31:0] nap = has_ask ? to_price(bai, cfg_base) : 32'd0;
-          automatic logic [31:0] naq = has_ask ? aq_rdata : 32'd0;
-          if (nb != o_has_bid || nbp != o_bid_price || nbq != o_bid_qty ||
-              na != o_has_ask || nap != o_ask_price || naq != o_ask_qty) begin
+          if (q_has_bid != o_has_bid || q_bid_price != o_bid_price || q_bid_qty != o_bid_qty ||
+              q_has_ask != o_has_ask || q_ask_price != o_ask_price || q_ask_qty != o_ask_qty) begin
             o_valid   <= 1'b1; o_ts <= r_ts;
-            o_has_bid <= nb; o_bid_price <= nbp; o_bid_qty <= nbq;
-            o_has_ask <= na; o_ask_price <= nap; o_ask_qty <= naq;
+            o_has_bid <= q_has_bid; o_bid_price <= q_bid_price; o_bid_qty <= q_bid_qty;
+            o_has_ask <= q_has_ask; o_ask_price <= q_ask_price; o_ask_qty <= q_ask_qty;
           end
           state <= IDLE;
         end
