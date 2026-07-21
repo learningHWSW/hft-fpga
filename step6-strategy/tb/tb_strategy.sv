@@ -45,8 +45,16 @@ module tb_strategy;
   logic [511:0] p_tdata;
   logic [63:0]  p_tkeep;
   logic         p_tvalid, p_tlast;
-  logic         p_tready = 1;        // golden models no TX backpressure
+  logic         p_tready;            // driven by the TCP engine's readiness
   logic [31:0]  pkt_cnt, token_seq;
+
+  // TCP engine outputs
+  logic [511:0] f_tdata;
+  logic [63:0]  f_tkeep;
+  logic         f_tvalid, f_tlast;
+  logic         f_tready = 1;        // golden models no MAC backpressure
+  logic [31:0]  seq_num, frame_cnt;
+  logic         cfg_load = 0;
 
   logic [31:0] sent_cnt, blk_pos_cnt, blk_inflight_cnt, blk_txfull_cnt;
   logic signed [31:0] position;
@@ -86,7 +94,20 @@ module tb_strategy;
     .pkt_cnt(pkt_cnt), .token_seq(token_seq)
   );
 
-  int          fout, fpkt;
+  tcp_tx #(.DATA_W(512), .PAYLD_B(52)) tx (
+    .clk(clk), .rst_n(rst_n),
+    .cfg_dst_mac(48'hAABBCCDDEEFF), .cfg_src_mac(48'h001122334455),
+    .cfg_src_ip(32'h0A000002),  .cfg_dst_ip(32'h0A000009),
+    .cfg_src_port(16'd40001),   .cfg_dst_port(16'd4001),
+    .cfg_init_seq(32'h10000000), .cfg_ack_num(32'h20000000),
+    .cfg_window(16'd65535), .cfg_init_id(16'h1000), .cfg_load(cfg_load),
+    .s_tdata(p_tdata), .s_tvalid(p_tvalid), .s_tready(p_tready),
+    .m_tdata(f_tdata), .m_tkeep(f_tkeep), .m_tvalid(f_tvalid), .m_tlast(f_tlast),
+    .m_tready(f_tready),
+    .seq_num(seq_num), .frame_cnt(frame_cnt)
+  );
+
+  int          fout, fpkt, ffrm;
   int          acks_due [MAXREC];
   int          fired_this_rec = 0;
 
@@ -112,20 +133,43 @@ module tb_strategy;
     end
   end
 
-  string bbo_path, out_path, pkt_path, line;
+  // frame monitor: a frame spans two beats, so accumulate then print one line
+  logic [8*106-1:0] frm_acc;
+  int               frm_bytes = 0;
+  always @(posedge clk) begin
+    if (rst_n && f_tvalid && f_tready) begin
+      automatic int nb = 0;
+      for (int i = 0; i < 64; i++) if (f_tkeep[i]) nb++;
+      for (int i = 0; i < nb; i++) frm_acc[8*(frm_bytes + i) +: 8] = f_tdata[8*i +: 8];
+      frm_bytes += nb;
+      if (f_tlast) begin
+        for (int i = 0; i < frm_bytes; i++) $fwrite(ffrm, "%02x", frm_acc[8*i +: 8]);
+        $fwrite(ffrm, "\n");
+        frm_bytes = 0;
+      end
+    end
+  end
+
+  string bbo_path, out_path, pkt_path, frm_path, line;
   int    fin, rec = 0, code;
 
   initial begin
     if (!$value$plusargs("bbo=%s", bbo_path)) bbo_path = "bbo_gold.log";
     if (!$value$plusargs("out=%s", out_path)) out_path = "orders_rtl.log";
     if (!$value$plusargs("pkt=%s", pkt_path)) pkt_path = "ouch_rtl.log";
+    if (!$value$plusargs("frm=%s", frm_path)) frm_path = "frames_rtl.log";
     fin  = $fopen(bbo_path, "r");
     fout = $fopen(out_path, "w");
     fpkt = $fopen(pkt_path, "w");
+    ffrm = $fopen(frm_path, "w");
     if (fin == 0)  begin $display("FAIL: cannot open %s", bbo_path); $finish; end
 
     repeat (5) @(posedge clk);
     rst_n = 1;
+    @(posedge clk);
+    cfg_load = 1;                    // software hands over the established connection
+    @(posedge clk);
+    cfg_load = 0;
     repeat (5) @(posedge clk);
 
     while ($fgets(line, fin) > 0) begin
@@ -165,6 +209,7 @@ module tb_strategy;
     repeat (20) @(posedge clk);
     $fclose(fout);
     $fclose(fpkt);
+    $fclose(ffrm);
     $display("TB done: %0d records, %0d orders (pos=%0d inflight=%0d)",
              rec, sent_cnt, position, inflight);
     $display("  blocked: position=%0d inflight=%0d tx-full=%0d",
@@ -173,6 +218,8 @@ module tb_strategy;
     // the two are being asked different questions
     if (blk_txfull_cnt != 0) $display("FAIL: tx-full blocked -- the builder stalled the strategy");
     if (pkt_cnt != sent_cnt) $display("FAIL: %0d orders but %0d packets", sent_cnt, pkt_cnt);
+    if (frame_cnt != pkt_cnt) $display("FAIL: %0d packets but %0d frames", pkt_cnt, frame_cnt);
+    $display("  next seq=%08x (expect %08x)", seq_num, 32'h10000000 + 52*frame_cnt);
     $finish;
   end
 

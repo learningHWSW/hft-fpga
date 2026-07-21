@@ -167,16 +167,76 @@ firm: 'HFT1'   disp/cap/sw: Y P N   min qty: 0   cross/cust: N N
 which matches the first order log line, `... SELL qty=100 px=2890300`. All 52
 tokens across the run are unique.
 
+## The TCP transmit engine
+
+OUCH runs over SoupBinTCP over TCP, so the packet needs a carrier. This is a
+**transmit-only data path for an already established connection**: the
+handshake, retransmission, window probing, RST handling and teardown all live
+in software, which writes the resulting connection state into shadow registers
+and pulses `cfg_load`. The hardware does one thing — put a segment on the wire
+the instant the strategy produces one.
+
+The frame is 106 bytes (14 Ethernet + 20 IPv4 + 20 TCP + 52 payload), emitted
+as two 512-bit beats.
+
+**There is no retransmission.** A dropped segment is a dropped order and
+recovery is the host's problem. That is a deliberate trade — a retransmit
+buffer means holding every sent segment plus a timer each, which is state and
+latency on the one path that exists to be fast — but it is the single biggest
+reason this cannot be pointed at an exchange and left unattended.
+
+**Flow control is satisfied by construction, not by logic.** The strategy's
+in-flight limiter caps outstanding orders at 4, i.e. 4 x 52 = 208 bytes of
+unacknowledged payload, far below any window a peer would advertise. The risk
+gate doubles as TCP flow control, so this block never has to track the window
+to be safe.
+
+### The checksum did not fit in one cycle
+
+I wrote that the one's complement adder tree would fit in a single cycle. It
+did not: **WNS -0.107 ns**, seven failing endpoints. The TCP checksum spans 42
+words (12 pseudo-header, 10 header, 26 payload), and folding that *plus*
+assembling the 106-byte frame in one cycle is over budget at 216.5 MHz.
+
+Giving the payload sum its own cycle (`CALC`) fixes it: **-0.107 → +1.438 ns**,
+about 314 MHz. The cost is one cycle of latency on the hot path.
+
+There is a way to get that cycle back, deliberately not taken: the OUCH builder
+already assembles the payload combinationally and has 3.9 ns of slack, so it
+could emit the payload's one's complement sum alongside the packet for free.
+That would spread TCP's checksum into a module that otherwise knows nothing
+about TCP, and one cycle out of the ~25 in this path is not yet worth the
+coupling. It is written down so the option is there when latency is being
+squeezed for real.
+
+### Verified against a third implementation
+
+`dump_tcp.py` and `tcp_tx.sv` were written from the same understanding of the
+checksum, so agreeing with each other proves nothing about correctness — they
+can be wrong together. `scripts/check_frames.py` uses **scapy**, which shares
+no code and no author with either, to re-derive both checksums from scratch and
+check lengths, flags and sequence advance:
+
+```
+PASS: 52 frames verified independently by scapy
+      (checksums, lengths, flags, sequence advance)
+```
+
+Scapy's decode of the first frame: IPv4 len 92, DF, TTL 64, proto tcp,
+10.0.0.2 → 10.0.0.9, seq 0x10000000, ack 0x20000000, flags PA, window 65535,
+payload starting `00 32 55 4f` — length 50, `U`, `O`. It skips rather than
+fails when scapy is absent, so it is not a hard dependency.
+
 ## Resources and timing
 
 Out-of-context synthesis for `xcu55c-fsvh2892-2L-e` at the core's 4.618 ns:
 
-| | `strategy` | `ouch_builder` |
-|---|---|---|
-| CLB LUTs | 598 | — |
-| CLB registers | 471 | 396 |
-| DSPs | **0** | **0** |
-| WNS | **+2.251 ns** (~422 MHz) | **+3.898 ns** (~1.4 GHz) |
+| | `strategy` | `ouch_builder` | `tcp_tx` |
+|---|---|---|---|
+| CLB LUTs | 598 | — | 890 |
+| CLB registers | 471 | 396 | 1343 |
+| DSPs | **0** | **0** | **0** |
+| WNS | **+2.251 ns** | **+3.898 ns** | **+1.438 ns** (~314 MHz) |
 
 Both sit far off the critical path — the core clock is 216.5 MHz — so there is
 room for a much richer rule before timing becomes the constraint. The builder
@@ -192,8 +252,11 @@ masks off. Expected, not a defect.
 ```
 rtl/strategy.sv          the rule, the risk gate
 rtl/ouch_builder.sv      order intent -> SoupBinTCP + OUCH 4.2 bytes
+rtl/tcp_tx.sv            OUCH packet -> TCP/IPv4/Ethernet frame
 scripts/dump_orders.py   golden model for the rule — the specification, in Python
-scripts/dump_ouch.py     golden model for the wire format
+scripts/dump_ouch.py     golden model for the OUCH wire format
+scripts/dump_tcp.py      golden model for the TCP/IP framing
+scripts/check_frames.py  independent scapy re-derivation of the checksums
 tb/tb_strategy.sv        self-checking TB for the chain, diffed against both
 ```
 
@@ -201,8 +264,10 @@ tb/tb_strategy.sv        self-checking TB for the chain, diffed against both
 
 The chain now runs wire → book → decision → order bytes. What it does not have:
 
-1. **A TCP transmit path.** OUCH runs over SoupBinTCP over TCP, and there is no
-   TCP here. The packet is assembled but has nothing to carry it.
-2. **Real fills.** Position is optimistic; the host does not yet report back.
-3. **Measured latency.** Cycle counts are exact in simulation and are not
+1. **Retransmission.** The transmit path fires and forgets. A lost segment is
+   a lost order until software notices, and software has not been written.
+2. **The handshake itself.** Software must establish the connection and load
+   the shadow registers; none of that host code exists yet.
+3. **Real fills.** Position is optimistic; the host does not yet report back.
+4. **Measured latency.** Cycle counts are exact in simulation and are not
    nanoseconds on silicon. That needs a card.
