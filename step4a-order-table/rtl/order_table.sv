@@ -76,7 +76,7 @@ module order_table
   logic [SETS_BITS-1:0] w_set;
   oentry_t              w_entry;
 
-  typedef enum logic [1:0] { IDLE, EXEC, U_EXEC } state_t;
+  typedef enum logic [2:0] { IDLE, LOOK, EXEC, U_LOOK, U_EXEC } state_t;
   state_t state;
 
   itch_msg_t            m;             // latched message
@@ -113,6 +113,15 @@ module order_table
     else if (state == EXEC && m.msg_type == "U")    rd_set = hash(m.new_order_ref);
   end
 
+  // Selection registers. The read-modify-write used to be one cycle:
+  // BRAM out -> 8-way ref compare -> priority encode -> entry mux -> qty
+  // arithmetic -> BRAM write data, which was the critical path once the ladder
+  // was fixed. LOOK now ends at the entry mux and registers the result; EXEC
+  // does the arithmetic and the write from registers.
+  oentry_t         sel_ent;
+  logic            sel_hit, sel_free_ok, selu_free_ok;
+  logic [WAYW-1:0] sel_way, sel_free_way, selu_free_way;
+
   // ---- combinational lookup over the current set (rdq) ----
   logic            hit;
   logic [WAYW-1:0] hit_way;
@@ -145,34 +154,34 @@ module order_table
       EXEC: begin
         unique case (m.msg_type)
           "A", "F":
-            if ((m.locate == track_locate) && have_free) begin
-              we = 1'b1; w_way = free_way; w_set = set0;
+            if ((m.locate == track_locate) && sel_free_ok) begin
+              we = 1'b1; w_way = sel_free_way; w_set = set0;
               w_entry = '{valid:1'b1, oref:m.order_ref, locate:m.locate,
                           side:m.side, price:m.price, qty:m.shares};
             end
           "D":
-            if (hit) begin                       // remove the order
-              we = 1'b1; w_way = hit_way; w_set = set0; w_entry = '0;
+            if (sel_hit) begin                   // remove the order
+              we = 1'b1; w_way = sel_way; w_set = set0; w_entry = '0;
             end
           "E", "C", "X":
-            if (hit) begin
-              we = 1'b1; w_way = hit_way; w_set = set0;
-              if (rdq[hit_way].qty <= m.shares) w_entry = '0;   // fully consumed
+            if (sel_hit) begin
+              we = 1'b1; w_way = sel_way; w_set = set0;
+              if (sel_ent.qty <= m.shares) w_entry = '0;        // fully consumed
               else begin
-                w_entry     = rdq[hit_way];
-                w_entry.qty = rdq[hit_way].qty - m.shares;
+                w_entry     = sel_ent;
+                w_entry.qty = sel_ent.qty - m.shares;
               end
             end
           "U":
-            if (hit) begin                       // remove old; new is written in U_EXEC
-              we = 1'b1; w_way = hit_way; w_set = set0; w_entry = '0;
+            if (sel_hit) begin                   // remove old; new is written in U_EXEC
+              we = 1'b1; w_way = sel_way; w_set = set0; w_entry = '0;
             end
           default: ;
         endcase
       end
       U_EXEC:
-        if (have_free_u) begin
-          we = 1'b1; w_way = free_way_u; w_set = set1;
+        if (selu_free_ok) begin
+          we = 1'b1; w_way = selu_free_way; w_set = set1;
           w_entry = '{valid:1'b1, oref:m.new_order_ref, locate:old_loc,
                       side:old_side, price:m.price, qty:m.shares};
         end
@@ -215,8 +224,19 @@ module order_table
           if (s_valid) begin
             m    <= s_msg;
             set0 <= hash(s_msg.order_ref);
-            state <= EXEC;
+            state <= LOOK;
           end
+        end
+
+        // rdq is valid: resolve which way, and register the selected entry.
+        // Nothing downstream of the mux happens in this cycle.
+        LOOK: begin
+          sel_hit      <= hit;
+          sel_way      <= hit_way;
+          sel_ent      <= rdq[hit_way];
+          sel_free_ok  <= have_free;
+          sel_free_way <= free_way;
+          state        <= EXEC;
         end
 
         EXEC: begin
@@ -229,7 +249,7 @@ module order_table
           unique case (m.msg_type)
             "A", "F": begin
               if (m.locate == track_locate) begin
-                if (have_free) begin
+                if (sel_free_ok) begin
                   o_valid   <= 1'b1;
                   o_has_add <= 1'b1; o_add_price <= m.price; o_add_qty <= m.shares;
                 end else overflow_cnt <= overflow_cnt + 1;
@@ -237,31 +257,31 @@ module order_table
               state <= IDLE;
             end
             "D": begin
-              if (hit) begin
-                o_valid   <= 1'b1; o_side <= rdq[hit_way].side; o_locate <= rdq[hit_way].locate;
-                o_has_rem <= 1'b1; o_rem_price <= rdq[hit_way].price; o_rem_qty <= rdq[hit_way].qty;
+              if (sel_hit) begin
+                o_valid   <= 1'b1; o_side <= sel_ent.side; o_locate <= sel_ent.locate;
+                o_has_rem <= 1'b1; o_rem_price <= sel_ent.price; o_rem_qty <= sel_ent.qty;
               end else miss_cnt <= miss_cnt + 1;
               state <= IDLE;
             end
             "E", "C", "X": begin
-              if (hit) begin
+              if (sel_hit) begin
                 automatic logic [31:0] delta =
-                    (rdq[hit_way].qty < m.shares) ? rdq[hit_way].qty : m.shares;
-                o_valid   <= 1'b1; o_side <= rdq[hit_way].side; o_locate <= rdq[hit_way].locate;
-                o_has_rem <= 1'b1; o_rem_price <= rdq[hit_way].price; o_rem_qty <= delta;
+                    (sel_ent.qty < m.shares) ? sel_ent.qty : m.shares;
+                o_valid   <= 1'b1; o_side <= sel_ent.side; o_locate <= sel_ent.locate;
+                o_has_rem <= 1'b1; o_rem_price <= sel_ent.price; o_rem_qty <= delta;
               end else miss_cnt <= miss_cnt + 1;
               state <= IDLE;
             end
             "U": begin
-              if (hit) begin
-                old_loc   <= rdq[hit_way].locate;
-                old_side  <= rdq[hit_way].side;
-                old_price <= rdq[hit_way].price;
-                old_qty   <= rdq[hit_way].qty;
-                old_way   <= hit_way;
+              if (sel_hit) begin
+                old_loc   <= sel_ent.locate;
+                old_side  <= sel_ent.side;
+                old_price <= sel_ent.price;
+                old_qty   <= sel_ent.qty;
+                old_way   <= sel_way;
                 set1   <= hash(m.new_order_ref);
                 u_same <= (hash(m.new_order_ref) == set0);
-                state  <= U_EXEC;
+                state  <= U_LOOK;
               end else begin
                 miss_cnt <= miss_cnt + 1;
                 state <= IDLE;
@@ -271,8 +291,15 @@ module order_table
           endcase
         end
 
+        // new set's rdq is valid: pick the slot, register it
+        U_LOOK: begin
+          selu_free_ok  <= have_free_u;
+          selu_free_way <= free_way_u;
+          state         <= U_EXEC;
+        end
+
         U_EXEC: begin
-          if (!have_free_u) overflow_cnt <= overflow_cnt + 1;
+          if (!selu_free_ok) overflow_cnt <= overflow_cnt + 1;
           o_valid   <= 1'b1; o_type <= "U"; o_locate <= old_loc; o_side <= old_side;
           o_has_rem <= 1'b1; o_rem_price <= old_price; o_rem_qty <= old_qty;
           o_has_add <= 1'b1; o_add_price <= m.price;  o_add_qty <= m.shares;
