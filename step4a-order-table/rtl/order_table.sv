@@ -65,6 +65,7 @@ module order_table
   // 565 k FFs, 0 BRAM, 0 URAM — see step5-board/README.md). A decoded write
   // enable per way makes each way a plain single-write/single-read memory,
   // which is the pattern that maps to BRAM/URAM.
+  localparam int EW = $bits(oentry_t); // entry width, for the flat storage
   oentry_t rdq [WAYS-1:0];             // registered read of the current set
 
   // Unified write port, driven combinationally so the write lands in the same
@@ -176,13 +177,18 @@ module order_table
   genvar gw;
   generate
     for (gw = 0; gw < WAYS; gw++) begin : g_way
+      // Storage is a FLAT bit vector, not an array of oentry_t. Vivado's RAM
+      // inference refuses a struct-typed memory — it reports
+      //   [Synth 8-11357] ... RAM from Record/Structs ... with 626688 registers
+      // and falls back to flip-flops. oentry_t is packed, so casting at the
+      // boundary costs nothing.
       // No ram_style attribute: let the tool pick (BRAM at these sizes, URAM
       // when the production table lands). A `string` parameter cannot be used
       // as an attribute value — Vivado rejects it as "not a packed type".
-      oentry_t mem [SETS-1:0];
+      logic [EW-1:0] mem [SETS-1:0];
       initial for (int s = 0; s < SETS; s++) mem[s] = '0;   // valid bits clear
       always_ff @(posedge clk) begin
-        rdq[gw] <= mem[rd_set];                             // read-before-write
+        rdq[gw] <= oentry_t'(mem[rd_set]);                  // read-before-write
         if (we && (w_way == gw[WAYW-1:0])) mem[w_set] <= w_entry;
       end
     end
