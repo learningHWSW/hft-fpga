@@ -39,3 +39,7 @@ step5-board/syn/out/
 # vivado router scratch, emitted into the working dir
 step5-board/clockInfo.txt
 step5-board/cong/
+
+# step 6: shared BBO stimulus and order logs (regenerable)
+step6-strategy/bbo_in.log
+step6-strategy/orders_*.log
