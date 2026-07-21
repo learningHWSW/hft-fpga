@@ -29,3 +29,9 @@ step1-sw-parser/test.mold
 *.NASDAQ_ITCH50
 *.NASDAQ_ITCH50.gz
 *.progress
+
+# step 5: local run captures and synthesis outputs (reports/checkpoints are
+# large and regenerable; the numbers that matter live in step5-board/README.md)
+*.out
+step5-board/syn/out/
+.Xil/
