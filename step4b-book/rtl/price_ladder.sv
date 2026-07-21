@@ -62,11 +62,19 @@ module price_ladder #(
   // a function: a function that closes over a module signal has no sensitivity
   // to it in a continuous assign, which silently pins the result at X under
   // xsim (the step-3b bug). Passing it keeps every caller correct.
+  // Band check needs no division: (price-base)/TICK < LEVELS is the same as
+  // (price-base) < LEVELS*TICK, and that bound is a compile-time constant.
+  // It also means an in-band difference fits in BANDW bits, so the divide that
+  // does produce the index only has to be BANDW wide instead of 32.
+  localparam int BANDW = $clog2(LEVELS * TICK);
   function automatic logic in_band(input logic [31:0] price, input logic [31:0] base);
-    return (price >= base) && (((price - base) / TICK) < LEVELS);
+    return (price >= base) && ((price - base) < (LEVELS * TICK));
   endfunction
-  function automatic logic [LEVW-1:0] to_idx(input logic [31:0] price, input logic [31:0] base);
-    return (price - base) / TICK;
+  function automatic logic [BANDW-1:0] to_diff(input logic [31:0] price, input logic [31:0] base);
+    return (price - base);
+  endfunction
+  function automatic logic [LEVW-1:0] div_tick(input logic [BANDW-1:0] diff);
+    return diff / TICK;
   endfunction
   function automatic logic [31:0] to_price(input logic [LEVW-1:0] idx, input logic [31:0] base);
     return base + 32'(idx) * TICK;
@@ -146,7 +154,7 @@ module price_ladder #(
     bai     = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};
   end
 
-  typedef enum logic [2:0] { IDLE, S_IDX, S_RD, S_REM, S_ADD, S_BQ, S_PX, S_OUT } state_t;
+  typedef enum logic [3:0] { IDLE, S_SUB, S_IDX, S_RD, S_REM, S_ADD, S_BQ, S_PX, S_OUT } state_t;
   state_t state;
 
   // best-of-book resolved in stages so no single cycle carries
@@ -168,6 +176,7 @@ module price_ladder #(
   // raw record, captured straight off the input before any arithmetic
   logic [31:0] r_rem_price, r_add_price;
   logic        r_has_rem,   r_has_add;
+  logic [BANDW-1:0] r_rem_diff, r_add_diff;
 
   // ---- read address muxing ----
   // Every address driven here comes from a register, never from a freshly
@@ -233,20 +242,27 @@ module price_ladder #(
           r_is_bid    <= (i_side == "B");
           r_has_rem   <= i_has_rem;   r_rem_price <= i_rem_price; r_rem_qty <= i_rem_qty;
           r_has_add   <= i_has_add;   r_add_price <= i_add_price; r_add_qty <= i_add_qty;
+          state <= S_SUB;
+        end
+
+        // subtract the band base and range-check — no division here
+        S_SUB: begin
+          automatic logic ok_r = r_has_rem && in_band(r_rem_price, cfg_base);
+          automatic logic ok_a = r_has_add && in_band(r_add_price, cfg_base);
+          r_rem_ok   <= ok_r;  r_rem_diff <= to_diff(r_rem_price, cfg_base);
+          r_add_ok   <= ok_a;  r_add_diff <= to_diff(r_add_price, cfg_base);
+          if (r_has_rem && !ok_r) oob_cnt <= oob_cnt + 1;
+          if (r_has_add && !ok_a) oob_cnt <= oob_cnt + 1;
           state <= S_IDX;
         end
 
-        // price -> level index, from registers, with nothing else in the cycle
+        // the divide, on the narrowed difference, alone in its cycle
         S_IDX: begin
-          automatic logic ok_r = r_has_rem && in_band(r_rem_price, cfg_base);
-          automatic logic ok_a = r_has_add && in_band(r_add_price, cfg_base);
-          automatic logic [LEVW-1:0] ix_r = to_idx(r_rem_price, cfg_base);
-          automatic logic [LEVW-1:0] ix_a = to_idx(r_add_price, cfg_base);
-          r_rem_ok  <= ok_r;  r_rem_idx <= ix_r;
-          r_add_ok  <= ok_a;  r_add_idx <= ix_a;
-          r_fwd     <= ok_r && ok_a && (ix_r == ix_a);
-          if (r_has_rem && !ok_r) oob_cnt <= oob_cnt + 1;
-          if (r_has_add && !ok_a) oob_cnt <= oob_cnt + 1;
+          automatic logic [LEVW-1:0] ix_r = div_tick(r_rem_diff);
+          automatic logic [LEVW-1:0] ix_a = div_tick(r_add_diff);
+          r_rem_idx <= ix_r;
+          r_add_idx <= ix_a;
+          r_fwd     <= r_rem_ok && r_add_ok && (ix_r == ix_a);
           state <= S_RD;
         end
 
