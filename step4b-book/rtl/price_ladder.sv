@@ -18,11 +18,14 @@
 //   IDLE  latch, issue read of the first touched level
 //   S_REM apply the removal, issue read of the added level
 //   S_ADD apply the addition (forwarded if it is the same level)
-//   S_BQ  occupancy settled -> issue reads of the two best levels
-//   S_OUT best quantities arrive -> emit BBO if it changed
-// Best bid/ask are still found by a priority scan over the per-side occupancy
-// bitmaps held in registers; making that scan hierarchical is the remaining
-// timing item.
+//   S_BQ  occupancy settled -> resolve the best levels into registers
+//   S_RDQ issue the reads of those two levels from the registered indices
+//   S_PX  index -> price, quantities land
+//   S_OUT compare against the current BBO, emit if it changed
+// Best bid/ask come from a two-level priority scan over the per-side occupancy
+// bitmaps. That scan gets its own cycle and ends at a flop: letting it reach
+// the quantity memory's address pins in the same cycle was the design's worst
+// post-route path (see the read-address mux below).
 `timescale 1ns/1ps
 module price_ladder #(
   parameter int LEVELS = 4096,                    // 12-bit band
@@ -154,7 +157,7 @@ module price_ladder #(
     bai     = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};
   end
 
-  typedef enum logic [3:0] { IDLE, S_SUB, S_IDX, S_RD, S_REM, S_ADD, S_BQ, S_PX, S_OUT } state_t;
+  typedef enum logic [3:0] { IDLE, S_SUB, S_IDX, S_RD, S_REM, S_ADD, S_BQ, S_RDQ, S_PX, S_OUT } state_t;
   state_t state;
 
   // best-of-book resolved in stages so no single cycle carries
@@ -179,18 +182,23 @@ module price_ladder #(
   logic [BANDW-1:0] r_rem_diff, r_add_diff;
 
   // ---- read address muxing ----
-  // Every address driven here comes from a register, never from a freshly
-  // computed index: the price-to-index divide used to sit between the delta
-  // FIFO's BRAM output and this memory's address port in one cycle, which was
-  // the post-route critical path (-3.765 ns, step5-board/README.md).
+  // EVERY address driven here comes from a register — including the best-level
+  // probe, which is the point of q_bbi/q_bai. An earlier version used the raw
+  // combinational `bbi`/`bai` as the default address, so the two-level scan
+  // (gany encode -> part-select -> in-group encode) drove the quantity memory's
+  // address pins directly. Post-route that was the worst path in the whole
+  // design: bid_gany_reg -> bidq URAM ADDR_A, 15 logic levels, 1.458 ns of
+  // logic against 4.014 ns of route. URAM sites are fixed, so logic feeding
+  // their address pins gets stretched across the die; the fix is to hand the
+  // pins a flop output and let the scan have its own cycle (S_BQ).
   always_comb begin
-    bq_raddr = bbi;                    // default: probe the best levels
-    aq_raddr = bai;
+    bq_raddr = q_bbi;                  // default: probe the best levels
+    aq_raddr = q_bai;
     unique case (state)
       S_RD:  if (r_is_bid) bq_raddr = r_rem_ok ? r_rem_idx : r_add_idx;
              else          aq_raddr = r_rem_ok ? r_rem_idx : r_add_idx;
       S_REM: if (r_is_bid) bq_raddr = r_add_idx; else aq_raddr = r_add_idx;
-      default: ;                       // S_ADD/S_BQ leave the best-level probe
+      default: ;                       // S_RDQ takes the best-level probe
     endcase
   end
 
@@ -299,13 +307,16 @@ module price_ladder #(
           state <= S_BQ;
         end
 
-        // occupancy has settled: resolve the best levels and issue their reads.
-        // Only the two-level encode lands in this cycle.
+        // occupancy has settled: resolve the best levels. Only the two-level
+        // encode lands in this cycle — it ends at a flop, not at a memory.
         S_BQ: begin
           q_has_bid <= has_bid; q_bbi <= bbi;
           q_has_ask <= has_ask; q_bai <= bai;
-          state <= S_PX;
+          state <= S_RDQ;
         end
+
+        // the quantity reads, issued from the registered best indices
+        S_RDQ: state <= S_PX;
 
         // index -> price, and the quantities read in S_BQ land here
         S_PX: begin

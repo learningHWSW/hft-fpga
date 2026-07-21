@@ -76,10 +76,15 @@ WSRC = $(SRC) rtl/eth_ip_udp_rx.sv
 test.eth: $(STEP1)/test.mold
 	python3 $(STEP1)/mold2eth.py $(STEP1)/test.mold test.eth
 
-test-wire: test.eth
+# WETH is the frame file to replay; it must match ITCH, or the diff is against
+# a golden the simulation never saw. This rule used to hardcode test.eth while
+# test-wire-real passed WETH=real.eth, so the real-data run silently replayed
+# the 8-frame smoke file and diffed it against the 1779-line real golden.
+WETH ?= test.eth
+test-wire: $(WETH)
 	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > bbo_gold.log
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o wtbsim --top-module $(WTB) $(WSRC) tb/tb_wire_to_bbo.sv
-	./obj_dir/wtbsim +eth=test.eth +loc=$(LOC) +base=$(BASE) +gap=$(GAP)
+	./obj_dir/wtbsim +eth=$(WETH) +loc=$(LOC) +base=$(BASE) +gap=$(GAP)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: wire->BBO == golden"
 
 real.eth: real.mold
