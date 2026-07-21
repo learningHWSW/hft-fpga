@@ -99,36 +99,41 @@ an inferable size (`OT_SETS_BITS=9`, `OT_WAYS=8` by default; override on the
 Three synthesis defects were found and fixed (details in the git history); the
 numbers below are before, after the first two, and after all three:
 
-| | initial | +way split, +sync reads | +flat storage, +2-level scan |
-|---|---|---|---|
-| CLB LUTs | 317,572 | 223,414 | **48,375** (3.7%) |
-| CLB Registers | 576,039 | 573,770 | **11,709** (0.4%) |
-| Block RAM | 0 | 16 | **32 × RAMB36 + 8 × RAMB18** |
-| URAM | 0 | 2 | 2 |
-| DSP | 22 | 22 | 22 |
-| WNS | −4.811 ns | −3.669 ns | **−3.396 ns** |
-| Fmax | 126 MHz | 148 MHz | **154 MHz** |
-| synthesis runtime | ~40 min | ~18 min | **~4 min** |
+| | initial | +way split, +sync reads | +flat storage, +2-level scan | +XOR-fold hash |
+|---|---|---|---|---|
+| CLB LUTs | 317,572 | 223,414 | 48,375 | **48,311** (3.7%) |
+| CLB Registers | 576,039 | 573,770 | 11,709 | **11,709** (0.4%) |
+| Block RAM | 0 | 16 | 32+8 | **32 × RAMB36 + 8 × RAMB18** |
+| URAM | 0 | 2 | 2 | 2 |
+| DSP | 22 | 22 | 22 | **2** |
+| WNS | −4.811 ns | −3.669 ns | −3.396 ns | **−3.290 ns** |
+| Fmax | 126 MHz | 148 MHz | 154 MHz | **156 MHz** |
+| synthesis runtime | ~40 min | ~18 min | ~4 min | ~5 min |
 
 Area collapsed — 85% fewer LUTs, 98% fewer registers — and the storage finally
 lives in block RAM. Timing improved far less: **154 MHz against a 322 MHz
 requirement**, so the design still does not close.
 
-The remaining critical path is no longer memory-shaped, it is arithmetic:
+After the memory fixes the critical path became arithmetic — the order table's
+64×64 multiply-shift hash, a multi-DSP cascade sitting combinationally between
+the input FIFO's BRAM output and the table's read address (6.184 ns, 15 logic
+levels, 4.646 ns of it DSP). Pipelining it would have cost two extra cycles per
+message and still not fit, since the multiply alone exceeds the 3.103 ns
+period. Measuring cheaper mixers instead showed the multiply was unnecessary:
+a plain XOR fold gives the *same* zero overflow with a *lower* worst-case set
+occupancy (data/FINDINGS.md §4.3). Swapping it in removed 20 of the 22 DSPs.
+
+That moved the critical path again, and it now sits entirely inside the ladder:
 
 ```
-u_msg_fifo BRAM read  ->  64x64 multiply-shift hash (DSP cascade)  ->  order-table BRAM address
-6.184 ns, 15 logic levels, of which 4.646 ns is logic and almost all of it DSP
-(DSP_MULTIPLIER, 4x DSP_ALU, 4x DSP_OUTPUT, DSP_PREADD_DATA, DSP_A_B_DATA)
+u_ladder/ask_gany_reg[15]  ->  u_ladder/o_ask_price_reg[0]/CE     (-3.290 ns)
 ```
 
-The order table hashes `order_ref * 0x9E3779B97F4A7C15` and keeps the top
-SETS_BITS bits. A full 64×64 multiply becomes a multi-DSP cascade, and it sits
-combinationally between the input FIFO's output and the table's read address.
-Fixing it means either pipelining the hash (one extra cycle per message, the
-measured hash quality is preserved) or narrowing the multiply (cheaper, but the
-overflow measurements in data/FINDINGS.md §4.2 would have to be redone for the
-new hash). Pipelining is the lower-risk option.
+i.e. the S_OUT stage: group encode -> variable part-select -> within-group
+encode -> price arithmetic -> compare against the previous BBO -> output enable,
+all in one cycle. Splitting that (resolve the best index in one cycle, do price
+and compare in the next) is the next timing step. Timing is still the open
+item: **156 MHz against the 322 MHz requirement.**
 
 Per-module after all three fixes:
 

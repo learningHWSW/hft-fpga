@@ -87,15 +87,22 @@ module order_table
   logic [31:0]          old_price, old_qty;
   logic [WAYW-1:0]      old_way;
 
-  // Multiply-shift mix. Raw low bits round-robin only across ALL symbols; a
-  // single filtered symbol's refs are a correlated subset that clusters in the
-  // low bits (raw 16bx4 = 24142 overflow vs mix = 132; 16bx8 mix = 0 over the
-  // full day, data/FINDINGS.md §4.2). Take the HIGH SETS_BITS of the product.
-  localparam logic [63:0] MIX = 64'h9E3779B97F4A7C15;
+  // XOR-fold mix. Raw low bits round-robin only across ALL symbols; a single
+  // filtered symbol's refs are a correlated subset that clusters in the low
+  // bits, so some mixing is required (raw at 2^16 x 8 still overflows).
+  //
+  // This started as a 64x64 multiply-shift, which mixed well but synthesised
+  // into a multi-DSP cascade that became the critical path once the memories
+  // were fixed — 4.6 ns between the input FIFO's BRAM and the table's read
+  // address (step5-board/README.md). Folding instead of multiplying was then
+  // measured over the full day rather than assumed: at the deployed 2^16 x 8
+  // point the fold gives the SAME zero overflow as the multiply and a lower
+  // worst-case set occupancy (6 vs 7), for a couple of LUT levels and no DSP
+  // (data/FINDINGS.md §4.3). No pipelining needed as a result.
   function automatic logic [SETS_BITS-1:0] hash(input logic [63:0] r);
-    logic [63:0] p;
-    p = r * MIX;
-    return p[63 -: SETS_BITS];
+    logic [63:0] h;
+    h = r ^ (r >> 16) ^ (r >> 32) ^ (r >> 48);
+    return h[SETS_BITS-1:0];
   endfunction
 
   // ---- combinational read address (must reflect this cycle's request) ----

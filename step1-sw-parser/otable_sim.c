@@ -45,9 +45,23 @@ typedef struct {
     uint64_t live, live_peak;
 } cfg_t;
 
+/* hash modes. The multiply-shift (1) is the best mixer but a 64x64 multiply
+ * becomes a multi-DSP cascade that lands on the critical path in hardware
+ * (4.6 ns, step5-board/README.md). Modes 2 and 3 are the cheap alternatives:
+ * 2 is pure XOR folding (a couple of LUT levels, no DSP at all), 3 folds to
+ * 32 bits first so only a 32x32 multiply is needed. Whether they mix well
+ * enough for a single filtered symbol is a measurement, not an opinion. */
+enum { H_RAW = 0, H_MUL64 = 1, H_XORFOLD = 2, H_MUL32 = 3 };
+
 static inline uint64_t set_of(const cfg_t *c, uint64_t ref){
-    uint64_t h = c->mix ? (ref * 0x9E3779B97F4A7C15ull) >> (64 - c->sbits)
-                        : ref;
+    uint64_t h;
+    switch (c->mix) {
+    case H_MUL64:   h = (ref * 0x9E3779B97F4A7C15ull) >> (64 - c->sbits); break;
+    case H_XORFOLD: h = ref ^ (ref >> 16) ^ (ref >> 32) ^ (ref >> 48);    break;
+    case H_MUL32: { uint32_t f = (uint32_t)(ref ^ (ref >> 32));
+                    h = ((uint64_t)f * 0x9E3779B9u) >> (32 - c->sbits);   break; }
+    default:        h = ref;                                             break;
+    }
     return h & (c->sets - 1);
 }
 
@@ -102,10 +116,10 @@ int main(int argc, char **argv){
      * raw low bits cluster for a single symbol (its refs are a subset of the
      * global monotonic sequence), so compare against the multiply-shift mix. */
     static cfg_t small[] = {
-        {"16b x4  raw ",16,4,0},{"16b x4  mix ",16,4,1},
-        {"16b x8  raw ",16,8,0},{"16b x8  mix ",16,8,1},
-        {"17b x4  raw ",17,4,0},{"17b x4  mix ",17,4,1},
-        {"18b x4  mix ",18,4,1},{"16b x2  mix ",16,2,1},
+        {"16b x8  mul64",16,8,H_MUL64},   {"16b x8  xorfld",16,8,H_XORFOLD},
+        {"16b x8  mul32",16,8,H_MUL32},   {"16b x8  raw   ",16,8,H_RAW},
+        {"16b x4  mul64",16,4,H_MUL64},   {"16b x4  xorfld",16,4,H_XORFOLD},
+        {"16b x4  mul32",16,4,H_MUL32},   {"17b x8  xorfld",17,8,H_XORFOLD},
     };
     cfg_t *cfgs = (filt_loc >= 0) ? small : big;
     int NC = (filt_loc >= 0) ? (int)(sizeof small/sizeof small[0])
@@ -149,14 +163,14 @@ int main(int argc, char **argv){
 
     printf("== otable_sim: %s  (%"PRIu64" msgs) ==\n", argv[1], n);
     printf("peak live orders (all symbols): %"PRIu64"\n\n", cfgs[0].live_peak);
-    printf("%-13s %8s %6s %8s %10s %8s %9s %7s\n",
+    printf("%-14s %8s %6s %8s %10s %8s %9s %7s\n",
            "config","cap","load%","maxset","overflow","ovf-ppm","live_pk","miss");
     for(int i=0;i<NC;i++){
         cfg_t *c=&cfgs[i];
         uint64_t cap=c->sets*c->ways;
         double load=100.0*(double)c->live_peak/(double)cap;
         double ppm=1e6*(double)c->overflow/(double)(c->inserts+c->overflow);
-        printf("%-13s %8"PRIu64" %6.1f %8"PRIu32" %10"PRIu64" %8.2f %9"PRIu64" %7"PRIu64"\n",
+        printf("%-14s %8"PRIu64" %6.1f %8"PRIu32" %10"PRIu64" %8.2f %9"PRIu64" %7"PRIu64"\n",
                c->name, cap, load, c->max_occ, c->overflow, ppm, c->live_peak, c->miss);
     }
     printf("\nnote: overflow=0 means that (sets,ways,hash) never exceeds WAYS in any set.\n");
