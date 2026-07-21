@@ -35,3 +35,7 @@ step1-sw-parser/test.mold
 *.out
 step5-board/syn/out/
 .Xil/
+
+# vivado router scratch, emitted into the working dir
+step5-board/clockInfo.txt
+step5-board/cong/
