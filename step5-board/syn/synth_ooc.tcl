@@ -48,6 +48,7 @@ puts "=== synth_design: part=$part period=${period}ns OT=2^${ot_sets_bits}x${ot_
 synth_design -top fh_core -part $part -mode out_of_context \
   -generic OT_SETS_BITS=$ot_sets_bits -generic OT_WAYS=$ot_ways
 
+file mkdir $outdir   ;# re-create: a `make clean` may have removed it mid-run
 report_utilization -hierarchical -file $outdir/util_synth.rpt
 report_utilization              -file $outdir/util_synth_flat.rpt
 report_timing_summary -delay_type max -max_paths 10 -file $outdir/timing_synth.rpt

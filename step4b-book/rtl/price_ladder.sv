@@ -90,16 +90,60 @@ module price_ladder #(
     if (aq_we) askq[aq_waddr] <= aq_wdata;
   end
 
-  logic [LEVELS-1:0] bidocc, askocc;
+  // ---- occupancy, with a per-group summary for a two-level best scan ----
+  // A flat priority scan over all LEVELS bits is a LEVELS-deep chain: it was
+  // the dominant timing path and made synthesis take ~40 min. Instead the
+  // bitmap is cut into NGRP groups of GRP levels and a registered `gany` bit
+  // per group says whether that group holds anything. Finding the best level
+  // is then two small encodes (group, then bit within the group) instead of
+  // one huge one, and the group OR-reduce is off the critical path because it
+  // is computed when the bit is written, not when the best is read.
+  localparam int GRP  = 64;
+  localparam int NGRP = LEVELS / GRP;
+  localparam int GRPW = $clog2(GRP);
+  localparam int NGW  = $clog2(NGRP);
 
-  // ---- combinational best-of-book from the occupancy bitmaps ----
+  logic [LEVELS-1:0] bidocc, askocc;
+  logic [NGRP-1:0]   bid_gany, ask_gany;
+
+  function automatic logic [GRPW-1:0] hi_in_grp(input logic [GRP-1:0] v);
+    hi_in_grp = '0;
+    for (int i = 0; i < GRP; i++) if (v[i]) hi_in_grp = i[GRPW-1:0];
+  endfunction
+  function automatic logic [GRPW-1:0] lo_in_grp(input logic [GRP-1:0] v);
+    lo_in_grp = '0;
+    for (int i = GRP-1; i >= 0; i--) if (v[i]) lo_in_grp = i[GRPW-1:0];
+  endfunction
+  function automatic logic [NGW-1:0] hi_grp(input logic [NGRP-1:0] v);
+    hi_grp = '0;
+    for (int i = 0; i < NGRP; i++) if (v[i]) hi_grp = i[NGW-1:0];
+  endfunction
+  function automatic logic [NGW-1:0] lo_grp(input logic [NGRP-1:0] v);
+    lo_grp = '0;
+    for (int i = NGRP-1; i >= 0; i--) if (v[i]) lo_grp = i[NGW-1:0];
+  endfunction
+
+  // group-occupancy after writing one bit — evaluated at write time
+  function automatic logic gany_after(input logic [LEVELS-1:0] occ,
+                                      input logic [LEVW-1:0]   idx,
+                                      input logic              bit_val);
+    automatic logic [NGW-1:0] g = idx[LEVW-1:GRPW];
+    automatic logic [GRP-1:0] w = occ[g*GRP +: GRP];
+    w[idx[GRPW-1:0]] = bit_val;
+    return |w;
+  endfunction
+
+  // ---- best-of-book: two-level scan ----
   logic            has_bid, has_ask;
   logic [LEVW-1:0] bbi, bai;
   always_comb begin
-    has_bid = 1'b0; bbi = '0;
-    for (int i = 0; i < LEVELS; i++) if (bidocc[i]) begin has_bid = 1'b1; bbi = i[LEVW-1:0]; end
-    has_ask = 1'b0; bai = '0;
-    for (int i = LEVELS-1; i >= 0; i--) if (askocc[i]) begin has_ask = 1'b1; bai = i[LEVW-1:0]; end
+    automatic logic [NGW-1:0] gb, ga;
+    has_bid = |bid_gany;
+    gb      = hi_grp(bid_gany);
+    bbi     = {gb, hi_in_grp(bidocc[gb*GRP +: GRP])};
+    has_ask = |ask_gany;
+    ga      = lo_grp(ask_gany);
+    bai     = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};
   end
 
   typedef enum logic [2:0] { IDLE, S_REM, S_ADD, S_BQ, S_OUT } state_t;
@@ -168,6 +212,8 @@ module price_ladder #(
       oob_cnt   <= '0;
       bidocc    <= '0;
       askocc    <= '0;
+      bid_gany  <= '0;
+      ask_gany  <= '0;
       o_has_bid <= 1'b0; o_bid_price <= '0; o_bid_qty <= '0;
       o_has_ask <= 1'b0; o_ask_price <= '0; o_ask_qty <= '0;
     end else begin
@@ -191,17 +237,30 @@ module price_ladder #(
 
         S_REM: begin
           if (r_rem_ok) begin
+            automatic logic nz = (rem_new != 0);
             r_rem_new <= rem_new;
-            if (r_is_bid) bidocc[r_rem_idx] <= (rem_new != 0);
-            else          askocc[r_rem_idx] <= (rem_new != 0);
+            if (r_is_bid) begin
+              bidocc[r_rem_idx] <= nz;
+              bid_gany[r_rem_idx[LEVW-1:GRPW]] <= gany_after(bidocc, r_rem_idx, nz);
+            end else begin
+              askocc[r_rem_idx] <= nz;
+              ask_gany[r_rem_idx[LEVW-1:GRPW]] <= gany_after(askocc, r_rem_idx, nz);
+            end
           end
           state <= S_ADD;
         end
 
+        // bidocc/askocc already reflect S_REM's write here, so the group
+        // summary stays correct even when both steps hit the same group
         S_ADD: begin
           if (r_add_ok) begin
-            if (r_is_bid) bidocc[r_add_idx] <= 1'b1;
-            else          askocc[r_add_idx] <= 1'b1;
+            if (r_is_bid) begin
+              bidocc[r_add_idx] <= 1'b1;
+              bid_gany[r_add_idx[LEVW-1:GRPW]] <= 1'b1;
+            end else begin
+              askocc[r_add_idx] <= 1'b1;
+              ask_gany[r_add_idx[LEVW-1:GRPW]] <= 1'b1;
+            end
           end
           state <= S_BQ;
         end
