@@ -69,3 +69,22 @@ clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch real.mold syn/out
 
 .PHONY: test test-verilator golden test-real stress synth impl clean
+
+# ---------- wire path: Ethernet frames -> parser -> feed handler -> BBO ----------
+WTB = tb_wire_to_bbo
+WSRC = $(SRC) rtl/eth_ip_udp_rx.sv
+test.eth: $(STEP1)/test.mold
+	python3 $(STEP1)/mold2eth.py $(STEP1)/test.mold test.eth
+
+test-wire: test.eth
+	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > bbo_gold.log
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o wtbsim --top-module $(WTB) $(WSRC) tb/tb_wire_to_bbo.sv
+	./obj_dir/wtbsim +eth=test.eth +loc=$(LOC) +base=$(BASE) +gap=$(GAP)
+	diff bbo_gold.log bbo_rtl.log && echo "PASS: wire->BBO == golden"
+
+real.eth: real.mold
+	python3 $(STEP1)/mold2eth.py real.mold real.eth
+
+test-wire-real: real.eth
+	$(MAKE) test-wire ITCH=real.itch LOC=13 BASE=2800000 WETH=real.eth
+	@true
