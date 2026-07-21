@@ -59,15 +59,21 @@ module order_table
     logic [31:0] qty;
   } oentry_t;
 
-  // WAYS independent banks; each read/written at a set index. URAM has no
-  // reset, so valid bits start cleared via `initial` (Vivado inits URAM;
-  // real silicon may instead sweep-clear at startup).
-  oentry_t bank [WAYS-1:0][SETS-1:0];
-  oentry_t rdq  [WAYS-1:0];            // registered read of the current set
-  initial begin
-    for (int w = 0; w < WAYS; w++)
-      for (int s = 0; s < SETS; s++) bank[w][s] = '0;
-  end
+  // One memory per way (built in the generate below), NOT one array indexed by
+  // a variable way. Writing `bank[way][set]` with a variable `way` blocks RAM
+  // inference outright: Vivado flattens the table into flip-flops (measured:
+  // 565 k FFs, 0 BRAM, 0 URAM — see step5-board/README.md). A decoded write
+  // enable per way makes each way a plain single-write/single-read memory,
+  // which is the pattern that maps to BRAM/URAM.
+  oentry_t rdq [WAYS-1:0];             // registered read of the current set
+
+  // Unified write port, driven combinationally so the write lands in the same
+  // cycle the FSM decides it — that same-cycle write is what keeps
+  // cross-message same-set accesses hazard-free without forwarding.
+  logic                 we;
+  logic [WAYW-1:0]      w_way;
+  logic [SETS_BITS-1:0] w_set;
+  oentry_t              w_entry;
 
   typedef enum logic [1:0] { IDLE, EXEC, U_EXEC } state_t;
   state_t state;
@@ -119,6 +125,69 @@ module order_table
     end
   end
 
+  // ---- write port: what this cycle stores, if anything ----
+  // Every case writes a whole entry (an invalidation writes all-zero) so each
+  // way stays a simple one-write-port memory.
+  always_comb begin
+    we      = 1'b0;
+    w_way   = '0;
+    w_set   = set0;
+    w_entry = '0;
+    unique case (state)
+      EXEC: begin
+        unique case (m.msg_type)
+          "A", "F":
+            if ((m.locate == track_locate) && have_free) begin
+              we = 1'b1; w_way = free_way; w_set = set0;
+              w_entry = '{valid:1'b1, oref:m.order_ref, locate:m.locate,
+                          side:m.side, price:m.price, qty:m.shares};
+            end
+          "D":
+            if (hit) begin                       // remove the order
+              we = 1'b1; w_way = hit_way; w_set = set0; w_entry = '0;
+            end
+          "E", "C", "X":
+            if (hit) begin
+              we = 1'b1; w_way = hit_way; w_set = set0;
+              if (rdq[hit_way].qty <= m.shares) w_entry = '0;   // fully consumed
+              else begin
+                w_entry     = rdq[hit_way];
+                w_entry.qty = rdq[hit_way].qty - m.shares;
+              end
+            end
+          "U":
+            if (hit) begin                       // remove old; new is written in U_EXEC
+              we = 1'b1; w_way = hit_way; w_set = set0; w_entry = '0;
+            end
+          default: ;
+        endcase
+      end
+      U_EXEC:
+        if (have_free_u) begin
+          we = 1'b1; w_way = free_way_u; w_set = set1;
+          w_entry = '{valid:1'b1, oref:m.new_order_ref, locate:old_loc,
+                      side:old_side, price:m.price, qty:m.shares};
+        end
+      default: ;
+    endcase
+  end
+
+  // ---- the ways: one memory each, registered read, decoded write ----
+  genvar gw;
+  generate
+    for (gw = 0; gw < WAYS; gw++) begin : g_way
+      // No ram_style attribute: let the tool pick (BRAM at these sizes, URAM
+      // when the production table lands). A `string` parameter cannot be used
+      // as an attribute value — Vivado rejects it as "not a packed type".
+      oentry_t mem [SETS-1:0];
+      initial for (int s = 0; s < SETS; s++) mem[s] = '0;   // valid bits clear
+      always_ff @(posedge clk) begin
+        rdq[gw] <= mem[rd_set];                             // read-before-write
+        if (we && (w_way == gw[WAYW-1:0])) mem[w_set] <= w_entry;
+      end
+    end
+  endgenerate
+
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       state        <= IDLE;
@@ -127,9 +196,6 @@ module order_table
       miss_cnt     <= '0;
     end else begin
       o_valid <= 1'b0;
-
-      // registered read of the addressed set
-      for (int w = 0; w < WAYS; w++) rdq[w] <= bank[w][rd_set];
 
       unique case (state)
         IDLE: begin
@@ -151,8 +217,6 @@ module order_table
             "A", "F": begin
               if (m.locate == track_locate) begin
                 if (have_free) begin
-                  bank[free_way][set0] <= '{valid:1'b1, oref:m.order_ref,
-                       locate:m.locate, side:m.side, price:m.price, qty:m.shares};
                   o_valid   <= 1'b1;
                   o_has_add <= 1'b1; o_add_price <= m.price; o_add_qty <= m.shares;
                 end else overflow_cnt <= overflow_cnt + 1;
@@ -161,7 +225,6 @@ module order_table
             end
             "D": begin
               if (hit) begin
-                bank[hit_way][set0].valid <= 1'b0;
                 o_valid   <= 1'b1; o_side <= rdq[hit_way].side; o_locate <= rdq[hit_way].locate;
                 o_has_rem <= 1'b1; o_rem_price <= rdq[hit_way].price; o_rem_qty <= rdq[hit_way].qty;
               end else miss_cnt <= miss_cnt + 1;
@@ -171,10 +234,6 @@ module order_table
               if (hit) begin
                 automatic logic [31:0] delta =
                     (rdq[hit_way].qty < m.shares) ? rdq[hit_way].qty : m.shares;
-                if (rdq[hit_way].qty <= m.shares)
-                  bank[hit_way][set0].valid <= 1'b0;             // fully consumed
-                else
-                  bank[hit_way][set0].qty   <= rdq[hit_way].qty - m.shares;
                 o_valid   <= 1'b1; o_side <= rdq[hit_way].side; o_locate <= rdq[hit_way].locate;
                 o_has_rem <= 1'b1; o_rem_price <= rdq[hit_way].price; o_rem_qty <= delta;
               end else miss_cnt <= miss_cnt + 1;
@@ -187,7 +246,6 @@ module order_table
                 old_price <= rdq[hit_way].price;
                 old_qty   <= rdq[hit_way].qty;
                 old_way   <= hit_way;
-                bank[hit_way][set0].valid <= 1'b0;               // remove old
                 set1   <= hash(m.new_order_ref);
                 u_same <= (hash(m.new_order_ref) == set0);
                 state  <= U_EXEC;
@@ -201,10 +259,7 @@ module order_table
         end
 
         U_EXEC: begin
-          if (have_free_u)
-            bank[free_way_u][set1] <= '{valid:1'b1, oref:m.new_order_ref,
-                 locate:old_loc, side:old_side, price:m.price, qty:m.shares};
-          else overflow_cnt <= overflow_cnt + 1;
+          if (!have_free_u) overflow_cnt <= overflow_cnt + 1;
           o_valid   <= 1'b1; o_type <= "U"; o_locate <= old_loc; o_side <= old_side;
           o_has_rem <= 1'b1; o_rem_price <= old_price; o_rem_qty <= old_qty;
           o_has_add <= 1'b1; o_add_price <= m.price;  o_add_qty <= m.shares;
