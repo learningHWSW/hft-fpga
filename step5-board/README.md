@@ -96,6 +96,55 @@ an inferable size (`OT_SETS_BITS=9`, `OT_WAYS=8` by default; override on the
 
 ### Measured: `xcu55c-fsvh2892-2L-e`, target 3.103 ns (322.265625 MHz), OT = 2^9 × 8
 
+Three synthesis defects were found and fixed (details in the git history); the
+numbers below are before, after the first two, and after all three:
+
+| | initial | +way split, +sync reads | +flat storage, +2-level scan |
+|---|---|---|---|
+| CLB LUTs | 317,572 | 223,414 | **48,375** (3.7%) |
+| CLB Registers | 576,039 | 573,770 | **11,709** (0.4%) |
+| Block RAM | 0 | 16 | **32 × RAMB36 + 8 × RAMB18** |
+| URAM | 0 | 2 | 2 |
+| DSP | 22 | 22 | 22 |
+| WNS | −4.811 ns | −3.669 ns | **−3.396 ns** |
+| Fmax | 126 MHz | 148 MHz | **154 MHz** |
+| synthesis runtime | ~40 min | ~18 min | **~4 min** |
+
+Area collapsed — 85% fewer LUTs, 98% fewer registers — and the storage finally
+lives in block RAM. Timing improved far less: **154 MHz against a 322 MHz
+requirement**, so the design still does not close.
+
+The remaining critical path is no longer memory-shaped, it is arithmetic:
+
+```
+u_msg_fifo BRAM read  ->  64x64 multiply-shift hash (DSP cascade)  ->  order-table BRAM address
+6.184 ns, 15 logic levels, of which 4.646 ns is logic and almost all of it DSP
+(DSP_MULTIPLIER, 4x DSP_ALU, 4x DSP_OUTPUT, DSP_PREADD_DATA, DSP_A_B_DATA)
+```
+
+The order table hashes `order_ref * 0x9E3779B97F4A7C15` and keeps the top
+SETS_BITS bits. A full 64×64 multiply becomes a multi-DSP cascade, and it sits
+combinationally between the input FIFO's output and the table's read address.
+Fixing it means either pipelining the hash (one extra cycle per message, the
+measured hash quality is preserved) or narrowing the multiply (cheaper, but the
+overflow measurements in data/FINDINGS.md §4.2 would have to be redone for the
+new hash). Pipelining is the lower-risk option.
+
+Per-module after all three fixes:
+
+| Module | LUTs | FFs | BRAM | URAM |
+|---|---|---|---|---|
+| `price_ladder` | 28,971 | 8,720 | 0 | 2 |
+| `mold_splitter` | 7,313 | 1,675 | 0 | 0 |
+| `delta` FIFO | 1,735 | 63 | 3 | 0 |
+| `order_table` | 1,262 | 508 | 16+8 | 0 |
+| `itch_decoder` | 1,058 | 684 | 0 | 0 |
+| `msg` FIFO | 236 | 63 | 5 | 0 |
+| `beat` FIFO | 208 | 63 | 8 | 0 |
+
+`price_ladder` is now the largest block — its 4096-bit occupancy bitmaps and
+the variable part-selects into them are the next area target.
+
 | | Used | Device | % |
 |---|---|---|---|
 | CLB LUTs | 317,572 | 1,303,680 | 24.4% |
