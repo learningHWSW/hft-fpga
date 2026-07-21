@@ -58,10 +58,12 @@ PART ?= xcu55c-fsvh2892-2L-e
 # order-table size for synthesis (production 2^16x8 needs XPM macros, see README)
 OT_SETS_BITS ?= 9
 OT_WAYS ?= 8
+# target period: 3.103 = 322.27 MHz (CMAC box), 4.000 = 250 MHz (QDMA box)
+PERIOD ?= 4.000
 synth:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS)
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(PERIOD)
 impl:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS)
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(PERIOD)
 
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch real.mold syn/out

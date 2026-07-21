@@ -146,7 +146,7 @@ module price_ladder #(
     bai     = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};
   end
 
-  typedef enum logic [2:0] { IDLE, S_REM, S_ADD, S_BQ, S_PX, S_OUT } state_t;
+  typedef enum logic [2:0] { IDLE, S_IDX, S_RD, S_REM, S_ADD, S_BQ, S_PX, S_OUT } state_t;
   state_t state;
 
   // best-of-book resolved in stages so no single cycle carries
@@ -165,21 +165,21 @@ module price_ladder #(
   logic            r_fwd;             // add level == rem level
   logic [31:0]     r_rem_new;         // qty written by the removal step
 
-  // ---- input-side decode (combinational, used while still in IDLE) ----
-  wire            in_rem_ok = i_has_rem && in_band(i_rem_price, cfg_base);
-  wire            in_add_ok = i_has_add && in_band(i_add_price, cfg_base);
-  wire [LEVW-1:0] in_rem_idx = to_idx(i_rem_price, cfg_base);
-  wire [LEVW-1:0] in_add_idx = to_idx(i_add_price, cfg_base);
-  wire [LEVW-1:0] in_first   = in_rem_ok ? in_rem_idx : in_add_idx;
+  // raw record, captured straight off the input before any arithmetic
+  logic [31:0] r_rem_price, r_add_price;
+  logic        r_has_rem,   r_has_add;
 
   // ---- read address muxing ----
+  // Every address driven here comes from a register, never from a freshly
+  // computed index: the price-to-index divide used to sit between the delta
+  // FIFO's BRAM output and this memory's address port in one cycle, which was
+  // the post-route critical path (-3.765 ns, step5-board/README.md).
   always_comb begin
     bq_raddr = bbi;                    // default: probe the best levels
     aq_raddr = bai;
     unique case (state)
-      IDLE:  if (i_valid) begin
-               if (i_side == "B") bq_raddr = in_first; else aq_raddr = in_first;
-             end
+      S_RD:  if (r_is_bid) bq_raddr = r_rem_ok ? r_rem_idx : r_add_idx;
+             else          aq_raddr = r_rem_ok ? r_rem_idx : r_add_idx;
       S_REM: if (r_is_bid) bq_raddr = r_add_idx; else aq_raddr = r_add_idx;
       default: ;                       // S_ADD/S_BQ leave the best-level probe
     endcase
@@ -227,20 +227,31 @@ module price_ladder #(
       o_valid <= 1'b0;
 
       unique case (state)
+        // capture the record only — no arithmetic on the FIFO's output
         IDLE: if (i_valid) begin
-          r_ts      <= i_ts;
-          r_is_bid  <= (i_side == "B");
-          r_rem_ok  <= in_rem_ok;
-          r_add_ok  <= in_add_ok;
-          r_rem_idx <= in_rem_idx;
-          r_add_idx <= in_add_idx;
-          r_rem_qty <= i_rem_qty;
-          r_add_qty <= i_add_qty;
-          r_fwd     <= in_rem_ok && in_add_ok && (in_rem_idx == in_add_idx);
-          if (i_has_rem && !in_band(i_rem_price, cfg_base)) oob_cnt <= oob_cnt + 1;
-          if (i_has_add && !in_band(i_add_price, cfg_base)) oob_cnt <= oob_cnt + 1;
-          state <= S_REM;
+          r_ts        <= i_ts;
+          r_is_bid    <= (i_side == "B");
+          r_has_rem   <= i_has_rem;   r_rem_price <= i_rem_price; r_rem_qty <= i_rem_qty;
+          r_has_add   <= i_has_add;   r_add_price <= i_add_price; r_add_qty <= i_add_qty;
+          state <= S_IDX;
         end
+
+        // price -> level index, from registers, with nothing else in the cycle
+        S_IDX: begin
+          automatic logic ok_r = r_has_rem && in_band(r_rem_price, cfg_base);
+          automatic logic ok_a = r_has_add && in_band(r_add_price, cfg_base);
+          automatic logic [LEVW-1:0] ix_r = to_idx(r_rem_price, cfg_base);
+          automatic logic [LEVW-1:0] ix_a = to_idx(r_add_price, cfg_base);
+          r_rem_ok  <= ok_r;  r_rem_idx <= ix_r;
+          r_add_ok  <= ok_a;  r_add_idx <= ix_a;
+          r_fwd     <= ok_r && ok_a && (ix_r == ix_a);
+          if (r_has_rem && !ok_r) oob_cnt <= oob_cnt + 1;
+          if (r_has_add && !ok_a) oob_cnt <= oob_cnt + 1;
+          state <= S_RD;
+        end
+
+        // issue the first read from the registered index
+        S_RD: state <= S_REM;
 
         S_REM: begin
           if (r_rem_ok) begin

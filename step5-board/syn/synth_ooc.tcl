@@ -32,9 +32,16 @@ create_project -in_memory -part $part
 foreach f $srcs { read_verilog -sv $f }
 
 # Constraints must be read in BEFORE synth_design — create_clock needs an
-# open design, so it lives in the XDC rather than being called here.
-set period 3.103
-read_xdc $here/fh_core.xdc
+# open design, so it lives in an XDC rather than being called here. The period
+# is written out so the same flow can target either OpenNIC user box:
+#   3.103 ns = 322.265625 MHz (CMAC-side box, the tick-to-trade path)
+#   4.000 ns = 250 MHz        (QDMA-side box, the intermediate milestone)
+set period [expr {[lindex $argv 4] ne "" ? [lindex $argv 4] : 3.103}]
+set gen_xdc $outdir/clk_period.xdc
+set fh [open $gen_xdc w]
+puts $fh "create_clock -name clk -period $period \[get_ports clk\]"
+close $fh
+read_xdc $gen_xdc
 
 # Order-table size for THIS synthesis run. The production point (2^16 sets x
 # 8 ways = 80 Mbit) cannot be inferred from a behavioral array: Vivado caps a
