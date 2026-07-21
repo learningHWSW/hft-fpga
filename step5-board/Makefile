@@ -68,7 +68,14 @@ impl:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch real.mold syn/out
 
-.PHONY: test test-verilator golden test-real stress synth impl clean
+.PHONY: test test-verilator golden test-real test-cdc stress synth impl clean
+
+# ---------- clock crossing (CMAC 322 MHz -> core clock) ----------
+# Two clocks, so this is Verilator-only: the checks are about pointer
+# synchronisation, not about the ITCH golden.
+test-cdc:
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o cdcsim --top-module tb_cdc_fifo rtl/cdc_fifo.sv tb/tb_cdc_fifo.sv
+	./obj_dir/cdcsim
 
 # ---------- wire path: Ethernet frames -> parser -> feed handler -> BBO ----------
 WTB = tb_wire_to_bbo

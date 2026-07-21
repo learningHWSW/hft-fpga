@@ -380,20 +380,63 @@ URAM address comes straight out of a flop; then floorplan the ladder into a
 Pblock near its URAMs. Both are cheap to try; adding logic levels is not the
 issue when 73% of the delay is wire.
 
-## Next (priority order, set by the place & route results above)
+## The clock crossing: `cdc_fifo`
+
+Since the core runs at 216.5 MHz and the CMAC hands over beats at 322.265625
+MHz, the two are joined by a dual-clock FIFO rather than by making the core
+faster. This is the cheaper answer *and* the more honest one: the CMAC
+interface carries 165 Gb/s of bandwidth for a 100 Gb/s wire, so beats arrive
+on ~61% of cycles and a slower reader keeps up as long as it exceeds 195.3 MHz.
+
+The crossing is written the textbook way, because a dual-clock FIFO that is
+subtly wrong still passes casual tests: pointers carry a guard bit so full and
+empty do not alias at the wrap, cross as Gray code, and go through two
+`ASYNC_REG` flops. The payload memory itself is never synchronised — the
+pointer handshake is what makes it safe.
+
+`make test-cdc` drives it from two incommensurate, phase-offset clocks:
+
+| phase | offered | received | dropped | hwm |
+|---|---|---|---|---|
+| below capacity (61% duty, reader ready) | 12,304 | 12,304 | 0 | 18 / 256 |
+| reader stalling 40% | 24,513 | 20,719 | 3,794 | 255 / 256 |
+| forced overflow (100% duty, 90% stall) | 44,512 | 22,361 | 22,151 | 255 / 256 |
+
+Received values must be strictly increasing (catching duplication and
+reordering) and `offered == received + dropped` must hold exactly, so an
+overflowing FIFO is provably counting what it discards rather than losing it.
+At realistic load only 18 of 256 entries are ever used; the depth stays at 256
+because it costs 8.5 BRAM and the margin is worth more than the tiles.
+
+Synthesis for the U55C: 56 LUTs, 113 FFs, 8.5 BRAM, **zero LUTRAM**, no
+warnings — the payload array maps to block RAM as intended.
+
+Two bugs worth recording, both found by the testbench rather than by reading:
+
+* **`32'(wbin - rbin_w)` was wrong for occupancy.** The cast sets the context
+  width, so both 9-bit pointers widened to 32 bits *before* subtracting and a
+  wrapped pointer pair reported 4,294,967,039 instead of a real depth. Modular
+  arithmetic has to happen at the pointer width.
+* **`$urandom(seed)` reseeds on every call**, so it returns the same value
+  forever. The first testbench ran the writer at 100% duty no matter what duty
+  was set — which presented as the FIFO dropping beats below capacity, i.e. as
+  a DUT bug. Replaced with an explicit xorshift.
+
+## Next
 
 Done: order table mapped to real memory, synchronous reads in `drop_fifo` and
-the ladder, hierarchical best-of-book scan, and the Ethernet/IPv4/UDP front
-end. What is left is timing, and the routed report says where to push:
+the ladder, hierarchical best-of-book scan, the Ethernet/IPv4/UDP front end,
+line-rate timing (216.5 MHz ≥ 195.3 MHz), and the CMAC clock crossing.
 
-1. **Register the ladder's occupancy bits into a dedicated URAM-address
-   stage**, so the address pins are driven directly by a flop instead of by 15
-   levels of scan logic spread across the die. This is the worst path.
-2. **Pblock the ladder next to its URAM columns.** 73% of the critical delay is
-   wire; constraining placement attacks that directly, and nothing else here
-   does.
-3. Re-run impl and check the failing-endpoint count, not just WNS — 9,800
-   failing endpoints is the more informative number right now.
-4. Only once ≥195.3 MHz closes is the II=1 work (PLAN.md) worth measuring.
-5. OpenNIC integration: drop `fh_core` into the 322 MHz CMAC-side box, or the
-   250 MHz QDMA-side box if the CMAC-side target proves out of reach.
+1. **Tick-to-trade proper.** Everything so far is a feed handler: it produces a
+   BBO and stops. The strategy, the OUCH encoder and the TCP transmit path do
+   not exist yet, and they are what the project is named after.
+2. **OpenNIC integration** — `fh_core` plus `cdc_fifo` into the 322 MHz box.
+   Deferred deliberately: the shell is verified to build, but with no card
+   there is nothing to learn by wiring it that simulation does not already say.
+3. Only once there is a reason to exceed 216 MHz is more timing work justified;
+   the next step there is splitting the ladder's read-modify-write.
+
+**A limit worth stating plainly: measured MAC-to-BBO latency needs a card.**
+Simulation gives exact cycle counts, and cycle counts are not nanoseconds on
+silicon. Until an Alveo is in a slot, no latency claim here is measured.
