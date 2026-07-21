@@ -88,10 +88,14 @@ module mold_splitter #(
   // when called from a continuous assign, so xsim never re-evaluates it and
   // msglen sticks at X. (Verilator inlines and happens to track it.) The
   // big-endian length prefix is win bytes 0..1: {byte0, byte1}.
+  // msglen is REGISTERED, not read out of `win` combinationally. Reading it
+  // from the window put win -> length -> readiness compare -> consume -> vcnt
+  // arithmetic in one cycle, which became the critical path once the book was
+  // pipelined. The next window value is computed anyway for the shift, so the
+  // next front's length is registered from it and is always in step with `win`.
   logic [15:0] msglen;
   logic        msg_ready;      // a full message sits at the window front
   logic        hdr_ready;      // a full MoldUDP64 header sits at the front
-  assign msglen    = {win[7:0], win[15:8]};
   assign msg_ready = (vcnt >= 2) && (32'(vcnt) >= 32'(msglen) + 2);
   assign hdr_ready = (vcnt >= HDR_B);
 
@@ -148,13 +152,17 @@ module mold_splitter #(
   end
 
   // ---- window update + control (registered) ----
-  logic [WINW-1:0] win_shifted;
+  logic [WINW-1:0] win_shifted, win_next;
   assign win_shifted = win >> (8 * consume);
+  assign win_next    = accept
+                     ? (win_shifted | (beat_ext << (8 * (32'(vcnt) - 32'(consume)))))
+                     : win_shifted;
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       state         <= HDR;
       win           <= '0;
+      msglen        <= '0;
       vcnt          <= '0;
       msgs_left     <= '0;
       expected_seq  <= 64'd1;
@@ -172,11 +180,9 @@ module mold_splitter #(
       ev_eos <= 1'b0;
 
       // window: shift out `consume` bytes, OR in an accepted beat at the tail
-      if (accept)
-        win <= win_shifted | (beat_ext << (8 * (32'(vcnt) - 32'(consume))));
-      else
-        win <= win_shifted;
-      vcnt <= vcnt - consume + (accept ? beatlen : '0);
+      win    <= win_next;
+      msglen <= {win_next[7:0], win_next[15:8]};   // stays in step with `win`
+      vcnt   <= vcnt - consume + (accept ? beatlen : '0);
 
       // control FSM (mirrors dump_mold.py's receiver model)
       unique case (state)
