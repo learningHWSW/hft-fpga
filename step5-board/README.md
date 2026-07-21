@@ -7,23 +7,48 @@ to get resource and timing facts that simulation cannot give.
 
 ## What runs here, and what is blocked
 
-This machine has Vivado/Vitis 2025.2 and the `xcu55c-fsvh2892-2L-e` part, but
-**no Alveo card, no XRT, and no Vitis platform installed** (and it is WSL2, which
-cannot do PCIe passthrough to an Alveo anyway). So:
+This machine has Vivado 2025.2 and the `xcu55c-fsvh2892-2L-e` part, but **no
+Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 
 | Task | Status |
 |---|---|
 | 512-bit end-to-end integration + functional verification | ✅ done |
-| Synthesis for the real U55C part (resource / timing) | ✅ done (see below) |
-| CMAC 100G + UDP/IP front end | ⛔ needs board bring-up + GT/refclk config |
-| QDMA host reporting, `xclbin` packaging | ⛔ needs a Vitis platform (`xilinx_u55c_gen3x16_*`) + XRT |
+| Ethernet/IPv4/UDP receive front end — the wire path closes | ✅ done |
+| Synthesis and place & route for the real U55C part | ✅ done (see below) |
+| OpenNIC shell buildable for U55C on this toolchain | ✅ verified (see below) |
+| Meeting the OpenNIC user-box clock | ❌ open — the remaining gap |
 | Hardware replay / measured MAC-to-BBO latency | ⛔ needs a card |
 
-The Vitis packaging follows the `rtl_kernels` pattern in
-[Vitis_Accel_Examples](https://github.com/Xilinx/Vitis_Accel_Examples) (RTL
-kernel + AXI-Stream, `v++` link against a platform). That flow cannot be run
-until a platform and XRT are installed; the RTL boundary here (`fh_core`, pure
-AXI-Stream in / status + BBO out) is already the shape such a kernel needs.
+### OpenNIC is a viable host — and it removes two blockers
+
+[open-nic-shell](https://github.com/Xilinx/open-nic-shell) provides the CMAC
+subsystem, the QDMA subsystem and a packet adapter, with two user-logic boxes:
+a 322.265625 MHz one on the CMAC side and a 250 MHz one on the QDMA side. Both
+present 512-bit AXI-Stream with 64-bit tkeep — the shape `fh_core` already has.
+
+Its README lists Vivado 2020.x–2022.1 and this machine has 2025.2, so the
+version gap was checked rather than assumed: **the shell builds for `au55c` on
+Vivado 2025.2 with zero errors**, generating 100 IP cores including
+`cmac_usplus_0` complete with a synthesised `.dcp`. Nothing in the flow pins IP
+versions (`create_ip -name cmac_usplus -vendor xilinx.com`, no `-version`),
+which is why the gap does not bite. The board file ships in the repo and no
+Vitis platform or XRT is needed. Implementation was not run (`-impl 0`);
+`build.tcl` does hardcode `-flow {Vivado Implementation 2020}`, which may need
+a one-line change there.
+
+So the earlier blockers — GT/refclk bring-up and a Vitis platform — are gone.
+What remains is timing: the 322 MHz box is the tick-to-trade path (CMAC RX and
+TX in the same box, so wire-to-wire never touches PCIe), and the design does
+not yet run that fast.
+
+### The clock that actually matters
+
+At 512 bits a beat is 64 bytes, so sustaining a 100 Gb/s line needs
+12.5 GB/s ÷ 64 B = **195.3 MHz**. That, not 250 MHz, is the throughput
+threshold; 250 MHz and 322 MHz are the two boxes' clocks. For reference the
+measured feed load is far below line rate — p99.99 of 16 messages per
+microsecond, and the input FIFO's high-water mark on a 5 M-message replay is
+5 entries out of 512.
 
 ## Run
 
@@ -39,9 +64,18 @@ make impl              # + place & route
 ## Integration: `fh_core`
 
 ```
-in(512b) -> [beat FIFO] -> mold_splitter -> itch_decoder
-         -> [msg FIFO]  -> order_table   -> [delta FIFO] -> price_ladder -> BBO
+eth frames -> eth_ip_udp_rx -> [beat FIFO] -> mold_splitter -> itch_decoder
+                            -> [msg FIFO]  -> order_table   -> [delta FIFO]
+                            -> price_ladder -> BBO
 ```
+
+`eth_ip_udp_rx` is deliberately not a general network stack. A receive-only
+multicast feed needs three checks — IPv4 with IHL=5, protocol UDP, and the
+configured group/port — plus a header strip; everything else (VLAN, IHL != 5,
+non-UDP, wrong group) is dropped and counted. Pinning the accepted layout is
+what makes it cheap: with a fixed 42-byte header the payload realignment is a
+constant concatenation of the previous beat's top 22 bytes with this beat's low
+42, so this stage needs no variable barrel shifter at all.
 
 The 64-bit testbenches never exposed a rate problem because the decoder was the
 bottleneck there. At 512-bit the producer is *faster* than the consumers: the
@@ -156,7 +190,9 @@ Place & route completes cleanly and the design occupies ~3% of the device, so
 there is ample room for the CMAC/UDP front end and more symbols.
 
 **Timing remains the open item: 146 MHz against the 322.265625 MHz target.**
-The post-route critical path is now the price-to-index conversion:
+(Superseded — see the 250 MHz section below, which takes this to 166.8 MHz
+post-route and retargets the clock to the 195.3 MHz that 100 Gb/s needs.)
+The post-route critical path at this point was the price-to-index conversion:
 
 ```
 u_delta_fifo BRAM read  ->  in_band()/to_idx() ((price-base)/TICK)  ->  ladder qty URAM address
@@ -227,22 +263,102 @@ than the production point. The design as written is not implementable — fixing
 ## Structure
 
 ```
-rtl/fh_core.sv     — 512-bit chain + elastic FIFOs + status block
-rtl/drop_fifo.sv   — elastic FIFO with drop-on-full accounting + high-water mark
-tb/tb_fh_core.sv   — .mold beats -> BBO, canonical log (golden = step 4b's dump_bbo.py)
-syn/synth_ooc.tcl  — OOC synthesis/implementation for the real part
-syn/fh_core.xdc    — 322.265625 MHz CMAC datapath clock
+rtl/eth_ip_udp_rx.sv  — Ethernet/IPv4/UDP strip + group filter (fixed 42B header)
+rtl/fh_core.sv        — 512-bit chain + elastic FIFOs + status block
+rtl/drop_fifo.sv      — elastic FIFO with drop-on-full accounting + high-water mark
+tb/tb_fh_core.sv      — .mold beats -> BBO (golden = step 4b's dump_bbo.py)
+tb/tb_wire_to_bbo.sv  — Ethernet frames -> parser -> fh_core -> BBO
+syn/synth_ooc.tcl     — OOC synthesis/implementation, target period as an argument
 ```
 
-## Next (priority order, set by the synthesis results above)
+`make test-wire` / `test-wire-real` run the wire path. On the 5 M-message AAPL
+replay: 1,127,057 frames in, 1,122,567 kept, 2,245 rejected as non-IPv4 and
+2,245 on group/port — exactly the counts `mold2eth.py` injects — with 1779 BBO
+updates matching the golden and zero drops.
 
-1. **Make the order table map to real memory.** Split `bank` into per-way
-   arrays with a decoded write enable so each way is a single-write/single-read
-   memory; then move the production size onto `xpm_memory_sdpram` (URAM). This
-   removes ~227 k LUTs and ~565 k FFs and is the prerequisite for everything else.
-2. **Synchronous reads in `drop_fifo` and the ladder's qty arrays** so they
-   become block RAM instead of LUTRAM, and drop off the critical path.
-3. **Pipeline the ladder**: split price→index from the occupancy update, and
-   replace the flat 4096-bit best-of-book scan with a hierarchical one.
-4. Re-run synthesis; only then is the II=1 work (PLAN.md) worth measuring.
-5. CMAC + UDP/IP front end and QDMA reporting once a platform/card is available.
+### Timing work at the 250 MHz target (4.000 ns)
+
+With the memories fixed the bottleneck moved around the design, one stage at a
+time. Each step below was verified against the software golden on real data
+before the next was attempted:
+
+| change | synth Fmax | LUTs |
+|---|---|---|
+| starting point (S_OUT split) | 153 MHz | 52,000 |
+| register the record before price→index | 179.7 MHz | 51,961 |
+| split the order table's read-modify-write | 200.2 MHz | 51,952 |
+| drop the divide from the band check | **203.3 MHz** | **42,374** |
+| register the splitter's front message length | 203.3 MHz | 42,374 |
+
+Place & route on that last netlist (77 min, far longer than the ~16 min of the
+earlier hopeless runs — the router works harder when the target is within
+reach):
+
+| | synth | post-route |
+|---|---|---|
+| WNS @ 4.000 ns | −0.919 ns | **−1.996 ns** |
+| Fmax | 203.3 MHz | **166.8 MHz** |
+| failing endpoints | 78 / 17,752 | 9,800 / 18,216 |
+
+| resource | post-route | of U55C |
+|---|---|---|
+| CLB LUTs | 34,273 | 2.63 % |
+| CLB registers | 12,250 | 0.47 % |
+| Block RAM tiles | 36 | 1.79 % |
+| URAM | 2 | 0.21 % |
+| DSPs | 2 | 0.02 % |
+
+Resources are a rounding error on this part; **timing is the whole story.** The
+design does not meet 250 MHz, and 166.8 MHz is also short of the 195.3 MHz that
+100 Gb/s actually requires — so as it stands this core cannot absorb a saturated
+wire, though it clears the ~4 Mmsg/s the real feed peaks at by a wide margin.
+
+Two things are worth taking from this. The largest single win came from
+*removing* arithmetic rather than pipelining it: `(price-base)/TICK < LEVELS`
+is the same as `(price-base) < LEVELS*TICK`, and dropping that divide took
+9,500 LUTs with it. And the last change bought nothing — registering the
+splitter's `msglen` moved the path's name but not its delay, because the length
+was a bare bit-select with no logic in it. Pipelining only helps where there is
+logic to split.
+
+The remaining critical path is **routing, not logic**, before and after P&R —
+but it is not the same path, and that matters:
+
+* after synthesis it was the splitter's 1024-bit barrel shifter, 1.381 ns logic
+  against 3.521 ns route (72%);
+* after routing it is the ladder's group-occupancy bit driving the quantity
+  URAM's address (`bid_gany_reg[21]` → `bidq_reg_uram_0/ADDR_A[2]`), 15 logic
+  levels, 1.458 ns logic against 4.014 ns route (73%).
+
+I had written that the barrel shifter was the thing to restructure next. The
+routed result says otherwise: the shifter placed better than estimated, and the
+real bottleneck is that the best-of-book occupancy scan feeds a hard block's
+address pins, which are fixed in place and pull the logic that drives them
+across the die. That is why the failing endpoint count exploded from 78 to
+9,800 — it is not one path missing narrowly but a broad set of ladder paths
+sitting just under the line, which is the signature of a placement/fanout
+problem rather than a depth problem.
+
+So the next move is **not** more pipeline stages. In order of expected value:
+register the ladder's occupancy bits into a dedicated address stage so the
+URAM address comes straight out of a flop; then floorplan the ladder into a
+Pblock near its URAMs. Both are cheap to try; adding logic levels is not the
+issue when 73% of the delay is wire.
+
+## Next (priority order, set by the place & route results above)
+
+Done: order table mapped to real memory, synchronous reads in `drop_fifo` and
+the ladder, hierarchical best-of-book scan, and the Ethernet/IPv4/UDP front
+end. What is left is timing, and the routed report says where to push:
+
+1. **Register the ladder's occupancy bits into a dedicated URAM-address
+   stage**, so the address pins are driven directly by a flop instead of by 15
+   levels of scan logic spread across the die. This is the worst path.
+2. **Pblock the ladder next to its URAM columns.** 73% of the critical delay is
+   wire; constraining placement attacks that directly, and nothing else here
+   does.
+3. Re-run impl and check the failing-endpoint count, not just WNS — 9,800
+   failing endpoints is the more informative number right now.
+4. Only once ≥195.3 MHz closes is the II=1 work (PLAN.md) worth measuring.
+5. OpenNIC integration: drop `fh_core` into the 322 MHz CMAC-side box, or the
+   250 MHz QDMA-side box if the CMAC-side target proves out of reach.
