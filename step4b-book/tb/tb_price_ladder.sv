@@ -39,7 +39,7 @@ module tb_price_ladder;
   logic [31:0] overflow_cnt, miss_cnt;
 
   // price_ladder outputs
-  logic        pl_ready, bbo_valid;
+  logic        bbo_valid;
   logic [47:0] bbo_ts;
   logic        bbo_has_bid, bbo_has_ask;
   logic [31:0] bbo_bid_price, bbo_bid_qty, bbo_ask_price, bbo_ask_qty;
@@ -60,12 +60,38 @@ module tb_price_ladder;
     .overflow_cnt(overflow_cnt), .miss_cnt(miss_cnt)
   );
 
+  // The order table emits o_valid as a pulse with no backpressure while the
+  // ladder has i_ready, so the two need a buffer between them — exactly what
+  // fh_core does in the real integration. Connecting them directly only ever
+  // worked by timing luck: once the ladder went from 3 to 5 cycles per record
+  // it started losing records (170 on a real replay).
+  localparam int DELW = 48 + 8 + 1 + 32 + 32 + 1 + 32 + 32;
+  logic            df_valid, df_ready;
+  logic [DELW-1:0] df_data;
+  logic [31:0]     df_drop;
+  logic [9:0]      df_lvl, df_hwm;
+
+  drop_fifo #(.WIDTH(DELW), .DEPTH(512)) u_delta_fifo (
+    .clk(clk), .rst_n(rst_n),
+    .push_valid(ot_valid),
+    .push_data({ot_ts, ot_side, ot_has_rem, ot_rem_price, ot_rem_qty,
+                ot_has_add, ot_add_price, ot_add_qty}),
+    .pop_valid(df_valid), .pop_data(df_data), .pop_ready(df_ready),
+    .drop_cnt(df_drop), .level(df_lvl), .level_max(df_hwm)
+  );
+
   price_ladder #(.LEVELS(4096), .TICK(100)) pl (
     .clk(clk), .rst_n(rst_n), .cfg_base(cfg_base),
-    .i_valid(ot_valid), .i_ts(ot_ts), .i_side(ot_side),
-    .i_has_rem(ot_has_rem), .i_rem_price(ot_rem_price), .i_rem_qty(ot_rem_qty),
-    .i_has_add(ot_has_add), .i_add_price(ot_add_price), .i_add_qty(ot_add_qty),
-    .i_ready(pl_ready),
+    .i_valid(df_valid),
+    .i_ts       (df_data[185:138]),
+    .i_side     (df_data[137:130]),
+    .i_has_rem  (df_data[129]),
+    .i_rem_price(df_data[128:97]),
+    .i_rem_qty  (df_data[96:65]),
+    .i_has_add  (df_data[64]),
+    .i_add_price(df_data[63:32]),
+    .i_add_qty  (df_data[31:0]),
+    .i_ready    (df_ready),
     .o_valid(bbo_valid), .o_ts(bbo_ts),
     .o_has_bid(bbo_has_bid), .o_bid_price(bbo_bid_price), .o_bid_qty(bbo_bid_qty),
     .o_has_ask(bbo_has_ask), .o_ask_price(bbo_ask_price), .o_ask_qty(bbo_ask_qty),
@@ -79,7 +105,7 @@ module tb_price_ladder;
 
   always @(posedge clk) begin
     if (rst_n) begin
-      if (ot_valid && !pl_ready) n_dropped++;   // ladder busy when a record arrived
+      n_dropped = df_drop;                      // records lost by the buffer
       if (bbo_valid) begin
         n_bbo++;
         $fdisplay(fd_log, "%0d bid=%0d:%0d ask=%0d:%0d",
