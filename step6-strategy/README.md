@@ -107,25 +107,102 @@ Two things this does *not* prove, stated plainly:
 * `o_ready` is tied high, so the drop-on-backpressure path is exercised only in
   the sense that its counter is asserted to be zero.
 
+## The OUCH builder
+
+Turns an order intent into the bytes that go on the wire. Per PLAN §6 the
+**session is software's job** — login, sequence recovery, retransmission and
+heartbeats all live on the host, which hands this block nothing but static
+configuration. What stays in hardware is the only part that has to be fast:
+assembling and firing the packet the instant the book says to.
+
+That makes it a constant concatenation of registered configuration with three
+live fields (side, shares, price) — pure wiring, **one cycle, no state machine,
+no memory**. The packet is 52 bytes, so it fits in a single 512-bit beat.
+
+```
+SoupBinTCP  0..1  Packet Length     2  big-endian (= 50)
+            2     Packet Type       1  'U' unsequenced data
+OUCH 4.2    3     Message Type      1  'O' enter order
+            4..17 Order Token      14
+            18    Buy/Sell          1
+            19..22 Shares           4  big-endian
+            23..30 Stock            8  ASCII, space padded
+            31..34 Price            4  big-endian, 1e-4 units
+            35..38 Time in Force    4  big-endian (0 = IOC)
+            39..42 Firm             4
+            43/44/45  Display / Capacity / Sweep eligible
+            46..49 Minimum Quantity 4  big-endian
+            50/51 Cross Type / Customer Type
+```
+
+Price needs no conversion — ITCH and OUCH both use 1e-4 units, so the book's
+price is already the order's price.
+
+The order token is a 6-character prefix plus the order counter as **8 hex
+digits**, not decimal: binary-to-decimal costs a divider and buys nothing when
+the token only has to be unique, not readable.
+
+**A caveat that matters more than the code.** The field offsets and widths are
+structural and are verified by decoding a generated packet, but the
+single-character *enum values* — display, capacity, sweep eligibility, cross
+type, customer type — are the part of the spec most easily gotten wrong from
+memory, and a wrong capacity code is a compliance problem rather than a bug.
+Every one of them is a configuration input rather than a constant, so the host
+can correct them without a rebuild, and the defaults here are **placeholders to
+be confirmed against the current NASDAQ specification** before this reaches an
+exchange.
+
+### Verified two ways
+
+The golden diff proves the RTL and the Python agree; it does not prove either
+is right. So a generated packet is also decoded field by field:
+
+```
+total bytes: 52     soup len: 50    soup type: U    msg type: O
+token: FPGA0100000000    side: S    shares: 100
+stock: 'AAPL    '        price: 2890300 => $289.0300    tif: 0
+firm: 'HFT1'   disp/cap/sw: Y P N   min qty: 0   cross/cust: N N
+```
+
+which matches the first order log line, `... SELL qty=100 px=2890300`. All 52
+tokens across the run are unique.
+
 ## Resources and timing
 
 Out-of-context synthesis for `xcu55c-fsvh2892-2L-e` at the core's 4.618 ns:
 
-| | |
-|---|---|
-| CLB LUTs | 598 |
-| CLB registers | 471 |
-| DSPs | **0** |
-| WNS | **+2.251 ns** (~422 MHz) |
+| | `strategy` | `ouch_builder` |
+|---|---|---|
+| CLB LUTs | 598 | — |
+| CLB registers | 471 | 396 |
+| DSPs | **0** | **0** |
+| WNS | **+2.251 ns** (~422 MHz) | **+3.898 ns** (~1.4 GHz) |
 
-Three times the headroom of the core clock, so the strategy is nowhere near
-the critical path and there is room for a much richer rule before timing
-becomes the constraint.
+Both sit far off the critical path — the core clock is 216.5 MHz — so there is
+room for a much richer rule before timing becomes the constraint. The builder
+is fast because it is only wiring.
+
+`ouch_builder` synthesis emits 96 warnings, all of one kind: `m_tdata[416]`
+through `[511]` are driven by constants. That is 12 bytes × 8 bits, exactly the
+unused tail of the 64-byte beat beyond the 52-byte packet, which `m_tkeep`
+masks off. Expected, not a defect.
 
 ## Files
 
 ```
 rtl/strategy.sv          the rule, the risk gate
-scripts/dump_orders.py   golden model — the specification, in Python
-tb/tb_strategy.sv        self-checking TB, diffed against the golden
+rtl/ouch_builder.sv      order intent -> SoupBinTCP + OUCH 4.2 bytes
+scripts/dump_orders.py   golden model for the rule — the specification, in Python
+scripts/dump_ouch.py     golden model for the wire format
+tb/tb_strategy.sv        self-checking TB for the chain, diffed against both
 ```
+
+## What is still missing for tick-to-trade
+
+The chain now runs wire → book → decision → order bytes. What it does not have:
+
+1. **A TCP transmit path.** OUCH runs over SoupBinTCP over TCP, and there is no
+   TCP here. The packet is assembled but has nothing to carry it.
+2. **Real fills.** Position is optimistic; the host does not yet report back.
+3. **Measured latency.** Cycle counts are exact in simulation and are not
+   nanoseconds on silicon. That needs a card.

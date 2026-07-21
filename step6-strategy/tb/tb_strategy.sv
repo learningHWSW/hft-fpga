@@ -39,7 +39,14 @@ module tb_strategy;
   logic        o_valid, o_is_buy;
   logic [47:0] o_ts;
   logic [31:0] o_qty, o_price;
-  logic        o_ready = 1;          // golden models no TX backpressure
+  logic        o_ready;              // driven by the OUCH builder's readiness
+
+  // OUCH builder outputs
+  logic [511:0] p_tdata;
+  logic [63:0]  p_tkeep;
+  logic         p_tvalid, p_tlast;
+  logic         p_tready = 1;        // golden models no TX backpressure
+  logic [31:0]  pkt_cnt, token_seq;
 
   logic [31:0] sent_cnt, blk_pos_cnt, blk_inflight_cnt, blk_txfull_cnt;
   logic signed [31:0] position;
@@ -62,7 +69,24 @@ module tb_strategy;
     .position(position), .inflight(inflight)
   );
 
-  int          fout;
+  // chained, so this run checks the strategy AND the packet it produces
+  ouch_builder #(.DATA_W(512)) bld (
+    .clk(clk), .rst_n(rst_n),
+    .cfg_token_prefix({"1", "0", "A", "G", "P", "F"}),   // "FPGA01", byte 0 first
+    .cfg_stock({" ", " ", " ", " ", "L", "P", "A", "A"}), // "AAPL    "
+    .cfg_firm({"1", "T", "F", "H"}),                      // "HFT1"
+    .cfg_tif(32'd0),                                      // IOC
+    .cfg_min_qty(32'd0),
+    .cfg_display("Y"), .cfg_capacity("P"), .cfg_sweep("N"),
+    .cfg_cross("N"), .cfg_cust("N"),
+    .i_valid(o_valid), .i_is_buy(o_is_buy), .i_qty(o_qty), .i_price(o_price),
+    .i_ready(o_ready),
+    .m_tdata(p_tdata), .m_tkeep(p_tkeep), .m_tvalid(p_tvalid), .m_tlast(p_tlast),
+    .m_tready(p_tready),
+    .pkt_cnt(pkt_cnt), .token_seq(token_seq)
+  );
+
+  int          fout, fpkt;
   int          acks_due [MAXREC];
   int          fired_this_rec = 0;
 
@@ -77,14 +101,27 @@ module tb_strategy;
     end
   end
 
-  string bbo_path, out_path, line;
+  // packet monitor: dump the framed bytes as hex, byte 0 first, so the line
+  // matches what dump_ouch.py prints via bytes.hex()
+  always @(posedge clk) begin
+    if (rst_n && p_tvalid && p_tready) begin
+      automatic int nb = 0;
+      for (int i = 0; i < 64; i++) if (p_tkeep[i]) nb++;
+      for (int i = 0; i < nb; i++) $fwrite(fpkt, "%02x", p_tdata[8*i +: 8]);
+      $fwrite(fpkt, "\n");
+    end
+  end
+
+  string bbo_path, out_path, pkt_path, line;
   int    fin, rec = 0, code;
 
   initial begin
     if (!$value$plusargs("bbo=%s", bbo_path)) bbo_path = "bbo_gold.log";
     if (!$value$plusargs("out=%s", out_path)) out_path = "orders_rtl.log";
+    if (!$value$plusargs("pkt=%s", pkt_path)) pkt_path = "ouch_rtl.log";
     fin  = $fopen(bbo_path, "r");
     fout = $fopen(out_path, "w");
+    fpkt = $fopen(pkt_path, "w");
     if (fin == 0)  begin $display("FAIL: cannot open %s", bbo_path); $finish; end
 
     repeat (5) @(posedge clk);
@@ -127,13 +164,15 @@ module tb_strategy;
 
     repeat (20) @(posedge clk);
     $fclose(fout);
+    $fclose(fpkt);
     $display("TB done: %0d records, %0d orders (pos=%0d inflight=%0d)",
              rec, sent_cnt, position, inflight);
     $display("  blocked: position=%0d inflight=%0d tx-full=%0d",
              blk_pos_cnt, blk_inflight_cnt, blk_txfull_cnt);
     // the golden has no TX backpressure model, so any tx-full block would mean
     // the two are being asked different questions
-    if (blk_txfull_cnt != 0) $display("FAIL: tx-full blocks with o_ready tied high");
+    if (blk_txfull_cnt != 0) $display("FAIL: tx-full blocked -- the builder stalled the strategy");
+    if (pkt_cnt != sent_cnt) $display("FAIL: %0d orders but %0d packets", sent_cnt, pkt_cnt);
     $finish;
   end
 

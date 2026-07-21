@@ -43,3 +43,4 @@ step5-board/cong/
 # step 6: shared BBO stimulus and order logs (regenerable)
 step6-strategy/bbo_in.log
 step6-strategy/orders_*.log
+step6-strategy/ouch_*.log
