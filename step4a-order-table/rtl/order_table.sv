@@ -134,19 +134,21 @@ module order_table
     return h[SETS_BITS-1:0];
   endfunction
 
-  // ---- combinational read address ----
-  // The address must be HELD for the whole of the memory's read latency, not
-  // just the cycle the read is issued. With a one-cycle memory this was invisible
-  // -- EXEC drove set1 for the single cycle U_LOOK needed -- but once RD_LAT
-  // grew, U_LOOK fell back to the `set0` default while the read was still in
-  // flight and the pipeline delivered the wrong set. The golden caught it.
+  // ---- read address: ALWAYS a register output, never freshly hashed ----
+  // This used to hash s_msg.order_ref combinationally in IDLE, which put the
+  // message FIFO's block RAM output through the XOR fold and straight into the
+  // address pins of a 32-deep URAM cascade in one cycle. Post-route that was
+  // the whole design's critical path (5.562 ns, step5-board/README.md) --
+  // the same defect the price ladder had: combinational logic driving a hard
+  // block's address, where the sites are fixed and the cascade adds its own
+  // propagation on top.
+  //
+  // Now the hash lands in set0/set1 (flops) and the memories only ever see a
+  // register. The address is therefore valid from the FIRST cycle of LOOK
+  // rather than during IDLE, which is why the wait below counts RD_LAT and not
+  // RD_LAT-1: it costs one cycle per message.
   logic [SETS_BITS-1:0] rd_set;
-  always_comb begin
-    rd_set = set0;
-    if (state == IDLE && s_valid)                   rd_set = hash(s_msg.order_ref);
-    else if (state == EXEC && m.msg_type == "U")    rd_set = hash(m.new_order_ref);
-    else if (state == U_LOOK)                       rd_set = set1;
-  end
+  always_comb rd_set = (state == U_LOOK) ? set1 : set0;
 
   // Selection registers. The read-modify-write used to be one cycle:
   // BRAM out -> 8-way ref compare -> priority encode -> entry mux -> qty
@@ -293,7 +295,7 @@ module order_table
           if (s_valid) begin
             m    <= s_msg;
             set0 <= hash(s_msg.order_ref);
-            rd_wait <= RD_LAT[3:0] - 4'd1;
+            rd_wait <= RD_LAT[3:0];
             state <= LOOK;
           end
         end
@@ -354,7 +356,7 @@ module order_table
                 old_way   <= sel_way;
                 set1    <= hash(m.new_order_ref);
                 u_same  <= (hash(m.new_order_ref) == set0);
-                rd_wait <= RD_LAT[3:0] - 4'd1;
+                rd_wait <= RD_LAT[3:0];
                 state   <= U_LOOK;
               end else begin
                 miss_cnt <= miss_cnt + 1;
