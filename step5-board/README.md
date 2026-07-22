@@ -16,8 +16,11 @@ Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 | Ethernet/IPv4/UDP receive front end — the wire path closes | ✅ done |
 | Synthesis and place & route for the real U55C part | ✅ done (see below) |
 | OpenNIC shell buildable for U55C on this toolchain | ✅ verified (see below) |
-| Sustaining line rate (≥195.3 MHz post-route) | ✅ met — 216.5 MHz |
-| Meeting the CMAC box clock (322 MHz) directly | ❌ not met — crossed with a CDC FIFO instead |
+| Clock crossing to the CMAC's 322 MHz (`cdc_fifo`) | ✅ verified, meets 322 MHz |
+| Full tick-to-trade chain integrated and simulated | ✅ done (`t2t_top`) |
+| Line rate, **feed path alone** (≥195.3 MHz) | ✅ met — 216.5 MHz |
+| Line rate, **full chain** | ❌ **missed — 191.8 MHz, 1.8 % short** |
+| Order table at its verified size in hardware | ❌ synthesis runs 128× smaller (see below) |
 | Hardware replay / measured MAC-to-BBO latency | ⛔ needs a card |
 
 ### OpenNIC is a viable host — and it removes two blockers
