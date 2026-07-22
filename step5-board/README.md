@@ -422,6 +422,63 @@ Two bugs worth recording, both found by the testbench rather than by reading:
   was set — which presented as the FIFO dropping beats below capacity, i.e. as
   a DUT bug. Replaced with an explicit xorshift.
 
+## The full chain: `t2t_top` place & route
+
+The whole tick-to-trade path — CMAC RX → CDC → UDP parser → feed handler →
+strategy → OUCH builder → TCP framer → CDC → CMAC TX — built for the real part
+at a 4.618 ns core clock and the CMAC's fixed 3.103 ns.
+
+| | synth | post-route |
+|---|---|---|
+| core_clk WNS | −0.156 ns | **−0.595 ns** |
+| **core_clk Fmax** | 209.5 MHz | **191.8 MHz** |
+| cmac_clk WNS | +1.304 ns | **+0.480 ns** (meets 322.265625 MHz) |
+
+| resource | post-route | of U55C |
+|---|---|---|
+| CLB LUTs | 35,548 | 2.73 % |
+| CLB registers | 15,158 | 0.58 % |
+| Block RAM tiles | 52 | 2.58 % |
+| URAM | 2 | 0.21 % |
+| DSPs | 2 | 0.02 % |
+
+### It misses line rate, by 1.8 %
+
+**191.8 MHz is below the 195.3 MHz that 512 bits at 100 Gb/s requires.** The
+feed path alone closed at 216.5 MHz; adding the strategy, the encoders and the
+two clock crossings costs 25 MHz and drops it under the bar. As it stands the
+full chain cannot absorb a saturated wire — it clears the ~4 Mmsg/s the real
+feed peaks at with room to spare, but that is a different and much weaker claim.
+
+The CMAC side is fine: +0.480 ns, and its worst path is inside the receive
+CDC (`wbin_reg` → the FIFO's BRAM write enable), which is exactly where a
+322 MHz path should be.
+
+The core-side critical path is the price ladder's group-occupancy scan again —
+`bid_gany_reg[48]` → `q_bbi_reg[5]`, 13 logic levels, **1.260 ns logic against
+3.934 ns route (75.7 %)**. Registering the URAM address earlier moved the scan
+off the memory's address pins; what is left is the scan itself. Note the route
+delay grew from 2.617 ns to 3.934 ns on the *same* logic, so this is placement
+pressure from the larger design rather than anything new — which is why the
+next move is a Pblock for the ladder, not more pipelining.
+
+### ⚠ These numbers are for a 4,096-entry order table, not the verified one
+
+`fh_core` defaults to `OT_SETS_BITS = 16` (65,536 sets × 8 ways = 524,288
+entries) and **every simulation in this project runs at that size**. Synthesis
+and implementation run at `OT_SETS_BITS = 9` — 4,096 entries, 128× smaller —
+because a behavioural array that large cannot be inferred ([Synth 8-4556]).
+
+So the design that was verified and the design that was implemented are not the
+same design. Everything above understates area and probably overstates Fmax.
+`ot_overflow = 0` in simulation says nothing about the synthesized size: the
+measured per-symbol peak is 37,068 concurrent orders (data/FINDINGS.md §4.2),
+which a 4,096-entry table cannot hold.
+
+Closing that gap — instantiating the table as XPM/URAM at the measured size of
+2^13 × 8 = 65,536 entries — is the next task, and it has to happen before any
+of these numbers should be quoted as the design's.
+
 ## Next
 
 Done: order table mapped to real memory, synchronous reads in `drop_fifo` and
