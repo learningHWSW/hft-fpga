@@ -50,14 +50,31 @@ module order_table
   localparam int SETS   = 1 << SETS_BITS;
   localparam int WAYW   = (WAYS > 1) ? $clog2(WAYS) : 1;
 
+  // 130 bits, and the two fields that are NOT here are the point.
+  //
+  // `locate` was stored per entry, 16 bits x 524,288 entries = 8.4 Mbit of a
+  // constant: inserts are filtered by (m.locate == track_locate), so every
+  // stored entry carries the same value. It is reproduced on output from
+  // track_locate instead.
+  //
+  // `side` was the raw ITCH ASCII byte; only 'B' and 'S' ever occur, so one
+  // bit stores it and the byte is reconstructed on output. (This assumes the
+  // decoder never emits another value, which is true of valid ITCH.)
+  //
+  // Together that is 153 -> 130 bits, which is what makes an entry fit TWO
+  // URAM columns (144 b) instead of three (216 b) -- a third of the memory,
+  // for fields that carried no information.
   typedef struct packed {
     logic        valid;
     logic [63:0] oref;
-    logic [15:0] locate;
-    logic [7:0]  side;
+    logic        is_buy;
     logic [31:0] price;
     logic [31:0] qty;
   } oentry_t;
+
+  function automatic logic [7:0] side_of(input logic is_buy);
+    return is_buy ? "B" : "S";
+  endfunction
 
   // One memory per way (built in the generate below), NOT one array indexed by
   // a variable way. Writing `bank[way][set]` with a variable `way` blocks RAM
@@ -82,8 +99,7 @@ module order_table
   itch_msg_t            m;             // latched message
   logic [SETS_BITS-1:0] set0, set1;
   logic                 u_same;
-  logic [15:0]          old_loc;
-  logic [7:0]           old_side;
+  logic                 old_is_buy;
   logic [31:0]          old_price, old_qty;
   logic [WAYW-1:0]      old_way;
 
@@ -156,8 +172,8 @@ module order_table
           "A", "F":
             if ((m.locate == track_locate) && sel_free_ok) begin
               we = 1'b1; w_way = sel_free_way; w_set = set0;
-              w_entry = '{valid:1'b1, oref:m.order_ref, locate:m.locate,
-                          side:m.side, price:m.price, qty:m.shares};
+              w_entry = '{valid:1'b1, oref:m.order_ref,
+                          is_buy:(m.side == "B"), price:m.price, qty:m.shares};
             end
           "D":
             if (sel_hit) begin                   // remove the order
@@ -182,8 +198,8 @@ module order_table
       U_EXEC:
         if (selu_free_ok) begin
           we = 1'b1; w_way = selu_free_way; w_set = set1;
-          w_entry = '{valid:1'b1, oref:m.new_order_ref, locate:old_loc,
-                      side:old_side, price:m.price, qty:m.shares};
+          w_entry = '{valid:1'b1, oref:m.new_order_ref,
+                      is_buy:old_is_buy, price:m.price, qty:m.shares};
         end
       default: ;
     endcase
@@ -258,7 +274,8 @@ module order_table
             end
             "D": begin
               if (sel_hit) begin
-                o_valid   <= 1'b1; o_side <= sel_ent.side; o_locate <= sel_ent.locate;
+                o_valid   <= 1'b1;
+                o_side    <= side_of(sel_ent.is_buy); o_locate <= track_locate;
                 o_has_rem <= 1'b1; o_rem_price <= sel_ent.price; o_rem_qty <= sel_ent.qty;
               end else miss_cnt <= miss_cnt + 1;
               state <= IDLE;
@@ -267,15 +284,15 @@ module order_table
               if (sel_hit) begin
                 automatic logic [31:0] delta =
                     (sel_ent.qty < m.shares) ? sel_ent.qty : m.shares;
-                o_valid   <= 1'b1; o_side <= sel_ent.side; o_locate <= sel_ent.locate;
+                o_valid   <= 1'b1;
+                o_side    <= side_of(sel_ent.is_buy); o_locate <= track_locate;
                 o_has_rem <= 1'b1; o_rem_price <= sel_ent.price; o_rem_qty <= delta;
               end else miss_cnt <= miss_cnt + 1;
               state <= IDLE;
             end
             "U": begin
               if (sel_hit) begin
-                old_loc   <= sel_ent.locate;
-                old_side  <= sel_ent.side;
+                old_is_buy <= sel_ent.is_buy;
                 old_price <= sel_ent.price;
                 old_qty   <= sel_ent.qty;
                 old_way   <= sel_way;
@@ -300,7 +317,8 @@ module order_table
 
         U_EXEC: begin
           if (!selu_free_ok) overflow_cnt <= overflow_cnt + 1;
-          o_valid   <= 1'b1; o_type <= "U"; o_locate <= old_loc; o_side <= old_side;
+          o_valid   <= 1'b1; o_type <= "U";
+          o_locate  <= track_locate; o_side <= side_of(old_is_buy);
           o_has_rem <= 1'b1; o_rem_price <= old_price; o_rem_qty <= old_qty;
           o_has_add <= 1'b1; o_add_price <= m.price;  o_add_qty <= m.shares;
           state <= IDLE;

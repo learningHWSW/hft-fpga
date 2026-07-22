@@ -115,11 +115,22 @@ int main(int argc, char **argv){
     /* symbol-filtered configs (URAM scale) for the step-4a table.
      * raw low bits cluster for a single symbol (its refs are a subset of the
      * global monotonic sequence), so compare against the multiply-shift mix. */
+    /* The hash question is settled (4.3: xorfold ties multiply at zero
+     * overflow), so this sweep asks the remaining one: how SMALL can the table
+     * be and still never overflow? It matters because the synthesized design
+     * has been running at 2^9 x 8 while simulation runs at 2^16 x 8, and the
+     * real answer has to be instantiated as URAM rather than inferred.
+     * Capacity is what counts, so sets and ways are traded against each other
+     * at equal and lower totals. */
     static cfg_t small[] = {
-        {"16b x8  mul64",16,8,H_MUL64},   {"16b x8  xorfld",16,8,H_XORFOLD},
-        {"16b x8  mul32",16,8,H_MUL32},   {"16b x8  raw   ",16,8,H_RAW},
-        {"16b x4  mul64",16,4,H_MUL64},   {"16b x4  xorfld",16,4,H_XORFOLD},
-        {"16b x4  mul32",16,4,H_MUL32},   {"17b x8  xorfld",17,8,H_XORFOLD},
+        {"16b x8  xorfld",16,8,H_XORFOLD},   /* current default: known 0 */
+        {"15b x8  xorfld",15,8,H_XORFOLD},   /* 262K slots */
+        {"14b x8  xorfld",14,8,H_XORFOLD},   /* 131K */
+        {"13b x8  xorfld",13,8,H_XORFOLD},   /*  65K -- my first guess */
+        {"12b x8  xorfld",12,8,H_XORFOLD},   /*  33K */
+        {"14b x16 xorfld",14,16,H_XORFOLD},  /* 262K, deeper sets */
+        {"13b x16 xorfld",13,16,H_XORFOLD},  /* 131K */
+        {"12b x16 xorfld",12,16,H_XORFOLD},  /*  65K, same as 13bx8 */
     };
     cfg_t *cfgs = (filt_loc >= 0) ? small : big;
     int NC = (filt_loc >= 0) ? (int)(sizeof small/sizeof small[0])

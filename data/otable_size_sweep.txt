@@ -1,0 +1,14 @@
+... 16M msgs... 32M msgs... 48M msgs... 64M msgs... 80M msgs... 96M msgs... 112M msgs... 128M msgs... 144M msgs... 160M msgs... 176M msgs... 192M msgs... 208M msgs... 224M msgs... 240M msgs... 256M msgs== otable_sim: ../data/12302019.NASDAQ_ITCH50.gz  (268744780 msgs) ==
+peak live orders (all symbols): 27110
+
+config              cap  load%   maxset   overflow  ovf-ppm   live_pk    miss
+16b x8  xorfld   524288    5.2        6          0     0.00     27110 143797046
+15b x8  xorfld   262144   10.3        7          0     0.00     27110 143797046
+14b x8  xorfld   131072   20.7        8          1     1.26     27110 143798501
+13b x8  xorfld    65536   41.3        8       1220  1687.75     27081 143871145
+12b x8  xorfld    32768   76.3        8      83692 118213.88     25017 143970799
+14b x16 xorfld   262144   10.3        9          0     0.00     27110 143797046
+13b x16 xorfld   131072   20.7       12          0     0.00     27110 143797046
+12b x16 xorfld    65536   41.4       16         56    71.60     27107 143810716
+
+note: overflow=0 means that (sets,ways,hash) never exceeds WAYS in any set.
