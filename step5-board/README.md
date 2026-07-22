@@ -19,7 +19,7 @@ Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 | Clock crossing to the CMAC's 322 MHz (`cdc_fifo`) | ✅ verified, meets 322 MHz |
 | Full tick-to-trade chain integrated and simulated | ✅ done (`t2t_top`) |
 | Line rate, **feed path alone** (≥195.3 MHz) | ✅ met — 216.5 MHz |
-| Line rate, **full chain** | ❌ **missed — 163.5 MHz, 16 % short** |
+| Line rate, **full chain** | ❌ **missed — 166.7 MHz, 15 % short** |
 | Order table at its verified size in hardware | ✅ 2^16 × 8 as URAM (258 of 960) |
 | Hardware replay / measured MAC-to-BBO latency | ⛔ needs a card |
 
@@ -508,6 +508,47 @@ pipelining elsewhere.
 Worth being explicit that this is a *real* number replacing an optimistic one.
 The earlier 191.8 MHz was measured on a design that could not hold a trading
 day's orders; 163.5 MHz is measured on one that can.
+
+#### Registering the hash bought 3 MHz, and moved the problem one pin over
+
+| | before | after |
+|---|---|---|
+| post-route core_clk WNS | −1.500 ns | −1.380 ns |
+| post-route Fmax | 163.5 MHz | **166.7 MHz** |
+| cmac_clk WNS | +0.267 ns | +0.027 ns |
+
+The address path did come off the critical list. What replaced it is the same
+memory's **write data** pins:
+
+```
+u_otab/sel_ent_reg[qty]  ->  qty - shares  ->  …/mem_reg_uram_15/CAS_IN_DIN_B
+5.648 ns: logic 1.830 ns, route 3.818 ns (67.6 %)
+```
+
+Three times now the critical path has been combinational logic reaching a hard
+block's pins — the ladder's URAM address, the table's URAM address, and now the
+table's URAM data. Registering each one individually is chasing the symptom.
+
+**The cause is cascade depth, and it points at a different design point.** Each
+way is 65,536 deep, which is 16 URAM primitives cascaded (4,096 each) and 2
+wide: 32 URAM per way, 256 in total, and every access walks a 16-long chain.
+The size sweep already measured an alternative with zero overflow:
+
+| | slots | max occ | URAM/way | **cascade depth** | total URAM |
+|---|---|---|---|---|---|
+| 2^16 × 8 (deployed) | 524,288 | 6/8 | 32 | **16** | 256 |
+| 2^13 × 16 | 131,072 | 12/16 | 4 | **2** | 64 |
+
+2^13 × 16 holds a full trading day with more proportional headroom (12/16 vs
+6/8), uses a quarter of the URAM, and shortens the cascade from 16 to 2. The
+cost is 16-way comparators instead of 8.
+
+I chose 2^16 × 8 earlier on the reasoning that URAM was plentiful and timing
+was scarce, so the low-risk move was to leave the lookup logic untouched. That
+was half right: URAM *count* is not the constraint, but URAM *cascade depth*
+is, and I did not weigh it. The routed evidence says the memory's geometry
+matters more here than the comparator width, so the next experiment is
+2^13 × 16 rather than another register stage.
 
 ### ⚠ (Superseded) These numbers are for a 4,096-entry order table
 
