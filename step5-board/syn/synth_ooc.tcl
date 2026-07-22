@@ -48,8 +48,8 @@ read_xdc $gen_xdc
 # single variable at 1 Mbit ([Synth 8-4556]). Production must instantiate XPM /
 # URAM macros. To still measure the surrounding logic (barrel shifters,
 # priority encoders, FSMs), synthesize with a table small enough to infer.
-set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 9}]
-set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 8}]
+set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
+set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
 
 puts "=== synth_design: part=$part period=${period}ns OT=2^${ot_sets_bits}x${ot_ways} ==="
 synth_design -top fh_core -part $part -mode out_of_context \

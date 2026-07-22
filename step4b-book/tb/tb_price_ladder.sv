@@ -72,7 +72,7 @@ module tb_price_ladder;
     .drop_cnt(mf_drop), .level(), .level_max()
   );
 
-  order_table #(.SETS_BITS(16), .WAYS(8)) ot (
+  order_table #(.SETS_BITS(13), .WAYS(16)) ot (
     .clk(clk), .rst_n(rst_n), .track_locate(track_locate),
     .s_msg(itch_msg_t'(mf_data)), .s_valid(mf_valid), .s_ready(mf_ready),
     .o_valid(ot_valid), .o_type(ot_type), .o_ts(ot_ts), .o_locate(ot_locate), .o_side(ot_side),

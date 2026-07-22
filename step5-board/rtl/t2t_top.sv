@@ -25,12 +25,11 @@
 `timescale 1ns/1ps
 module t2t_top #(
   parameter int DATA_W        = 512,
-  // 2^16 x 8 is the measured design point (full trading day, zero overflow --
-  // data/FINDINGS.md and the size sweep). It is instantiated as URAM rather
-  // than inferred, so synthesis can finally build the size that simulation
-  // verifies instead of a 128x smaller stand-in.
-  parameter int OT_SETS_BITS  = 16,
-  parameter int OT_WAYS       = 8
+  // 2^13 x 16: measured zero-overflow design point, chosen for URAM cascade
+  // depth rather than capacity (see order_table). Instantiated as URAM, so
+  // synthesis builds the size simulation verifies.
+  parameter int OT_SETS_BITS  = 13,
+  parameter int OT_WAYS       = 16
 )(
   // ---- CMAC domain ----
   input  logic                cmac_clk,

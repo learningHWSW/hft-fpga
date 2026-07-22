@@ -55,11 +55,11 @@ stress: real.mold
 
 # ---------- synthesis / implementation for the real U55C device ----------
 PART ?= xcu55c-fsvh2892-2L-e
-# Order-table size. Now that the table is an instantiated XPM/URAM macro rather
-# than an inferred array, synthesis builds the SAME 2^16 x 8 the simulations
-# run -- the 2^9 stand-in is gone.
-OT_SETS_BITS ?= 16
-OT_WAYS ?= 8
+# Order-table geometry, instantiated as URAM so synthesis builds exactly what
+# the simulations verify. 2^13 x 16 is the measured zero-overflow point chosen
+# for cascade depth rather than capacity -- see order_table.sv.
+OT_SETS_BITS ?= 13
+OT_WAYS ?= 16
 # target period: 3.103 = 322.27 MHz (CMAC box), 4.000 = 250 MHz (QDMA box)
 PERIOD ?= 4.000
 synth:

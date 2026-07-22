@@ -61,8 +61,8 @@ read_xdc $gen_xdc
 # The order table is an instantiated XPM/URAM macro now, so synthesis builds
 # the same 2^16 x 8 the simulations verify. OTABLE_XPM selects the real macro
 # over the behavioural model Verilator uses.
-set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 9}]
-set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 8}]
+set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
+set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
 
 puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} ==="
 synth_design -top t2t_top -part $part -mode out_of_context \

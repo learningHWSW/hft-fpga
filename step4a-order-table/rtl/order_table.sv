@@ -19,14 +19,24 @@
 module order_table
   import itch5_pkg::*;
 #(
-  parameter int SETS_BITS = 16,
+  // 2^13 sets x 16 ways = 131,072 slots. Measured on a full trading day
+  // (data/otable_size_sweep.txt): zero overflow with worst-case set occupancy
+  // 12 of 16, so more proportional headroom than 2^16 x 8 gave at 6 of 8.
+  //
+  // The reason it is this geometry and not the larger one is URAM CASCADE
+  // DEPTH, which routing made visible and I had not weighed. At 2^16 deep each
+  // way is 16 URAM primitives chained (4,096 entries each), so every access
+  // walks a 16-long cascade and 256 URAM have to be placed; three separate
+  // critical paths in a row were combinational logic reaching those cascaded
+  // pins. At 2^13 the chain is 2 long and the whole table is 64 URAM.
+  parameter int SETS_BITS = 13,
   // URAM read latency. A 2^16-deep memory is 16 URAM primitives cascaded, and
   // the cascade chain is what sets this: latency 1 asks the data to traverse
   // all 16 in one cycle. Xilinx recommends >= 3 for a cascade this long, so
   // that is the default; the FSM waits RD_LAT-1 extra cycles rather than
   // assuming a number.
   parameter int RD_LAT    = 3,
-  parameter int WAYS      = 8   // 16b x8 + mix hash = 0 overflow for AAPL (full
+  parameter int WAYS      = 16
                                 // day, data/FINDINGS.md §4.2)
 )(
   input  logic         clk,

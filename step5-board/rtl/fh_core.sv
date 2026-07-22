@@ -27,8 +27,8 @@ module fh_core
   parameter int BEAT_FIFO   = 512,   // 512b payload beats
   parameter int MSG_FIFO    = 512,   // decoded messages
   parameter int DELTA_FIFO  = 512,   // book deltas
-  parameter int OT_SETS_BITS = 16,
-  parameter int OT_WAYS      = 8,
+  parameter int OT_SETS_BITS = 13,   // see order_table: cascade depth, not size
+  parameter int OT_WAYS      = 16,
   parameter int PL_LEVELS    = 4096,
   parameter int PL_TICK      = 100
 )(
