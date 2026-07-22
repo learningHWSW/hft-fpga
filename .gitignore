@@ -46,3 +46,13 @@ step6-strategy/orders_*.log
 step6-strategy/ouch_*.log
 step6-strategy/frames_*.log
 step5-board/t2t_*.log
+
+# generated wire-format replays (derived from licensed NASDAQ ITCH data --
+# these must not be published, and real.eth is 213 MB besides). Regenerate
+# with step1-sw-parser/mold2eth.py.
+*.eth
+
+# step 5: full-chain synthesis outputs and router scratch, same reasoning as
+# syn/out/ above -- large, regenerable, and different on every run
+step5-board/syn/out_t2t/
+step5-board/iter_*_CongestedCLBsAndNets.txt
