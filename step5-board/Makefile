@@ -5,7 +5,7 @@ STEP4A = ../step4a-order-table
 STEP4B = ../step4b-book
 
 SRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
-      $(STEP3B)/rtl/mold_splitter.sv $(STEP4A)/rtl/order_table.sv \
+      $(STEP3B)/rtl/mold_splitter.sv $(STEP4A)/rtl/otable_mem.sv $(STEP4A)/rtl/order_table.sv \
       $(STEP4B)/rtl/price_ladder.sv rtl/drop_fifo.sv rtl/fh_core.sv
 TB  = tb/tb_fh_core.sv
 TOP = tb_fh_core
@@ -55,8 +55,10 @@ stress: real.mold
 
 # ---------- synthesis / implementation for the real U55C device ----------
 PART ?= xcu55c-fsvh2892-2L-e
-# order-table size for synthesis (production 2^16x8 needs XPM macros, see README)
-OT_SETS_BITS ?= 9
+# Order-table size. Now that the table is an instantiated XPM/URAM macro rather
+# than an inferred array, synthesis builds the SAME 2^16 x 8 the simulations
+# run -- the 2^9 stand-in is gone.
+OT_SETS_BITS ?= 16
 OT_WAYS ?= 8
 # target period: 3.103 = 322.27 MHz (CMAC box), 4.000 = 250 MHz (QDMA box)
 PERIOD ?= 4.000
@@ -74,7 +76,7 @@ test-t2t: real.eth
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o t2tsim --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/t2t_top.sv tb/tb_t2t.sv
-	./obj_dir/t2tsim +eth=real.eth +loc=13 +base=2800000 +gap=24 +frm=t2t_rtl.log
+	./obj_dir/t2tsim +eth=real.eth +loc=13 +base=2800000 +gap=48 +frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: wire -> order frames == golden"
 
 # full tick-to-trade chain (t2t_top): two clocks, wire in -> order frame out

@@ -20,6 +20,12 @@ module order_table
   import itch5_pkg::*;
 #(
   parameter int SETS_BITS = 16,
+  // URAM read latency. A 2^16-deep memory is 16 URAM primitives cascaded, and
+  // the cascade chain is what sets this: latency 1 asks the data to traverse
+  // all 16 in one cycle. Xilinx recommends >= 3 for a cascade this long, so
+  // that is the default; the FSM waits RD_LAT-1 extra cycles rather than
+  // assuming a number.
+  parameter int RD_LAT    = 3,
   parameter int WAYS      = 8   // 16b x8 + mix hash = 0 overflow for AAPL (full
                                 // day, data/FINDINGS.md §4.2)
 )(
@@ -43,6 +49,12 @@ module order_table
   output logic         o_has_add,
   output logic [31:0]  o_add_price,
   output logic [31:0]  o_add_qty,
+
+  // Low until the post-reset clear sweep finishes. The feed must not be
+  // enabled before this rises: s_ready is low throughout, and anything that
+  // ignores s_ready (the no-backpressure market-data path does exactly that)
+  // silently loses its first SETS messages.
+  output logic         init_done,
 
   output logic [31:0]  overflow_cnt,   // insert into a full set (order dropped)
   output logic [31:0]  miss_cnt        // op on an unknown/untracked ref
@@ -83,7 +95,7 @@ module order_table
   // enable per way makes each way a plain single-write/single-read memory,
   // which is the pattern that maps to BRAM/URAM.
   localparam int EW = $bits(oentry_t); // entry width, for the flat storage
-  oentry_t rdq [WAYS-1:0];             // registered read of the current set
+  oentry_t rdq [WAYS-1:0];             // XPM read port output, RD_LAT cycles on
 
   // Unified write port, driven combinationally so the write lands in the same
   // cycle the FSM decides it — that same-cycle write is what keeps
@@ -100,6 +112,7 @@ module order_table
   logic [SETS_BITS-1:0] set0, set1;
   logic                 u_same;
   logic                 old_is_buy;
+  logic [3:0]           rd_wait;         // memory read-latency countdown
   logic [31:0]          old_price, old_qty;
   logic [WAYW-1:0]      old_way;
 
@@ -121,12 +134,18 @@ module order_table
     return h[SETS_BITS-1:0];
   endfunction
 
-  // ---- combinational read address (must reflect this cycle's request) ----
+  // ---- combinational read address ----
+  // The address must be HELD for the whole of the memory's read latency, not
+  // just the cycle the read is issued. With a one-cycle memory this was invisible
+  // -- EXEC drove set1 for the single cycle U_LOOK needed -- but once RD_LAT
+  // grew, U_LOOK fell back to the `set0` default while the read was still in
+  // flight and the pipeline delivered the wrong set. The golden caught it.
   logic [SETS_BITS-1:0] rd_set;
   always_comb begin
     rd_set = set0;
     if (state == IDLE && s_valid)                   rd_set = hash(s_msg.order_ref);
     else if (state == EXEC && m.msg_type == "U")    rd_set = hash(m.new_order_ref);
+    else if (state == U_LOOK)                       rd_set = set1;
   end
 
   // Selection registers. The read-modify-write used to be one cycle:
@@ -205,24 +224,57 @@ module order_table
     endcase
   end
 
+  // ---- clear-on-reset ----
+  // UltraRAM CANNOT BE INITIALIZED. There is no INIT for a URAM primitive, so
+  // the `initial mem[s] = '0` that made every entry start invalid works in
+  // simulation and in BRAM, and is a lie on the real device: URAM contents come
+  // up indeterminate, every `valid` bit is whatever the silicon felt like, and
+  // the first lookup hits garbage that looks like live orders.
+  //
+  // Simulation will NOT catch this — XPM models URAM as starting at zero — so
+  // the sweep below is written because the datasheet says it is needed, not
+  // because a test failed. After reset it walks every set writing an all-zero
+  // entry to all ways, holding s_ready low until done: SETS cycles, 65,536 at
+  // 2^16, about 0.3 ms at 216 MHz. That is startup time, once, before the feed
+  // is enabled.
+  logic                 clr_busy;
+  logic [SETS_BITS:0]   clr_addr;          // one extra bit to detect the end
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      clr_busy <= 1'b1;
+      clr_addr <= '0;
+    end else if (clr_busy) begin
+      clr_addr <= clr_addr + 1'b1;
+      if (clr_addr[SETS_BITS]) clr_busy <= 1'b0;
+    end
+  end
+
   // ---- the ways: one memory each, registered read, decoded write ----
+  // XPM rather than inference. An inferred array cannot reach this size —
+  // Vivado caps a single variable at 1 Mbit ([Synth 8-4556]) and the table is
+  // 8 x 65,536 x 130 b = 68 Mbit — so the memory is instantiated, which is the
+  // right way to build a table this large in any case.
+  wire [SETS_BITS-1:0] mem_waddr = clr_busy ? clr_addr[SETS_BITS-1:0] : w_set;
+  wire [EW-1:0]        mem_wdata = clr_busy ? {EW{1'b0}} : EW'(w_entry);
+
   genvar gw;
   generate
     for (gw = 0; gw < WAYS; gw++) begin : g_way
-      // Storage is a FLAT bit vector, not an array of oentry_t. Vivado's RAM
-      // inference refuses a struct-typed memory — it reports
-      //   [Synth 8-11357] ... RAM from Record/Structs ... with 626688 registers
-      // and falls back to flip-flops. oentry_t is packed, so casting at the
-      // boundary costs nothing.
-      // No ram_style attribute: let the tool pick (BRAM at these sizes, URAM
-      // when the production table lands). A `string` parameter cannot be used
-      // as an attribute value — Vivado rejects it as "not a packed type".
-      logic [EW-1:0] mem [SETS-1:0];
-      initial for (int s = 0; s < SETS; s++) mem[s] = '0;   // valid bits clear
-      always_ff @(posedge clk) begin
-        rdq[gw] <= oentry_t'(mem[rd_set]);                  // read-before-write
-        if (we && (w_way == gw[WAYW-1:0])) mem[w_set] <= w_entry;
-      end
+      // Every way is written during the clear sweep; afterwards only the way
+      // the decoded enable selects. A variable way index into one array is what
+      // blocked RAM inference in the first place ([Synth 8-11357], 626 k
+      // registers); a decoded enable keeps each memory single-write/single-read.
+      wire [EW-1:0] rdata;
+      otable_mem #(
+        .WIDTH(EW), .DEPTH(SETS), .AW(SETS_BITS), .RD_LAT(RD_LAT)
+      ) u_mem (
+        .clk(clk),
+        .we(clr_busy || (we && (w_way == gw[WAYW-1:0]))),
+        .waddr(mem_waddr), .wdata(mem_wdata),
+        .raddr(rd_set),    .rdata(rdata)
+      );
+      assign rdq[gw] = oentry_t'(rdata);
     end
   endgenerate
 
@@ -232,6 +284,7 @@ module order_table
       o_valid      <= 1'b0;
       overflow_cnt <= '0;
       miss_cnt     <= '0;
+      rd_wait      <= '0;
     end else begin
       o_valid <= 1'b0;
 
@@ -240,13 +293,16 @@ module order_table
           if (s_valid) begin
             m    <= s_msg;
             set0 <= hash(s_msg.order_ref);
+            rd_wait <= RD_LAT[3:0] - 4'd1;
             state <= LOOK;
           end
         end
 
-        // rdq is valid: resolve which way, and register the selected entry.
-        // Nothing downstream of the mux happens in this cycle.
-        LOOK: begin
+        // Wait out the memory's read latency, then resolve which way and
+        // register the selected entry. Nothing downstream of the mux happens
+        // in the cycle the mux resolves.
+        LOOK: if (rd_wait != 0) rd_wait <= rd_wait - 4'd1;
+              else begin
           sel_hit      <= hit;
           sel_way      <= hit_way;
           sel_ent      <= rdq[hit_way];
@@ -296,9 +352,10 @@ module order_table
                 old_price <= sel_ent.price;
                 old_qty   <= sel_ent.qty;
                 old_way   <= sel_way;
-                set1   <= hash(m.new_order_ref);
-                u_same <= (hash(m.new_order_ref) == set0);
-                state  <= U_LOOK;
+                set1    <= hash(m.new_order_ref);
+                u_same  <= (hash(m.new_order_ref) == set0);
+                rd_wait <= RD_LAT[3:0] - 4'd1;
+                state   <= U_LOOK;
               end else begin
                 miss_cnt <= miss_cnt + 1;
                 state <= IDLE;
@@ -309,7 +366,8 @@ module order_table
         end
 
         // new set's rdq is valid: pick the slot, register it
-        U_LOOK: begin
+        U_LOOK: if (rd_wait != 0) rd_wait <= rd_wait - 4'd1;
+                else begin
           selu_free_ok  <= have_free_u;
           selu_free_way <= free_way_u;
           state         <= U_EXEC;
@@ -329,6 +387,7 @@ module order_table
     end
   end
 
-  assign s_ready = (state == IDLE);
+  assign s_ready   = (state == IDLE) && !clr_busy;
+  assign init_done = !clr_busy;
 
 endmodule

@@ -23,7 +23,7 @@ set srcs [list \
   $repo/step2-rtl-decoder/rtl/itch5_pkg.sv \
   $repo/step2-rtl-decoder/rtl/itch_decoder.sv \
   $repo/step3b-splitter/rtl/mold_splitter.sv \
-  $repo/step4a-order-table/rtl/order_table.sv \
+  $repo/step4a-order-table/rtl/otable_mem.sv $repo/step4a-order-table/rtl/order_table.sv \
   $repo/step4b-book/rtl/price_ladder.sv \
   $root/rtl/drop_fifo.sv \
   $root/rtl/fh_core.sv ]

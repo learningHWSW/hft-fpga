@@ -62,6 +62,7 @@ module tb_t2t;
   int          gap          = 24;
   logic        cfg_load     = 0;
 
+  logic        st_init_done;
   logic [31:0] st_rx_drop, st_rx_hwm, st_frames_in, st_frames_kept;
   logic [31:0] st_gap_total, st_ot_overflow, st_pl_oob;
   logic [31:0] st_beat_drop, st_msg_drop, st_delta_drop;
@@ -98,6 +99,7 @@ module tb_t2t;
     .cfg_init_seq(32'h10000000), .cfg_ack_num(32'h20000000),
     .cfg_window(16'd65535), .cfg_init_id(16'h1000), .cfg_load(cfg_load),
 
+    .st_init_done(st_init_done),
     .st_rx_drop(st_rx_drop), .st_rx_hwm(st_rx_hwm),
     .st_frames_in(st_frames_in), .st_frames_kept(st_frames_kept),
     .st_gap_total(st_gap_total), .st_ot_overflow(st_ot_overflow), .st_pl_oob(st_pl_oob),
@@ -203,6 +205,9 @@ module tb_t2t;
     cfg_load = 1'b1;                    // software hands over the connection
     repeat (2) @(negedge core_clk);
     cfg_load = 1'b0;
+    // UltraRAM has no init, so the order table clears itself after reset. The
+    // feed must not be enabled before that finishes.
+    wait (st_init_done);
     repeat (2) @(negedge cmac_clk);
 
     forever begin

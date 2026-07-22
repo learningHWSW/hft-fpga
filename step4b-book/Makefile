@@ -2,7 +2,7 @@ STEP1 = ../step1-sw-parser
 STEP2 = ../step2-rtl-decoder
 STEP4A = ../step4a-order-table
 SRC   = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
-        $(STEP4A)/rtl/order_table.sv rtl/price_ladder.sv \
+        $(STEP4A)/rtl/otable_mem.sv $(STEP4A)/rtl/order_table.sv rtl/price_ladder.sv \
         ../step5-board/rtl/drop_fifo.sv
 TB    = tb/tb_price_ladder.sv
 TOP   = tb_price_ladder

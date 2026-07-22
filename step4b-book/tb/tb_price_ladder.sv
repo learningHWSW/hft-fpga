@@ -31,12 +31,14 @@ module tb_price_ladder;
 
   // order_table outputs
   logic        ot_ready, ot_valid;
+
   logic [7:0]  ot_type, ot_side;
   logic [47:0] ot_ts;
   logic [15:0] ot_locate;
   logic        ot_has_rem, ot_has_add;
   logic [31:0] ot_rem_price, ot_rem_qty, ot_add_price, ot_add_qty;
   logic [31:0] overflow_cnt, miss_cnt;
+  logic        ot_init_done;
 
   // price_ladder outputs
   logic        bbo_valid;
@@ -51,13 +53,32 @@ module tb_price_ladder;
     .m_msg(msg), .m_valid(mvalid), .m_len_err(len_err)
   );
 
+  // The decoder cannot be backpressured (no m_ready), and the order table now
+  // takes 6 cycles per message instead of 3 because of the URAM read latency.
+  // Wired straight together, a message offered while the table is busy is not
+  // dropped-and-counted, it is silently LOST — the golden came up two BBO
+  // records short with every drop counter still reading zero. fh_core already
+  // put an elastic FIFO on this boundary for exactly this reason; this TB was
+  // relying on the table being fast enough, which is not a property to rely on.
+  localparam int MSGW = $bits(itch_msg_t);
+  logic            mf_valid, mf_ready;
+  logic [MSGW-1:0] mf_data;
+  logic [31:0]     mf_drop;
+
+  drop_fifo #(.WIDTH(MSGW), .DEPTH(64)) u_msg_fifo (
+    .clk(clk), .rst_n(rst_n),
+    .push_valid(mvalid), .push_data(msg),
+    .pop_valid(mf_valid), .pop_data(mf_data), .pop_ready(mf_ready),
+    .drop_cnt(mf_drop), .level(), .level_max()
+  );
+
   order_table #(.SETS_BITS(16), .WAYS(8)) ot (
     .clk(clk), .rst_n(rst_n), .track_locate(track_locate),
-    .s_msg(msg), .s_valid(mvalid), .s_ready(ot_ready),
+    .s_msg(itch_msg_t'(mf_data)), .s_valid(mf_valid), .s_ready(mf_ready),
     .o_valid(ot_valid), .o_type(ot_type), .o_ts(ot_ts), .o_locate(ot_locate), .o_side(ot_side),
     .o_has_rem(ot_has_rem), .o_rem_price(ot_rem_price), .o_rem_qty(ot_rem_qty),
     .o_has_add(ot_has_add), .o_add_price(ot_add_price), .o_add_qty(ot_add_qty),
-    .overflow_cnt(overflow_cnt), .miss_cnt(miss_cnt)
+    .init_done(ot_init_done), .overflow_cnt(overflow_cnt), .miss_cnt(miss_cnt)
   );
 
   // The order table emits o_valid as a pulse with no backpressure while the
@@ -151,6 +172,11 @@ module tb_price_ladder;
     tvalid = 1'b0; tlast = 1'b0; tkeep = '0; tdata = '0;
     repeat (5) @(negedge clk);
     rst_n = 1'b1;
+    // UltraRAM comes up indeterminate, so the table clears itself after reset
+    // and holds s_ready low meanwhile. The market-data path does not honour
+    // s_ready by design, so stimulus must not start until the sweep is done --
+    // otherwise the first SETS messages are silently lost.
+    wait (ot_init_done);
     repeat (2) @(negedge clk);
 
     forever begin
@@ -173,6 +199,7 @@ module tb_price_ladder;
     // correctness — if an oob price should have been the BBO, the diff fails.
     $display("TB done: %0d BBO updates, dropped=%0d overflow=%0d oob=%0d (oob ok: deep levels)",
              n_bbo, n_dropped, overflow_cnt, oob_cnt);
+    if (mf_drop != 0) $display("FAIL: %0d messages dropped before the table", mf_drop);
     if (n_dropped != 0 || overflow_cnt != 0)
       $display("FAIL: dropped=%0d overflow=%0d", n_dropped, overflow_cnt);
     $finish;

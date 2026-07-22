@@ -25,7 +25,11 @@
 `timescale 1ns/1ps
 module t2t_top #(
   parameter int DATA_W        = 512,
-  parameter int OT_SETS_BITS  = 9,
+  // 2^16 x 8 is the measured design point (full trading day, zero overflow --
+  // data/FINDINGS.md and the size sweep). It is instantiated as URAM rather
+  // than inferred, so synthesis can finally build the size that simulation
+  // verifies instead of a 128x smaller stand-in.
+  parameter int OT_SETS_BITS  = 16,
   parameter int OT_WAYS       = 8
 )(
   // ---- CMAC domain ----
@@ -89,6 +93,7 @@ module t2t_top #(
   // ---- status (host reads these over AXI-Lite in the real design) ----
   output logic [31:0]         st_rx_drop,
   output logic [31:0]         st_rx_hwm,
+  output logic                st_init_done,  // order table cleared; feed may start
   output logic [31:0]         st_frames_in,
   output logic [31:0]         st_frames_kept,
   output logic [31:0]         st_gap_total,
@@ -149,6 +154,7 @@ module t2t_top #(
     .clk(core_clk), .rst_n(core_rst_n),
     .track_locate(cfg_track_locate), .cfg_base(cfg_band_base),
     .s_tdata(pay_tdata), .s_tkeep(pay_tkeep), .s_tvalid(pay_tvalid), .s_tlast(pay_tlast),
+    .init_done(st_init_done),
     .bbo_valid(bbo_valid), .bbo_ts(bbo_ts),
     .bbo_has_bid(bbo_has_bid), .bbo_bid_price(bbo_bid_price), .bbo_bid_qty(bbo_bid_qty),
     .bbo_has_ask(bbo_has_ask), .bbo_ask_price(bbo_ask_price), .bbo_ask_qty(bbo_ask_qty),

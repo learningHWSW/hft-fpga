@@ -33,6 +33,7 @@ module tb_fh_core;
   logic [31:0] cfg_base     = 32'd1500000;
   int          gap          = 24;
 
+  logic        init_done;
   logic        bbo_valid, bbo_has_bid, bbo_has_ask;
   logic [47:0] bbo_ts;
   logic [31:0] bbo_bid_price, bbo_bid_qty, bbo_ask_price, bbo_ask_qty;
@@ -43,6 +44,7 @@ module tb_fh_core;
   logic [9:0]  st_beat_lvl, st_msg_lvl, st_delta_lvl;
 
   fh_core #(.DATA_W(DATA_W)) dut (
+    .init_done(init_done),
     .clk(clk), .rst_n(rst_n),
     .track_locate(track_locate), .cfg_base(cfg_base),
     .s_tdata(tdata), .s_tkeep(tkeep), .s_tvalid(tvalid), .s_tlast(tlast),
@@ -106,6 +108,10 @@ module tb_fh_core;
     tvalid = 1'b0; tlast = 1'b0; tkeep = '0; tdata = '0;
     repeat (5) @(negedge clk);
     rst_n = 1'b1;
+    // URAM has no init: the table clears itself and holds s_ready low.
+    // The market-data path ignores s_ready by design, so nothing may be
+    // injected until the sweep finishes.
+    wait (init_done);
     repeat (2) @(negedge clk);
 
     forever begin

@@ -63,6 +63,7 @@ module fh_core
   output logic [63:0]         ev_expected,
 
   // status block (all free-running counters)
+  output logic                init_done,     // order table's clear sweep is done
   output logic [31:0]         st_gap_total,
   output logic [31:0]         st_dup_cnt,
   output logic [31:0]         st_frame_err,
@@ -146,7 +147,7 @@ module fh_core
     .o_locate(ot_locate), .o_side(ot_side),
     .o_has_rem(ot_has_rem), .o_rem_price(ot_rem_price), .o_rem_qty(ot_rem_qty),
     .o_has_add(ot_has_add), .o_add_price(ot_add_price), .o_add_qty(ot_add_qty),
-    .overflow_cnt(st_ot_overflow), .miss_cnt(st_ot_miss)
+    .init_done(init_done), .overflow_cnt(st_ot_overflow), .miss_cnt(st_ot_miss)
   );
   assign mf_pop_ready = ot_ready;
 

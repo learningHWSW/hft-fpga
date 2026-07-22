@@ -1,6 +1,6 @@
 STEP1 = ../step1-sw-parser
 STEP2 = ../step2-rtl-decoder
-SRC   = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv rtl/order_table.sv
+SRC   = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv rtl/otable_mem.sv rtl/order_table.sv
 TB    = tb/tb_order_table.sv
 TOP   = tb_order_table
 
