@@ -19,8 +19,8 @@ Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 | Clock crossing to the CMAC's 322 MHz (`cdc_fifo`) | ✅ verified, meets 322 MHz |
 | Full tick-to-trade chain integrated and simulated | ✅ done (`t2t_top`) |
 | Line rate, **feed path alone** (≥195.3 MHz) | ✅ met — 216.5 MHz |
-| Line rate, **full chain** | ❌ **missed — 191.8 MHz, 1.8 % short** |
-| Order table at its verified size in hardware | ❌ synthesis runs 128× smaller (see below) |
+| Line rate, **full chain** | ❌ **missed — 163.5 MHz, 16 % short** |
+| Order table at its verified size in hardware | ✅ 2^16 × 8 as URAM (258 of 960) |
 | Hardware replay / measured MAC-to-BBO latency | ⛔ needs a card |
 
 ### OpenNIC is a viable host — and it removes two blockers
@@ -465,7 +465,51 @@ delay grew from 2.617 ns to 3.934 ns on the *same* logic, so this is placement
 pressure from the larger design rather than anything new — which is why the
 next move is a Pblock for the ladder, not more pipelining.
 
-### ⚠ These numbers are for a 4,096-entry order table, not the verified one
+### The order table at its real size: 163.5 MHz
+
+The table is now an instantiated XPM/URAM macro at 2^16 x 8, the size every
+simulation runs, so the gap described below is closed — synthesis and
+simulation finally build the same design. What that costs:
+
+| | 2^9 table (inferred) | 2^16 table (URAM) |
+|---|---|---|
+| synth core_clk WNS | −0.156 ns | −0.156 ns |
+| **post-route core_clk WNS** | −0.595 ns | **−1.500 ns** |
+| **post-route Fmax** | 191.8 MHz | **163.5 MHz** |
+| cmac_clk WNS | +0.480 ns | +0.267 ns (meets) |
+| CLB LUTs | 35,548 | 37,075 |
+| CLB registers | 15,158 | 16,218 |
+| Block RAM tiles | 52 | 32 |
+| **URAM** | 2 | **258** (26.9 %) |
+
+Synthesis reported *identical* timing for a table 128× larger, which is not a
+coincidence: at that stage the worst path was the splitter's `msglen → vcnt` in
+both runs, and the table was not on it. Place & route tells the real story —
+**163.5 MHz against the 195.3 MHz line rate needs, 16 % short** where the
+stand-in table was 1.8 % short.
+
+The routed critical path is the table itself now:
+
+```
+u_fh/u_msg_fifo/mem_reg_4 (BRAM)
+  -> hash(order_ref)
+  -> u_otab/g_way[3]/…/mem_reg_uram_31/CAS_IN_ADDR_A   (URAM cascade)
+5.562 ns: logic 2.318 ns, route 3.244 ns
+```
+
+The FIFO's block RAM output goes through the XOR-fold hash and straight into
+the address pins of a **32-deep URAM cascade** in a single cycle. This is the
+same defect as the price ladder's, in a new place: combinational logic driving
+a hard block's address, where the block's sites are fixed and the cascade adds
+its own propagation. The fix is the same — register the hash so the URAM
+address comes out of a flop — and it is the next thing to do, not more
+pipelining elsewhere.
+
+Worth being explicit that this is a *real* number replacing an optimistic one.
+The earlier 191.8 MHz was measured on a design that could not hold a trading
+day's orders; 163.5 MHz is measured on one that can.
+
+### ⚠ (Superseded) These numbers are for a 4,096-entry order table
 
 `fh_core` defaults to `OT_SETS_BITS = 16` (65,536 sets × 8 ways = 524,288
 entries) and **every simulation in this project runs at that size**. Synthesis

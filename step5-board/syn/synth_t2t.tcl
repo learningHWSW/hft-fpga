@@ -40,6 +40,7 @@ set srcs [list \
 
 create_project -in_memory -part $part
 foreach f $srcs { read_verilog -sv $f }
+set_property verilog_define OTABLE_XPM [current_fileset]
 
 # Constraints must be read BEFORE synth_design: create_clock needs an open
 # design, so they live in an XDC rather than being called here.
@@ -57,9 +58,9 @@ puts $fh "  -group \[get_clocks cmac_clk\] -group \[get_clocks core_clk\]"
 close $fh
 read_xdc $gen_xdc
 
-# See synth_ooc.tcl: the production order table (2^16 x 8 = 80 Mbit) cannot be
-# inferred from a behavioural array, so synthesis uses a smaller table to
-# measure the logic around it.
+# The order table is an instantiated XPM/URAM macro now, so synthesis builds
+# the same 2^16 x 8 the simulations verify. OTABLE_XPM selects the real macro
+# over the behavioural model Verilator uses.
 set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 9}]
 set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 8}]
 
