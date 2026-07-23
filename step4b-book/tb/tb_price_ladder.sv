@@ -192,7 +192,7 @@ module tb_price_ladder;
     end
     $fclose(fd);
 
-    repeat (30) @(posedge clk);
+    repeat (60) @(posedge clk);   // ladder pipeline is 11 cy/record; drain the last one
     $fclose(fd_log);
     // oob = prices outside the ladder band (deep/stub quotes far from BBO).
     // Dropping them is by design (PLAN §2.1); the BBO diff is what proves

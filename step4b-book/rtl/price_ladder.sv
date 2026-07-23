@@ -157,7 +157,7 @@ module price_ladder #(
     bai     = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};
   end
 
-  typedef enum logic [3:0] { IDLE, S_SUB, S_IDX, S_RD, S_REM, S_ADD, S_BQ, S_RDQ, S_PX, S_OUT } state_t;
+  typedef enum logic [3:0] { IDLE, S_SUB, S_IDX, S_RD, S_REM, S_REMW, S_ADD, S_BQ, S_RDQ, S_PX, S_OUT } state_t;
   state_t state;
 
   // best-of-book resolved in stages so no single cycle carries
@@ -175,6 +175,7 @@ module price_ladder #(
   logic [31:0]     r_rem_qty, r_add_qty;
   logic            r_fwd;             // add level == rem level
   logic [31:0]     r_rem_new;         // qty written by the removal step
+  logic            r_rem_nz;          // removal's new qty is nonzero (occupancy)
 
   // raw record, captured straight off the input before any arithmetic
   logic [31:0] r_rem_price, r_add_price;
@@ -195,9 +196,9 @@ module price_ladder #(
     bq_raddr = q_bbi;                  // default: probe the best levels
     aq_raddr = q_bai;
     unique case (state)
-      S_RD:  if (r_is_bid) bq_raddr = r_rem_ok ? r_rem_idx : r_add_idx;
-             else          aq_raddr = r_rem_ok ? r_rem_idx : r_add_idx;
-      S_REM: if (r_is_bid) bq_raddr = r_add_idx; else aq_raddr = r_add_idx;
+      S_RD:   if (r_is_bid) bq_raddr = r_rem_ok ? r_rem_idx : r_add_idx;
+              else          aq_raddr = r_rem_ok ? r_rem_idx : r_add_idx;
+      S_REMW: if (r_is_bid) bq_raddr = r_add_idx; else aq_raddr = r_add_idx;
       default: ;                       // S_RDQ takes the best-level probe
     endcase
   end
@@ -209,11 +210,17 @@ module price_ladder #(
     bq_we = 1'b0; bq_waddr = '0; bq_wdata = '0;
     aq_we = 1'b0; aq_waddr = '0; aq_wdata = '0;
     unique case (state)
+      // S_REM only computes rem_new (the subtract), so the FSM can register it.
+      // The memory write is deferred to S_REMW and driven from the register, so
+      // the URAM read -> subtract chain no longer sits in the same cycle as the
+      // occupancy update it used to feed (the -1.6 ns post-route path).
       S_REM: if (r_rem_ok) begin
         automatic logic [31:0] cur = r_is_bid ? bq_rdata : aq_rdata;
         rem_new = (cur > r_rem_qty) ? (cur - r_rem_qty) : 32'd0;
-        if (r_is_bid) begin bq_we = 1'b1; bq_waddr = r_rem_idx; bq_wdata = rem_new; end
-        else          begin aq_we = 1'b1; aq_waddr = r_rem_idx; aq_wdata = rem_new; end
+      end
+      S_REMW: if (r_rem_ok) begin
+        if (r_is_bid) begin bq_we = 1'b1; bq_waddr = r_rem_idx; bq_wdata = r_rem_new; end
+        else          begin aq_we = 1'b1; aq_waddr = r_rem_idx; aq_wdata = r_rem_new; end
       end
       S_ADD: if (r_add_ok) begin
         // the removal's write is still in flight when this level was read, so
@@ -277,16 +284,25 @@ module price_ladder #(
         // issue the first read from the registered index
         S_RD: state <= S_REM;
 
+        // register the subtract result; the occupancy update it feeds moves to
+        // S_REMW so no single cycle carries read -> subtract -> gany OR -> write
         S_REM: begin
+          r_rem_new <= rem_new;
+          r_rem_nz  <= (rem_new != 0);
+          state <= S_REMW;
+        end
+
+        // occupancy update from the registered nz (no arithmetic in front of
+        // the gany OR now), and the memory write is issued from r_rem_new by the
+        // write-port block above
+        S_REMW: begin
           if (r_rem_ok) begin
-            automatic logic nz = (rem_new != 0);
-            r_rem_new <= rem_new;
             if (r_is_bid) begin
-              bidocc[r_rem_idx] <= nz;
-              bid_gany[r_rem_idx[LEVW-1:GRPW]] <= gany_after(bidocc, r_rem_idx, nz);
+              bidocc[r_rem_idx] <= r_rem_nz;
+              bid_gany[r_rem_idx[LEVW-1:GRPW]] <= gany_after(bidocc, r_rem_idx, r_rem_nz);
             end else begin
-              askocc[r_rem_idx] <= nz;
-              ask_gany[r_rem_idx[LEVW-1:GRPW]] <= gany_after(askocc, r_rem_idx, nz);
+              askocc[r_rem_idx] <= r_rem_nz;
+              ask_gany[r_rem_idx[LEVW-1:GRPW]] <= gany_after(askocc, r_rem_idx, r_rem_nz);
             end
           end
           state <= S_ADD;
