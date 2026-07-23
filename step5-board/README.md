@@ -19,7 +19,7 @@ Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 | Clock crossing to the CMAC's 322 MHz (`cdc_fifo`) | ✅ verified, meets 322 MHz |
 | Full tick-to-trade chain integrated and simulated | ✅ done (`t2t_top`) |
 | Line rate, **feed path alone** (≥195.3 MHz) | ✅ met — 216.5 MHz |
-| Line rate, **full chain** | ❌ **missed — ~160 MHz, a cluster of ladder/table paths** |
+| Line rate, **full chain** | ✅ **met — 224.3 MHz post-route, timing closed** |
 | Order table at its verified size in hardware | ✅ 2^13 × 16 as URAM (66 of 960) |
 | Hardware replay / measured MAC-to-BBO latency | ⛔ needs a card |
 
@@ -41,9 +41,10 @@ Vitis platform or XRT is needed. Implementation was not run (`-impl 0`);
 a one-line change there.
 
 So the earlier blockers — GT/refclk bring-up and a Vitis platform — are gone.
-What remains is timing: the 322 MHz box is the tick-to-trade path (CMAC RX and
-TX in the same box, so wire-to-wire never touches PCIe), and the design does
-not yet run that fast.
+The 322 MHz box is the tick-to-trade path (CMAC RX and TX in the same box, so
+wire-to-wire never touches PCIe); the core runs slower than 322 MHz and is
+joined to it by `cdc_fifo`, and it now closes timing above the 195.3 MHz that
+100 Gb/s actually requires (224.3 MHz post-route — see below).
 
 ### The clock that actually matters
 
