@@ -20,7 +20,7 @@ Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 | Full tick-to-trade chain integrated and simulated | ✅ done (`t2t_top`) |
 | Line rate, **feed path alone** (≥195.3 MHz) | ✅ met — 216.5 MHz |
 | Line rate, **full chain** | ❌ **missed — ~160 MHz, a cluster of ladder/table paths** |
-| Order table at its verified size in hardware | ✅ 2^16 × 8 as URAM (258 of 960) |
+| Order table at its verified size in hardware | ✅ 2^13 × 16 as URAM (66 of 960) |
 | Hardware replay / measured MAC-to-BBO latency | ⛔ needs a card |
 
 ### OpenNIC is a viable host — and it removes two blockers
