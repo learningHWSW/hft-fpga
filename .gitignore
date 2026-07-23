@@ -58,3 +58,5 @@ step5-board/syn/out_t2t/
 step5-board/iter_*_CongestedCLBsAndNets.txt
 step6-strategy/sweep_*.log
 step6-strategy/sweep_sum.txt
+step7-host/tests/fixtures/
+step7-host/**/__pycache__/

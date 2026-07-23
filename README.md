@@ -35,6 +35,7 @@ multicast market data directly off the wire instead of going through a host NIC
 | 4b | Top-of-book engine — price ladder (L2), BBO | ✅ [step4b-book](step4b-book/) |
 | 5  | U55C integration: Eth/IP/UDP RX, CDC to the CMAC clock, full-chain synth + P&R | ✅ [step5-board](step5-board/) |
 | 6  | Strategy (imbalance + sweep), risk gate, OUCH + SoupBinTCP + TCP transmit | ✅ [step6-strategy](step6-strategy/) |
+| 7  | Host software — SoupBinTCP session, register config, ack/fill feedback | ✅ [step7-host](step7-host/) |
 
 All steps are complete and pass on xsim and Verilator, on synthetic vectors and
 a real NASDAQ trading day. The full chain (`t2t_top`) is integrated, verified
@@ -162,9 +163,13 @@ Honest scope, all of it stated in the step READMEs:
 
 - **No physical card.** Simulation gives exact cycle counts; nanoseconds on
   silicon need an Alveo in a slot. No latency number here is measured hardware.
-- **Host software is absent** — the SoupBinTCP/TCP session, the handshake that
-  loads the connection shadow registers, acknowledgement feedback, and fills.
-  The FPGA does the hot-path assembly; the session is the host's job and unwritten.
+- **Split-sender TCP is modelled, not solved.** The host session, register
+  config, login/heartbeat and ack/fill feedback are built and tested
+  ([step7-host](step7-host/)), including decoding the FPGA's real OUCH bytes with
+  an independent implementation. What still needs a card: on hardware the FPGA
+  and host are two senders on one TCP connection, so their sequence numbers must
+  be coordinated and inbound segments forwarded — the host owns the socket in the
+  test instead.
 - **No retransmission** in the transmit path (fire-and-forget), and the OUCH
   enum codes are placeholders to confirm against the current NASDAQ spec.
 
