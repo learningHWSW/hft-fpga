@@ -287,6 +287,23 @@ diff is meaningful.) OOC synthesis: 204 LUT, 292 FF, 0 DSP, WNS +2.418 ns
 (~432 MHz), no warnings. The forward-return validation stays in Python; this
 block only detects.
 
+### Firing orders, and it holds line rate
+
+The sweep pulse feeds `strategy` as a second trigger sharing the one risk
+gate; a buy sweep takes the same side (buys) at the latest latched BBO. Verified
+bit-exact at the strategy level (`make test-combined`): the golden merges the
+BBO and sweep streams by timestamp through the same gate, then out through the
+OUCH builder and TCP engine. 67 orders (52 imbalance + 15 sweep), and every OUCH
+packet and TCP frame matches.
+
+Wired into the full chain (`t2t_top`), sweep_detect taps the order-table delta
+stream inside `fh_core` and its pulse reaches the strategy. Place & route of the
+whole chain with the sweep path in: **core_clk +0.072 ns = 220.0 MHz, all
+constraints met** — above the 195.3 MHz line-rate floor, ~4 MHz below the
+224.3 MHz without it. The core critical path is unchanged (the ladder's
+price-to-index divide); sweep_detect sits off it, a 204-LUT block on the
+already-registered delta stream. 44,908 LUT, 66 URAM.
+
 ## Files
 
 ```
