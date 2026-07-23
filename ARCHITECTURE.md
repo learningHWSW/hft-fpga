@@ -9,14 +9,27 @@ details see each step's README; for the roadmap and per-step DoD see
 
 ## 1. Overview
 
-The pipeline turns a 100 GbE stream of NASDAQ MoldUDP64/ITCH into a live L2
-top-of-book:
+The pipeline is a full **tick-to-trade** path: a 100 GbE stream of NASDAQ
+MoldUDP64/ITCH in, an OUCH order frame out, wire to wire on the FPGA.
 
 ```
-QSFP28 ─► CMAC(100G) ─► eth/ip/udp ─► mold_splitter ─► itch_decoder ─► order_table ─► price_ladder ─► BBO
-            512b @          (step 5,      (step 3b)        (step 2)      (step 4a)       (step 4b)      + book
-          322.265625 MHz    planned)   realign to msgs   field extract  ref→{px,qty}   L2 aggregate    deltas
+        CMAC RX                     core clock domain (~220 MHz)                          CMAC TX
+QSFP28 ─► CMAC ─► cdc_fifo ─► eth/ip/udp ─► mold_splitter ─► itch_decoder ─► order_table ─► price_ladder ─► BBO
+          100G   clock cross   (step 5)      (step 3b)         (step 2)       (step 4a)      (step 4b)      │
+          322MHz                filter+strip realign to msgs   field extract  ref→{px,qty}  L2 aggregate    │
+                                                                   │                                        ▼
+                                              sweep_detect ◄────────┤  delta stream               strategy (imbalance
+                                              (step 6, momentum)    │                              + sweep, risk gate)
+                                                                    ▼                                       │
+                             CMAC ◄─ cdc_fifo ◄─ tcp_tx ◄─ ouch_builder ◄──────────────────────────────────┘
+                             TX     clock cross  TCP/IP/Eth  OUCH 4.2 / SoupBinTCP                       (step 6)
 ```
+
+Everything from the UDP strip to the OUCH builder runs in one core clock domain,
+joined to the CMAC's 322.265625 MHz by a dual-clock FIFO on each side (§9). The
+core need only clear 195.3 MHz (512 b × 195.3 MHz = 100 Gb/s); it measures 220
+MHz post-route on the U55C, so the crossing — not a faster core — is what makes
+the design both correct and buildable.
 
 Two principles shape every block:
 
@@ -28,8 +41,10 @@ Two principles shape every block:
   associativity, and the price-ladder band are all fixed from statistics of a
   real full trading day and re-confirmed by RTL replay, not chosen by intuition.
 
-Clock is the 100G CMAC datapath clock, 322.265625 MHz (512-bit @ ~322 MHz =
-~165 Gb/s raw, comfortably above 100G line rate).
+There are two clocks: the CMAC datapath at 322.265625 MHz (512-bit @ ~322 MHz =
+~165 Gb/s raw, above 100G line rate) and the core clock. The core is the design
+under timing pressure and runs slower; §9 covers why that is correct and how the
+two are joined.
 
 ## 2. Protocol framing
 
@@ -186,6 +201,15 @@ two ways at once: its RTL BBO log matches the step-4b golden, and that golden is
 independently cross-checked byte-for-byte against the step-1 C parser's BBO —
 on both the synthetic scenario (which exercises every message type, including
 `U` side-inheritance and `C` resting-price semantics) and a real AAPL session.
+
+The signal and order-entry stages extend the same method. The sweep detector's
+fired sweeps match a Python golden through the real URAM order table; the
+strategy's order stream — imbalance and sweep merged through one risk gate —
+matches its golden all the way out through the OUCH builder and TCP engine, and
+the emitted frames are re-derived a third time by scapy so a shared mistake in
+the golden and the RTL cannot quietly agree with itself. Finally `t2t_top` runs
+the whole chain wire-to-order-frame with two clocks, because a golden per block
+does not catch two correct blocks wired together wrongly.
 Real-data replays run under Verilator (up to 5 M messages) and under xsim.
 
 Each testbench also asserts the invariants that must hold for the measured design
@@ -200,20 +224,70 @@ under xsim such a function has no sensitivity to that signal and its output
 sticks at X (this cost real debugging time in step 3b; every TB now carries a
 stall watchdog to catch such hangs immediately).
 
-## 8. Status and next steps
+## 8. Stage 5 — front end, clock crossing, integration
 
-Steps 1–4b are complete: the parse → order-book core runs at design intent on
-both xsim and Verilator and matches the software model on a real trading day.
+**`eth_ip_udp_rx`** strips Ethernet/IPv4/UDP off a multicast market-data frame.
+It is deliberately not a general stack: a receive-only feed needs three checks
+(IPv4 with IHL=5, protocol UDP, the configured group/port) and a header strip.
+Pinning the accepted layout to a fixed 42-byte header makes the payload
+realignment a constant concatenation — the previous beat's top 22 bytes with
+this beat's low 42 — so this stage needs no barrel shifter at all.
 
-Remaining work:
+**Two clocks.** The CMAC datapath is fixed at 322.265625 MHz, but the core does
+not need that: 512 bits at 322 MHz is 165 Gb/s for a 100 Gb/s wire, so the
+throughput floor is 12.5 GB/s ÷ 64 B = **195.3 MHz**. The core runs at its own,
+slower rate and is joined to the CMAC by **`cdc_fifo`**, a dual-clock FIFO, on
+both the RX and TX sides. It is written the textbook way — pointers one bit wider
+than the address so full/empty do not alias at the wrap, crossing as Gray code
+through two `ASYNC_REG` flops, payload memory never synchronised because the
+pointer handshake makes it safe — and the two domains are declared asynchronous
+in the XDC. The write side never stalls; it drops and counts, like every other
+market-data boundary.
 
-- **Performance.** Stages 4a and 4b are correctness-first FSMs (2–3 cycles per
-  record). The II=1 pipelines (order table with same-set forwarding and
-  dual-ported `U`; ladder with a pipelined best-scan and BRAM-backed quantities)
-  are the next commits — to be compared before/after on the same replay.
-- **Step 5 — board bring-up.** CMAC 100G RX with a UDP/IP front end feeding the
-  existing splitter, QDMA for host reporting/config (shadow/commit registers),
-  and measured MAC-to-BBO latency.
-- **Step 6 (stretch) — OUCH order entry.** SoupBinTCP session managed in
-  software; the FPGA assembles and fires from pre-staged sequence/ack state on a
-  BBO trigger.
+**`t2t_top`** wires the whole chain together and is executed end to end in
+simulation (real replay, two incommensurate clocks), because synthesis will
+build a design whose correct blocks are connected wrongly without complaint.
+
+## 9. Stage 6 — strategy, risk gate, order entry
+
+**Two signals, one gate.** `strategy` fires on the rising edge of an order-book
+imbalance (resting size heavily on one side, tight spread) and on a sweep pulse
+from `sweep_detect`. `sweep_detect` taps the order table's delta stream and
+counts an aggressive order walking one side of the book across price levels
+(executions E/C, not cancels); it counts "levels walked" with a single frontier
+register rather than a set of prices, which equals the distinct-price count for
+a monotonic sweep (measured: zero disagreement). Both triggers pass one risk
+gate — position limit, in-flight limit, kill switch — each rejection reason
+counted so a quiet strategy is distinguishable from a blocked one. Position
+moves optimistically (as if every order fills), which errs only toward
+suppressing trades, never permitting more.
+
+The signals are **measured before they are built** (`data/FINDINGS.md §5`): a
+≥3-level sweep continues in its direction ~75 % of the time over the next
+millisecond, and bigger sweeps continue harder — the monotonic relation the
+momentum-ignition thesis predicts.
+
+**`ouch_builder`** turns an order intent into OUCH 4.2 over SoupBinTCP: per the
+session/hot-path split, login and sequence recovery are software's job, and the
+hardware is a one-cycle constant concatenation of registered configuration with
+three live fields. **`tcp_tx`** wraps that in TCP/IPv4/Ethernet, computing both
+checksums as one's-complement adder trees (the payload sum registered in its own
+cycle to meet timing). There is no retransmission — a dropped segment is a
+dropped order and recovery is the host's — and flow control is satisfied by
+construction because the in-flight limiter caps unacknowledged payload far below
+any TCP window.
+
+## 10. Results and what is not done
+
+Full chain, `xcu55c-fsvh2892-2L-e`, post-route: core_clk **220.0 MHz** (above the
+195.3 MHz floor), cmac_clk meets 322.265625 MHz, all timing constraints met;
+44,908 LUT, 66 URAM, 2 DSP. The order table is the measured 2^13 × 16 point
+instantiated as URAM. Closing timing meant working through a cluster of ~160 MHz
+paths in the book engine; the decisive fix was splitting the price ladder's
+read-modify-write (+65 MHz where earlier register stages bought single digits) —
+the full, candid path with its missed predictions is in `step5-board/README.md`.
+
+Not done, and stated plainly: no physical card, so no measured hardware latency;
+host software (SoupBinTCP session, handshake, ack feedback, fills) is absent; the
+transmit path does not retransmit; and the OUCH enum codes are placeholders to
+confirm against the current NASDAQ specification.

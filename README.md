@@ -1,10 +1,18 @@
-# HFT FPGA Feed Handler — AMD Alveo U55C
+# HFT FPGA Tick-to-Trade — AMD Alveo U55C
 
-A low-latency NASDAQ **ITCH 5.0** feed handler that parses the market-data wire
-and maintains top-of-book, built in SystemVerilog RTL. Every stage is verified
-by a self-checking testbench whose canonical log is diffed against a software
-golden model, and every design parameter is chosen from measurements on a real
-full trading day of NASDAQ data — not guesswork.
+A low-latency **tick-to-trade** pipeline in SystemVerilog RTL: NASDAQ **ITCH
+5.0** market data in off the wire, an order out to the exchange. It parses the
+feed, maintains an L2 order book, runs two measured trading signals, and
+assembles the OUCH/SoupBinTCP/TCP order frame — all on the FPGA, wire to wire.
+Every stage is verified by a self-checking testbench whose canonical log is
+diffed against a software golden model, and every design parameter is chosen
+from measurements on a real full trading day of NASDAQ data — not guesswork.
+
+**The whole chain closes timing on the real U55C part at 220.0 MHz post-route**,
+above the 195.3 MHz that a 100 Gb/s wire demands at 512-bit width. It is
+verified functionally against the golden, but has **not** run on a physical
+card — this machine has the part and toolchain but no Alveo, so measured
+MAC-to-order latency is future work.
 
 Target board: **Alveo U55C** (UltraScale+ VU35P, HBM2 16 GB, QSFP28 ×2 for
 100 GbE, PCIe Gen4). The QSFP cages are on the card, so the FPGA can receive
@@ -25,23 +33,73 @@ multicast market data directly off the wire instead of going through a host NIC
 | 3b | 512-bit (CMAC width) realignment — multiple message boundaries per beat | ✅ [step3b-splitter](step3b-splitter/) |
 | 4a | Order table — order_ref hash (URAM), size/ways from real data | ✅ [step4a-order-table](step4a-order-table/) |
 | 4b | Top-of-book engine — price ladder (L2), BBO | ✅ [step4b-book](step4b-book/) |
-| 5  | U55C board: CMAC(100G)+UDP/IP RX, QDMA reporting, measured latency | planned |
-| 6  | (stretch) OUCH order entry — session in SW, hot-path assembly in FPGA | planned |
+| 5  | U55C integration: Eth/IP/UDP RX, CDC to the CMAC clock, full-chain synth + P&R | ✅ [step5-board](step5-board/) |
+| 6  | Strategy (imbalance + sweep), risk gate, OUCH + SoupBinTCP + TCP transmit | ✅ [step6-strategy](step6-strategy/) |
 
-Steps 1–4b (the full parse → order-book core) are complete and pass on both
-xsim and Verilator, on synthetic vectors and on a real NASDAQ trading day.
+All steps are complete and pass on xsim and Verilator, on synthetic vectors and
+a real NASDAQ trading day. The full chain (`t2t_top`) is integrated, verified
+end to end, and taken through real Vivado synthesis and place & route for the
+`xcu55c-fsvh2892-2L-e` part.
 
 ## Data path
 
 ```
-QSFP28 ─► CMAC(100G) ─► eth/ip/udp ─► MoldUDP64 splitter ─► ITCH decoder ─► order table ─► price ladder ─► BBO
-            512b@322M     (step 5)      (step 3a/3b)          (step 2)       (step 4a)       (step 4b)
-                                        seq-gap detect       field extract   ref→{px,qty}    L2 book
+        CMAC RX 322 MHz            core clock (~220 MHz)                              CMAC TX
+QSFP28 ─► CMAC ─► cdc_fifo ─► eth/ip/udp ─► MoldUDP64 ─► ITCH ─► order ─► price ─► BBO
+          100G   (clock       filter+strip   splitter    decode   table    ladder    │
+                  crossing)    (step 5)       (step 3b)   (step 2) (step 4a)(step 4b) │
+                                                              │                       ▼
+                                        sweep_detect ◄────────┤              strategy (imbalance
+                                        (momentum, step 6)    │               + sweep, risk gate)
+                                                              ▼                       │
+                          CMAC ◄─ cdc_fifo ◄─ tcp_tx ◄─ ouch_builder ◄────────────────┘
+                          TX              (TCP/IP/Eth)  (OUCH 4.2 / SoupBinTCP)
 ```
+
+**Two clocks on purpose.** The core does not run at the CMAC's 322.265625 MHz
+and does not need to: 512 bits at 322 MHz is 165 Gb/s of interface bandwidth for
+a 100 Gb/s wire, so the throughput floor is 12.5 GB/s ÷ 64 B = **195.3 MHz**. The
+core measures 220 MHz post-route and is joined to the CMAC by a dual-clock FIFO
+(`cdc_fifo`) on both the receive and transmit sides.
 
 The market-data path never applies backpressure to the wire: bursts are
 absorbed by FIFOs (sized from measurement), and overflow is dropped and
 counted. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Results on the real part
+
+Full chain, `xcu55c-fsvh2892-2L-e`, post-route (core 4.618 ns / CMAC 3.103 ns):
+
+| | |
+|---|---|
+| core_clk | **220.0 MHz** (WNS +0.072 ns) — clears the 195.3 MHz line-rate floor |
+| cmac_clk | meets 322.265625 MHz (WNS +0.330 ns) |
+| CLB LUTs / registers | 44,908 / 17,617 (~3.4 % / 0.7 %) |
+| URAM / BRAM / DSP | 66 / 32 / 2 |
+| all timing constraints | **met** |
+
+The order table is the measured 2^13 × 16 design point (full trading day, zero
+overflow), instantiated as URAM. Getting here meant closing timing through a
+cluster of ~160 MHz paths in the book engine — the decisive fix was splitting
+the price ladder's read-modify-write, worth +65 MHz where earlier register
+stages bought only single digits. The path there is documented candidly in
+[step5-board/README.md](step5-board/README.md), missed predictions included.
+
+## Trading signals (measured, then built)
+
+Two signals share one risk gate (position limit, in-flight limit, kill switch):
+
+- **Order-book imbalance** — resting size heavily on one side with a tight
+  spread, a taker into the imminent move.
+- **Sweep / momentum ignition** — an aggressive order walking one side of the
+  book across several levels. Measured on a real 40 M-message slice before any
+  RTL: ≥3-level sweeps continue in their direction ~75 % of the time over the
+  next millisecond, and bigger sweeps continue harder (`data/FINDINGS.md §5`).
+
+Both fire orders all the way to a TCP frame, verified bit-exact against the
+golden ([step6-strategy](step6-strategy/)). The parameters are tuned on a thin
+reconstructed book, so they test the *mechanism*, not a tradeable edge — the
+honest caveat is kept front and center in the step-6 README.
 
 ## Toolchain
 
@@ -91,6 +149,23 @@ cd data && curl -O "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_IT
   a real trading day (`data/FINDINGS.md`), and re-confirmed by the RTL replays.
 - **Real data closes the loop.** The order-book chain is replayed against a real
   AAPL session and its BBO sequence is cross-checked to the independent step-1 C
-  model, byte for byte.
+  model, byte for byte. The strategy's OUCH/TCP output is checked the same way,
+  and re-derived a third time by scapy so an author's mistake in the golden and
+  the RTL cannot agree with itself.
+- **The whole chain, not just the parts.** `t2t_top` is executed end to end
+  (wire frames in, order frames out) with two incommensurate clocks, because
+  synthesis will happily wire two correct blocks together wrongly.
+
+## What is not done
+
+Honest scope, all of it stated in the step READMEs:
+
+- **No physical card.** Simulation gives exact cycle counts; nanoseconds on
+  silicon need an Alveo in a slot. No latency number here is measured hardware.
+- **Host software is absent** — the SoupBinTCP/TCP session, the handshake that
+  loads the connection shadow registers, acknowledgement feedback, and fills.
+  The FPGA does the hot-path assembly; the session is the host's job and unwritten.
+- **No retransmission** in the transmit path (fire-and-forget), and the OUCH
+  enum codes are placeholders to confirm against the current NASDAQ spec.
 
 Per-step READMEs (Korean) carry the detailed design notes for each block.
