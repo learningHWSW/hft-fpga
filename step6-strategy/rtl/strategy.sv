@@ -53,6 +53,15 @@ module strategy (
   input  logic [31:0]  i_ask_price,
   input  logic [31:0]  i_ask_qty,
 
+  // sweep / momentum-ignition trigger, from sweep_detect. A buy sweep means
+  // the offer was lifted through several levels, so the strategy takes the SAME
+  // side (buys, expecting continuation — the measured signal, FINDINGS §5). It
+  // is priced at the latest BBO the block has latched, so a sweep between BBO
+  // updates still has a price to trade at.
+  input  logic         cfg_sweep_en,
+  input  logic         i_sweep,
+  input  logic         i_sweep_is_buy,
+
   // one acknowledgement pulse per order the host/exchange has confirmed
   input  logic         i_ack,
 
@@ -99,9 +108,23 @@ module strategy (
   wire [31:0] buy_qty  = (i_ask_qty < cfg_order_qty) ? i_ask_qty : cfg_order_qty;
   wire [31:0] sell_qty = (i_bid_qty < cfg_order_qty) ? i_bid_qty : cfg_order_qty;
 
+  // Latest two-sided BBO, held so a sweep arriving between BBO updates has a
+  // price. Updated on every BBO event; the sweep path reads the REGISTERED
+  // value, i.e. the last BBO seen strictly before the sweep, which is what the
+  // golden uses too.
+  logic        bbo_ok;
+  logic [31:0] bbo_bid_px, bbo_bid_qty, bbo_ask_px, bbo_ask_qty;
+
+  // sweep path, pipelined one stage to line up with the imbalance path
+  logic        s1_sweep, s1_sweep_buy;
+  logic [47:0] s1_sweep_ts;
+  logic [31:0] s1_sweep_qty, s1_sweep_px;
+
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       s1_valid <= 1'b0;
+      s1_sweep <= 1'b0;
+      bbo_ok   <= 1'b0;
     end else begin
       s1_valid    <= i_valid;
       s1_ts       <= i_ts;
@@ -111,6 +134,22 @@ module strategy (
       s1_buy_px   <= i_ask_price;   // lift the offer
       s1_sell_qty <= sell_qty;
       s1_sell_px  <= i_bid_price;   // hit the bid
+
+      if (i_valid && two_sided) begin
+        bbo_ok      <= 1'b1;
+        bbo_bid_px  <= i_bid_price; bbo_bid_qty <= i_bid_qty;
+        bbo_ask_px  <= i_ask_price; bbo_ask_qty <= i_ask_qty;
+      end
+
+      // a sweep can only be priced once a two-sided BBO exists; take the same
+      // side as the sweep at the current best
+      s1_sweep     <= i_sweep && cfg_sweep_en && bbo_ok;
+      s1_sweep_buy <= i_sweep_is_buy;
+      s1_sweep_ts  <= i_ts;
+      s1_sweep_qty <= i_sweep_is_buy
+                    ? ((bbo_ask_qty < cfg_order_qty) ? bbo_ask_qty : cfg_order_qty)
+                    : ((bbo_bid_qty < cfg_order_qty) ? bbo_bid_qty : cfg_order_qty);
+      s1_sweep_px  <= i_sweep_is_buy ? bbo_ask_px : bbo_bid_px;
     end
   end
 
@@ -121,9 +160,21 @@ module strategy (
 
   wire fire_buy  = s1_valid && s1_buy  && !prev_buy;
   wire fire_sell = s1_valid && s1_sell && !prev_sell;
+  wire imb_fire  = fire_buy || fire_sell;
 
-  wire signed [31:0] qty_s   = fire_buy ? signed'(s1_buy_qty) : signed'(s1_sell_qty);
-  wire signed [31:0] pos_new = fire_buy ? (position + qty_s) : (position - qty_s);
+  // Merge the two trigger sources. Sweep has priority over imbalance — it is
+  // the rarer, stronger signal — and only one order leaves per cycle. In the
+  // testbench (and golden) BBO and sweep arrive on separate cycles, so a BBO
+  // edge and a sweep never contend; the priority is a safety rule for the real
+  // chain where they could coincide.
+  wire        want    = s1_sweep || imb_fire;
+  wire        eff_buy = s1_sweep ? s1_sweep_buy : fire_buy;
+  wire [47:0] eff_ts  = s1_sweep ? s1_sweep_ts  : s1_ts;
+  wire [31:0] eff_qty = s1_sweep ? s1_sweep_qty : (fire_buy ? s1_buy_qty : s1_sell_qty);
+  wire [31:0] eff_px  = s1_sweep ? s1_sweep_px  : (fire_buy ? s1_buy_px  : s1_sell_px);
+
+  wire signed [31:0] eff_qty_s = signed'(eff_qty);
+  wire signed [31:0] pos_new = eff_buy ? (position + eff_qty_s) : (position - eff_qty_s);
   wire pos_ok      = (pos_new <= signed'(cfg_pos_limit)) &&
                      (pos_new >= -signed'(cfg_pos_limit));
   wire inflight_ok = (inflight < cfg_max_inflight);
@@ -151,7 +202,7 @@ module strategy (
         prev_sell <= s1_sell;
       end
 
-      if (cfg_enable && (fire_buy || fire_sell)) begin
+      if (cfg_enable && want) begin
         if (!inflight_ok) begin
           blk_inflight_cnt <= blk_inflight_cnt + 1;
         end else if (!pos_ok) begin
@@ -160,10 +211,10 @@ module strategy (
           blk_txfull_cnt <= blk_txfull_cnt + 1;
         end else begin
           o_valid  <= 1'b1;
-          o_ts     <= s1_ts;
-          o_is_buy <= fire_buy;
-          o_qty    <= fire_buy ? s1_buy_qty : s1_sell_qty;
-          o_price  <= fire_buy ? s1_buy_px  : s1_sell_px;
+          o_ts     <= eff_ts;
+          o_is_buy <= eff_buy;
+          o_qty    <= eff_qty;
+          o_price  <= eff_px;
           position <= pos_new;
           sent_cnt <= sent_cnt + 1;
           // an ack in the same cycle as a send leaves the count unchanged

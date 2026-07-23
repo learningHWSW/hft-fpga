@@ -85,6 +85,10 @@ module tb_t2t;
     .cfg_min_qty(32'd100), .cfg_order_qty(32'd100),
     .cfg_pos_limit(32'd1000), .cfg_max_inflight(16'hFFFF),
     .cfg_order_ack(1'b0),   // no ack source: see the note below
+    // sweep disabled here so this TB keeps checking exactly the imbalance path
+    // against the existing golden; the sweep->order path is verified bit-exact
+    // in step6's tb_strategy (test-combined).
+    .cfg_sweep_en(1'b0), .cfg_sweep_min_levels(32'd3), .cfg_sweep_gap(48'd1000000),
 
     .cfg_token_prefix({"1","0","A","G","P","F"}),
     .cfg_stock({" "," "," "," ","L","P","A","A"}),

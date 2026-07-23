@@ -55,6 +55,13 @@ module fh_core
   output logic [31:0]         bbo_ask_price,
   output logic [31:0]         bbo_ask_qty,
 
+  // sweep / momentum-ignition trigger, tapped off the order-table delta stream
+  input  logic [31:0]         cfg_sweep_min_levels,
+  input  logic [47:0]         cfg_sweep_gap,
+  output logic                o_sweep,
+  output logic                o_sweep_is_buy,
+  output logic [31:0]         st_sweep_cnt,
+
   // sequence / integrity events from the splitter
   output logic                ev_gap,
   output logic                ev_hb,
@@ -150,6 +157,22 @@ module fh_core
     .init_done(init_done), .overflow_cnt(st_ot_overflow), .miss_cnt(st_ot_miss)
   );
   assign mf_pop_ready = ot_ready;
+
+  // ---------------- sweep detector (taps the delta stream) ----------------
+  // Runs directly off the order table's execution deltas, in parallel with the
+  // delta FIFO that feeds the ladder. i_flush is tied low: on the wire a run
+  // closes when the next execution breaks it, so no end-of-stream flush is
+  // needed (a testbench drives one; there is always more feed here).
+  sweep_detect u_sweep (
+    .clk(clk), .rst_n(rst_n),
+    .cfg_min_levels(cfg_sweep_min_levels), .cfg_gap(cfg_sweep_gap),
+    .i_valid(ot_valid), .i_type(ot_type), .i_side(ot_side),
+    .i_has_rem(ot_has_rem), .i_price(ot_rem_price), .i_qty(ot_rem_qty), .i_ts(ot_ts),
+    .i_flush(1'b0),
+    .o_sweep(o_sweep), .o_is_buy(o_sweep_is_buy),
+    .o_levels(), .o_shares(), .o_ts_end(),
+    .sweep_cnt(st_sweep_cnt)
+  );
 
   // ---------------- delta FIFO -> price ladder ----------------
   localparam int DELW = 48 + 8 + 1 + 32 + 32 + 1 + 32 + 32;   // 186

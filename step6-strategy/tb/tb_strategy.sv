@@ -35,6 +35,7 @@ module tb_strategy;
   logic [47:0] i_ts;
   logic        i_has_bid, i_has_ask;
   logic [31:0] i_bid_price, i_bid_qty, i_ask_price, i_ask_qty;
+  logic        i_sweep = 0, i_sweep_is_buy = 0;
 
   logic        o_valid, o_is_buy;
   logic [47:0] o_ts;
@@ -69,6 +70,7 @@ module tb_strategy;
     .i_valid(i_valid), .i_ts(i_ts),
     .i_has_bid(i_has_bid), .i_bid_price(i_bid_price), .i_bid_qty(i_bid_qty),
     .i_has_ask(i_has_ask), .i_ask_price(i_ask_price), .i_ask_qty(i_ask_qty),
+    .cfg_sweep_en(1'b1), .i_sweep(i_sweep), .i_sweep_is_buy(i_sweep_is_buy),
     .i_ack(i_ack),
     .o_valid(o_valid), .o_ts(o_ts), .o_is_buy(o_is_buy),
     .o_qty(o_qty), .o_price(o_price), .o_ready(o_ready),
@@ -150,14 +152,76 @@ module tb_strategy;
     end
   end
 
-  string bbo_path, out_path, pkt_path, frm_path, line;
-  int    fin, rec = 0, code;
+  string bbo_path, out_path, pkt_path, frm_path, sw_path, line;
+  int    fin, fsw = 0, rec = 0, code;
+
+  // two-way merge lookahead: the BBO log and the sweep log are each already in
+  // timestamp order, so a stable merge (BBO before sweep at equal ts) reproduces
+  // exactly the event order the combined golden processes.
+  bit              have_bbo = 0, have_sw = 0, sw_is_buy = 0;
+  longint unsigned bbo_ts, sw_ts;
+  int unsigned     bp, bq, ap, aq;
+  int unsigned     sent_before;
+
+  task automatic read_bbo;
+    string l;
+    have_bbo = 0;
+    while ($fgets(l, fin) > 0)
+      if ($sscanf(l, "%d bid=%d:%d ask=%d:%d", bbo_ts, bp, bq, ap, aq) == 5) begin
+        have_bbo = 1; return;
+      end
+  endtask
+
+  task automatic read_sw;
+    string l, dir;
+    have_sw = 0;
+    if (fsw == 0) return;
+    while ($fgets(l, fsw) > 0)
+      if ($sscanf(l, "%d %s", sw_ts, dir) == 2) begin
+        sw_is_buy = (dir == "BUY"); have_sw = 1; return;
+      end
+  endtask
+
+  // drive one BBO event: process its acks, pulse i_valid, schedule this event's
+  // ack if it fired an order (sent_cnt is the DUT's own count)
+  task automatic drive_bbo;
+    rec++;
+    while (acks_due[rec] > 0) begin
+      @(posedge clk); i_ack = 1'b1;
+      @(posedge clk); i_ack = 1'b0;
+      acks_due[rec]--;
+    end
+    sent_before = sent_cnt;
+    @(posedge clk);
+    i_valid = 1'b1; i_ts = bbo_ts[47:0];
+    i_has_bid = (bp != 0); i_bid_price = bp; i_bid_qty = bq;
+    i_has_ask = (ap != 0); i_ask_price = ap; i_ask_qty = aq;
+    @(posedge clk);
+    i_valid = 1'b0;
+    repeat (4) @(posedge clk);
+    if (sent_cnt != sent_before && (rec + ACK_GAP) < MAXREC)
+      acks_due[rec + ACK_GAP] += (sent_cnt - sent_before);
+  endtask
+
+  // drive one sweep event: no rec increment (acks are consumed on BBO records),
+  // but schedule this order's ack at the current record like any other
+  task automatic drive_sweep;
+    sent_before = sent_cnt;
+    @(posedge clk);
+    i_sweep = 1'b1; i_sweep_is_buy = sw_is_buy;
+    @(posedge clk);
+    i_sweep = 1'b0;
+    repeat (4) @(posedge clk);
+    if (sent_cnt != sent_before && (rec + ACK_GAP) < MAXREC)
+      acks_due[rec + ACK_GAP] += (sent_cnt - sent_before);
+  endtask
 
   initial begin
     if (!$value$plusargs("bbo=%s", bbo_path)) bbo_path = "bbo_gold.log";
     if (!$value$plusargs("out=%s", out_path)) out_path = "orders_rtl.log";
     if (!$value$plusargs("pkt=%s", pkt_path)) pkt_path = "ouch_rtl.log";
     if (!$value$plusargs("frm=%s", frm_path)) frm_path = "frames_rtl.log";
+    if ($value$plusargs("sweep=%s", sw_path)) fsw = $fopen(sw_path, "r");
     fin  = $fopen(bbo_path, "r");
     fout = $fopen(out_path, "w");
     fpkt = $fopen(pkt_path, "w");
@@ -172,38 +236,17 @@ module tb_strategy;
     cfg_load = 0;
     repeat (5) @(posedge clk);
 
-    while ($fgets(line, fin) > 0) begin
-      automatic longint unsigned ts;
-      automatic int unsigned bp, bq, ap, aq;
-      code = $sscanf(line, "%d bid=%d:%d ask=%d:%d", ts, bp, bq, ap, aq);
-      if (code != 5) continue;
-      rec++;
-
-      // acks due at this record land before the record is judged
-      while (acks_due[rec] > 0) begin
-        @(posedge clk);
-        i_ack = 1'b1;
-        @(posedge clk);
-        i_ack = 1'b0;
-        acks_due[rec]--;
+    // stable two-way merge: BBO before sweep at an equal timestamp
+    read_bbo();
+    read_sw();
+    while (have_bbo || have_sw) begin
+      if (have_bbo && (!have_sw || bbo_ts <= sw_ts)) begin
+        drive_bbo();
+        read_bbo();
+      end else begin
+        drive_sweep();
+        read_sw();
       end
-
-      fired_this_rec = 0;
-      @(posedge clk);
-      i_valid     = 1'b1;
-      i_ts        = ts[47:0];
-      i_has_bid   = (bp != 0);
-      i_bid_price = bp;
-      i_bid_qty   = bq;
-      i_has_ask   = (ap != 0);
-      i_ask_price = ap;
-      i_ask_qty   = aq;
-      @(posedge clk);
-      i_valid = 1'b0;
-
-      repeat (4) @(posedge clk);       // let stage 2 resolve and the monitor run
-      if (fired_this_rec > 0 && (rec + ACK_GAP) < MAXREC)
-        acks_due[rec + ACK_GAP] += fired_this_rec;
     end
 
     repeat (20) @(posedge clk);

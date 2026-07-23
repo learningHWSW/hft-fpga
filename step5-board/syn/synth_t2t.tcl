@@ -33,7 +33,7 @@ set srcs [list \
   $root/rtl/fh_core.sv \
   $root/rtl/eth_ip_udp_rx.sv \
   $root/rtl/cdc_fifo.sv \
-  $repo/step6-strategy/rtl/strategy.sv \
+  $repo/step6-strategy/rtl/strategy.sv $repo/step6-strategy/rtl/sweep_detect.sv \
   $repo/step6-strategy/rtl/ouch_builder.sv \
   $repo/step6-strategy/rtl/tcp_tx.sv \
   $root/rtl/t2t_top.sv ]

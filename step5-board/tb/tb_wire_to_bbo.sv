@@ -61,6 +61,8 @@ module tb_wire_to_bbo;
 
   fh_core #(.DATA_W(DATA_W)) dut (
     .init_done(init_done),
+    .cfg_sweep_min_levels(32'd3), .cfg_sweep_gap(48'd1000000),
+    .o_sweep(), .o_sweep_is_buy(), .st_sweep_cnt(),
     .clk(clk), .rst_n(rst_n),
     .track_locate(track_locate), .cfg_base(cfg_base),
     .s_tdata(p_tdata), .s_tkeep(p_tkeep), .s_tvalid(p_tvalid), .s_tlast(p_tlast),

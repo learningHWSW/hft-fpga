@@ -67,50 +67,100 @@ MAX_INFLIGHT = 4
 ACK_GAP      = 50       # binds: 62 orders at gap 20 -> 52 at gap 50
 
 
-def main(path, max_spread, ratio_shift, min_qty, order_qty, pos_limit, max_inflight, ack_gap):
-    pos = 0
-    inflight = 0
-    prev_buy = prev_sell = False
-    out = []
-    acks_at = {}                # BBO record index -> orders acknowledged then
-    rec = 0
-
+def load_bbo(path):
+    ev = []
     for line in open(path):
-        # <ts> bid=<px>:<qty> ask=<px>:<qty>
         f = line.split()
         if len(f) != 3:
             continue
         ts = int(f[0])
-        bid_px, bid_qty = (int(x) for x in f[1][4:].split(":"))
-        ask_px, ask_qty = (int(x) for x in f[2][4:].split(":"))
-        rec += 1
-        inflight -= acks_at.pop(rec, 0)      # acks land before this record is judged
+        bp, bq = (int(x) for x in f[1][4:].split(":"))
+        ap, aq = (int(x) for x in f[2][4:].split(":"))
+        ev.append((ts, "BBO", bp, bq, ap, aq))
+    return ev
 
-        two_sided = bid_px != 0 and ask_px != 0
-        tight = two_sided and (ask_px - bid_px) <= max_spread
-        buy = tight and bid_qty >= (ask_qty << ratio_shift) and ask_qty >= min_qty
-        sell = tight and ask_qty >= (bid_qty << ratio_shift) and bid_qty >= min_qty
 
-        fire_buy = buy and not prev_buy
-        fire_sell = sell and not prev_sell
-        prev_buy, prev_sell = buy, sell
+def load_sweep(path):
+    ev = []
+    for line in open(path):
+        f = line.split()
+        if len(f) < 2 or f[1] not in ("BUY", "SELL"):
+            continue
+        ev.append((int(f[0]), "SWEEP", f[1] == "BUY"))
+    return ev
 
-        # a record can only ever satisfy one side: both would need
-        # bid_qty >= 4*ask_qty and ask_qty >= 4*bid_qty at once
-        if fire_buy:
-            qty = min(order_qty, ask_qty)
-            if inflight < max_inflight and pos + qty <= pos_limit:
-                out.append(f"{ts} BUY qty={qty} px={ask_px}")
-                pos += qty
-                inflight += 1
-                acks_at[rec + ack_gap] = acks_at.get(rec + ack_gap, 0) + 1
-        elif fire_sell:
-            qty = min(order_qty, bid_qty)
-            if inflight < max_inflight and pos - qty >= -pos_limit:
-                out.append(f"{ts} SELL qty={qty} px={bid_px}")
-                pos -= qty
-                inflight += 1
-                acks_at[rec + ack_gap] = acks_at.get(rec + ack_gap, 0) + 1
+
+def main(path, max_spread, ratio_shift, min_qty, order_qty, pos_limit, max_inflight,
+         ack_gap, sweep_path=None):
+    # Merge the BBO stream and (optionally) the sweep stream in timestamp order.
+    # Both trigger sources share one risk gate, so they have to be processed in
+    # the same order the hardware sees them; the testbench drives exactly this
+    # merged order. Stable sort keeps each log's internal order and, at an equal
+    # timestamp, puts BBO events before sweep events -- the tiebreak the TB uses.
+    events = load_bbo(path)
+    if sweep_path:
+        events += load_sweep(sweep_path)
+    order_key = {"BBO": 0, "SWEEP": 1}
+    events.sort(key=lambda e: (e[0], order_key[e[1]]))
+
+    pos = 0
+    inflight = 0
+    prev_buy = prev_sell = False
+    bbo_ok = False
+    # held BBO for sweep pricing -- latched only on a TWO-SIDED update, matching
+    # the RTL, which keeps the last complete book when a side momentarily empties
+    lbid_px = lbid_qty = lask_px = lask_qty = 0
+    out = []
+    acks_at = {}                # BBO record index -> orders acknowledged then
+    rec = 0
+
+    def gate_and_emit(ts, is_buy, qty, px):
+        nonlocal pos, inflight
+        # sweep and imbalance share this gate exactly
+        if inflight >= max_inflight:
+            return
+        newpos = pos + qty if is_buy else pos - qty
+        if newpos > pos_limit or newpos < -pos_limit:
+            return
+        out.append(f"{ts} {'BUY' if is_buy else 'SELL'} qty={qty} px={px}")
+        pos = newpos
+        inflight += 1
+        acks_at[rec + ack_gap] = acks_at.get(rec + ack_gap, 0) + 1
+
+    for e in events:
+        ts, kind = e[0], e[1]
+
+        if kind == "BBO":
+            _, _, bp, bq, ap, aq = e         # this event's BBO
+            rec += 1
+            inflight -= acks_at.pop(rec, 0)  # acks land before this record
+
+            two_sided = bp != 0 and ap != 0
+            if two_sided:
+                bbo_ok = True
+                lbid_px, lbid_qty, lask_px, lask_qty = bp, bq, ap, aq
+
+            # imbalance rule is on THIS event's book, not the held one
+            tight = two_sided and (ap - bp) <= max_spread
+            buy = tight and bq >= (aq << ratio_shift) and aq >= min_qty
+            sell = tight and aq >= (bq << ratio_shift) and bq >= min_qty
+            fire_buy = buy and not prev_buy
+            fire_sell = sell and not prev_sell
+            prev_buy, prev_sell = buy, sell
+
+            if fire_buy:
+                gate_and_emit(ts, True, min(order_qty, aq), ap)
+            elif fire_sell:
+                gate_and_emit(ts, False, min(order_qty, bq), bp)
+
+        else:  # SWEEP: take the same side at the last held (two-sided) BBO
+            is_buy = e[2]
+            if not bbo_ok:
+                continue
+            if is_buy:
+                gate_and_emit(ts, True, min(order_qty, lask_qty), lask_px)
+            else:
+                gate_and_emit(ts, False, min(order_qty, lbid_qty), lbid_px)
 
     print("\n".join(out))
     print(f"# orders={len(out)} position={pos} inflight={inflight}", file=sys.stderr)
@@ -127,4 +177,5 @@ if __name__ == "__main__":
          int(a[3]) if len(a) > 3 else ORDER_QTY,
          int(a[4]) if len(a) > 4 else POS_LIMIT,
          int(a[5]) if len(a) > 5 else MAX_INFLIGHT,
-         int(a[6]) if len(a) > 6 else ACK_GAP)
+         int(a[6]) if len(a) > 6 else ACK_GAP,
+         a[7] if len(a) > 7 else None)

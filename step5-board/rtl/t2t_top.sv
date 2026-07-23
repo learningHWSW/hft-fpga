@@ -63,6 +63,9 @@ module t2t_top #(
   input  logic [31:0]         cfg_pos_limit,
   input  logic [15:0]         cfg_max_inflight,
   input  logic                cfg_order_ack,
+  input  logic                cfg_sweep_en,
+  input  logic [31:0]         cfg_sweep_min_levels,
+  input  logic [47:0]         cfg_sweep_gap,
 
   // OUCH configuration
   input  logic [47:0]         cfg_token_prefix,
@@ -147,13 +150,16 @@ module t2t_top #(
   logic [31:0] bbo_bid_price, bbo_bid_qty, bbo_ask_price, bbo_ask_qty;
   logic        ev_gap, ev_hb, ev_eos;
   logic [63:0] ev_seq, ev_expected;
-  logic [31:0] st_dup_cnt, st_frame_err, st_ot_miss;
+  logic [31:0] st_dup_cnt, st_frame_err, st_ot_miss, st_sweep_cnt;
+  logic        sweep_pulse, sweep_is_buy;
 
   fh_core #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS)) u_fh (
     .clk(core_clk), .rst_n(core_rst_n),
     .track_locate(cfg_track_locate), .cfg_base(cfg_band_base),
     .s_tdata(pay_tdata), .s_tkeep(pay_tkeep), .s_tvalid(pay_tvalid), .s_tlast(pay_tlast),
     .init_done(st_init_done),
+    .cfg_sweep_min_levels(cfg_sweep_min_levels), .cfg_sweep_gap(cfg_sweep_gap),
+    .o_sweep(sweep_pulse), .o_sweep_is_buy(sweep_is_buy), .st_sweep_cnt(st_sweep_cnt),
     .bbo_valid(bbo_valid), .bbo_ts(bbo_ts),
     .bbo_has_bid(bbo_has_bid), .bbo_bid_price(bbo_bid_price), .bbo_bid_qty(bbo_bid_qty),
     .bbo_has_ask(bbo_has_ask), .bbo_ask_price(bbo_ask_price), .bbo_ask_qty(bbo_ask_qty),
@@ -180,6 +186,7 @@ module t2t_top #(
     .i_valid(bbo_valid), .i_ts(bbo_ts),
     .i_has_bid(bbo_has_bid), .i_bid_price(bbo_bid_price), .i_bid_qty(bbo_bid_qty),
     .i_has_ask(bbo_has_ask), .i_ask_price(bbo_ask_price), .i_ask_qty(bbo_ask_qty),
+    .cfg_sweep_en(cfg_sweep_en), .i_sweep(sweep_pulse), .i_sweep_is_buy(sweep_is_buy),
     .i_ack(cfg_order_ack),
     .o_valid(ord_valid), .o_ts(ord_ts), .o_is_buy(ord_is_buy),
     .o_qty(ord_qty), .o_price(ord_price), .o_ready(ord_ready),

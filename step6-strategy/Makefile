@@ -18,7 +18,7 @@ VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv tb/tb_strategy.sv
 VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0
 
-.PHONY: test test-xsim check-frames test-sweep clean
+.PHONY: test test-combined test-xsim check-frames test-sweep clean
 
 # bbo_in.log is the shared stimulus: the golden reads it, and so does the RTL
 bbo_in.log:
@@ -34,6 +34,19 @@ test: bbo_in.log
 	python3 scripts/dump_tcp.py ouch_gold.log > frames_gold.log
 	diff frames_gold.log frames_rtl.log && echo "PASS: TCP frames == golden"
 	python3 scripts/check_frames.py frames_rtl.log
+
+# combined strategy: imbalance (BBO) + sweep, one risk gate. The golden merges
+# both trigger streams by timestamp; the TB drives the same merged order.
+test-combined: bbo_in.log
+	python3 scripts/dump_sweep.py $(SWITCH) $(SWLOC) $(SWMIN) $(SWGAP) > sweep_in.log 2>/dev/null
+	python3 scripts/dump_orders.py bbo_in.log 2000 1 100 100 1000 4 50 sweep_in.log > orders_gold.log
+	verilator $(VFLAGS) -o stratsim --top-module tb_strategy $(VSRC)
+	./obj_dir/stratsim +bbo=bbo_in.log +sweep=sweep_in.log +out=orders_rtl.log +pkt=ouch_rtl.log +frm=frames_rtl.log
+	diff orders_gold.log orders_rtl.log && echo "PASS: combined orders == golden ($(SWITCH) loc=$(SWLOC))"
+	python3 scripts/dump_ouch.py orders_gold.log > ouch_gold.log
+	diff ouch_gold.log ouch_rtl.log && echo "PASS: combined OUCH == golden"
+	python3 scripts/dump_tcp.py ouch_gold.log > frames_gold.log
+	diff frames_gold.log frames_rtl.log && echo "PASS: combined TCP frames == golden"
 
 test-xsim: bbo_in.log
 	python3 scripts/dump_orders.py bbo_in.log > orders_gold.log
