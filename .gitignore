@@ -56,3 +56,5 @@ step5-board/t2t_*.log
 # syn/out/ above -- large, regenerable, and different on every run
 step5-board/syn/out_t2t/
 step5-board/iter_*_CongestedCLBsAndNets.txt
+step6-strategy/sweep_*.log
+step6-strategy/sweep_sum.txt

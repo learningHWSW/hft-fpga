@@ -18,7 +18,7 @@ VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv tb/tb_strategy.sv
 VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0
 
-.PHONY: test test-xsim check-frames clean
+.PHONY: test test-xsim check-frames test-sweep clean
 
 # bbo_in.log is the shared stimulus: the golden reads it, and so does the RTL
 bbo_in.log:
@@ -47,6 +47,25 @@ test-xsim: bbo_in.log
 # independent re-derivation of the checksums; skips if scapy is absent
 check-frames:
 	python3 scripts/check_frames.py frames_rtl.log
+
+# sweep detector: decoder -> order_table -> sweep_detect, diffed vs golden.
+# The detection half only; forward-return validation is Python analysis.
+STEP2 = ../step2-rtl-decoder
+STEP4A = ../step4a-order-table
+STEP5 = ../step5-board
+SWMIN ?= 2
+SWGAP ?= 1000000
+SWITCH ?= $(STEP5)/real.itch
+SWLOC ?= 13
+SWSRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
+        $(STEP4A)/rtl/otable_mem.sv $(STEP4A)/rtl/order_table.sv \
+        $(STEP5)/rtl/drop_fifo.sv rtl/sweep_detect.sv tb/tb_sweep.sv
+test-sweep:
+	python3 scripts/dump_sweep.py $(SWITCH) $(SWLOC) $(SWMIN) $(SWGAP) > sweep_gold.log 2>sweep_sum.txt
+	verilator $(VFLAGS) -o swsim --top-module tb_sweep $(SWSRC)
+	./obj_dir/swsim +itch=$(SWITCH) +loc=$(SWLOC) +min=$(SWMIN) +gap=$(SWGAP)
+	diff sweep_gold.log sweep_rtl.log && echo "PASS: sweeps == golden ($(SWITCH) loc=$(SWLOC) min=$(SWMIN))"
+	@cat sweep_sum.txt
 
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb

@@ -52,10 +52,13 @@ def main(path, L, min_levels, gap_ns):
 
     # in-progress run state
     run_dir = 0                 # +1 buy sweep, -1 sell sweep, 0 idle
-    run_levels = set()
+    run_levels = set()          # distinct prices (diagnostic only)
+    run_lvl_cnt = 0             # levels the sweep has WALKED (frontier count)
+    run_frontier = 0            # furthest price reached in the sweep direction
     run_shares = 0
     run_start = 0
     run_last = 0
+    n_nonmono = 0               # runs where distinct-count != frontier-count
 
     def best_mid():
         if not bid or not ask:
@@ -79,13 +82,24 @@ def main(path, L, min_levels, gap_ns):
             d.pop(price, None)
 
     def close_run():
-        nonlocal run_dir, run_levels, run_shares
-        if run_dir != 0 and len(run_levels) >= min_levels:
-            sweeps.append((run_last,
-                           "BUY" if run_dir > 0 else "SELL",
-                           len(run_levels), run_shares, run_last - run_start))
+        nonlocal run_dir, run_levels, run_lvl_cnt, run_frontier, run_shares, n_nonmono
+        # Level count is the number of levels the sweep WALKED, tracked by a
+        # single frontier price (furthest reached in the sweep direction) rather
+        # than a set — which is all the RTL can hold. For a marketable order
+        # walking the book the execution prices are monotonic, so the frontier
+        # count equals the distinct-price count; n_nonmono records the runs
+        # where they differ (interleaved aggressors, or two sweeps merged by the
+        # gap window), so the choice is measured rather than assumed.
+        if run_dir != 0:
+            if len(run_levels) != run_lvl_cnt:
+                n_nonmono += 1
+            if run_lvl_cnt >= min_levels:
+                sweeps.append((run_last,
+                               "BUY" if run_dir > 0 else "SELL",
+                               run_lvl_cnt, run_shares, run_last - run_start))
         run_dir = 0
         run_levels = set()
+        run_lvl_cnt = 0
         run_shares = 0
 
     i = 0
@@ -124,6 +138,11 @@ def main(path, L, min_levels, gap_ns):
             if run_dir == 0:
                 run_dir = d
                 run_start = ts
+                run_frontier = price
+                run_lvl_cnt = 1                 # first level of the run
+            elif (d > 0 and price > run_frontier) or (d < 0 and price < run_frontier):
+                run_lvl_cnt += 1                # walked one level further out
+                run_frontier = price
             run_levels.add(price)
             run_shares += delta
             run_last = ts
@@ -160,8 +179,11 @@ def main(path, L, min_levels, gap_ns):
             note_mid(ts)
     close_run()
 
+    # Diffable line: the fields the RTL sweep_detect reproduces exactly. dur_ns
+    # is informative but not carried on the RTL's sweep pulse, so it stays out
+    # of the diff and in the summary instead.
     for s in sweeps:
-        print(f"{s[0]} {s[1]} levels={s[2]} shares={s[3]} dur_ns={s[4]}")
+        print(f"{s[0]} {s[1]} levels={s[2]} shares={s[3]}")
 
     # ---- validation: forward mid return in the sweep's direction ----
     horizons = [1_000_000, 10_000_000, 100_000_000, 1_000_000_000]  # 1,10,100,1000 ms
@@ -171,6 +193,8 @@ def main(path, L, min_levels, gap_ns):
 
     print(f"# sweeps={len(sweeps)} (min_levels={min_levels} gap={gap_ns}ns) "
           f"on {path} loc={L}", file=sys.stderr)
+    print(f"# non-monotonic runs (set != change-count, RTL would differ): "
+          f"{n_nonmono}", file=sys.stderr)
     if sweeps:
         import statistics
         print(f"# levels: med={statistics.median(s[2] for s in sweeps)} "

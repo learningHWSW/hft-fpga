@@ -247,17 +247,60 @@ through `[511]` are driven by constants. That is 12 bytes × 8 bits, exactly the
 unused tail of the 64-byte beat beyond the 52-byte packet, which `m_tkeep`
 masks off. Expected, not a defect.
 
+## A second signal: sweep detection
+
+The imbalance rule above works on the BBO. A different, latency-native signal
+is the **sweep** (momentum ignition): an aggressive marketable order walking one
+side of the book across several price levels. It was measured on real data
+before any RTL (see `data/FINDINGS.md §5`): ≥3-level sweeps continue in their
+direction ~75 % of the time over the next millisecond, median one tick, and
+bigger sweeps continue harder — the monotonic relation the ignition thesis
+predicts, measured rather than assumed.
+
+`sweep_detect.sv` runs on the order table's delta stream, so it sees the
+executions the book actually resolves. In ITCH a sweep is an **execution**
+(E, C) consuming a resting order, not a Delete/Cancel; the resting side gives
+the direction (ask consumed → buy sweep). A run is same-direction executions
+within `cfg_gap`, and it fires when it has walked `cfg_min_levels` levels.
+
+The one design decision worth naming: "levels walked" is a **frontier count**,
+not a set of prices — the hardware keeps a single register (the furthest price
+reached in the sweep direction) and counts a level when an execution pushes past
+it. A marketable order walks the book monotonically, so this equals the
+distinct-price count a set would give; the golden tracks both and reports zero
+disagreement on qualifying sweeps, so the one-register simplification is
+measured, not assumed.
+
+`make test-sweep` runs the real AAPL replay through the decoder, the real
+2^13 × 16 URAM order table, and the detector, and diffs the fired sweeps
+against `dump_sweep.py`:
+
+```
+TB done: 23 sweeps (min=2 gap=1000000) overflow=0 msg_drop=0
+PASS: sweeps == golden
+```
+
+(The TB paces injection on the message-FIFO level: at full injection it
+over-drives the 6-cycle-per-message table and the FIFO drops, which is the
+`stress` regime — pacing keeps every execution reaching the detector so the
+diff is meaningful.) OOC synthesis: 204 LUT, 292 FF, 0 DSP, WNS +2.418 ns
+(~432 MHz), no warnings. The forward-return validation stays in Python; this
+block only detects.
+
 ## Files
 
 ```
 rtl/strategy.sv          the rule, the risk gate
 rtl/ouch_builder.sv      order intent -> SoupBinTCP + OUCH 4.2 bytes
 rtl/tcp_tx.sv            OUCH packet -> TCP/IPv4/Ethernet frame
+rtl/sweep_detect.sv      momentum-ignition detector on the delta stream
 scripts/dump_orders.py   golden model for the rule — the specification, in Python
 scripts/dump_ouch.py     golden model for the OUCH wire format
 scripts/dump_tcp.py      golden model for the TCP/IP framing
+scripts/dump_sweep.py    sweep golden + forward-return validation
 scripts/check_frames.py  independent scapy re-derivation of the checksums
 tb/tb_strategy.sv        self-checking TB for the chain, diffed against both
+tb/tb_sweep.sv           self-checking TB for the sweep detector
 ```
 
 ## What is still missing for tick-to-trade
