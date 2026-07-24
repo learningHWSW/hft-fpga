@@ -65,14 +65,19 @@ module tb_price_ladder;
   logic [MSGW-1:0] mf_data;
   logic [31:0]     mf_drop;
 
+  logic [6:0] mf_level;
   drop_fifo #(.WIDTH(MSGW), .DEPTH(64)) u_msg_fifo (
     .clk(clk), .rst_n(rst_n),
     .push_valid(mvalid), .push_data(msg),
     .pop_valid(mf_valid), .pop_data(mf_data), .pop_ready(mf_ready),
-    .drop_cnt(mf_drop), .level(), .level_max()
+    .drop_cnt(mf_drop), .level(mf_level), .level_max()
   );
 
+`ifdef OT_PIPE
+  order_table_pipe #(.SETS_BITS(13), .WAYS(16)) ot (
+`else
   order_table #(.SETS_BITS(13), .WAYS(16)) ot (
+`endif
     .clk(clk), .rst_n(rst_n), .track_locate(track_locate),
     .s_msg(itch_msg_t'(mf_data)), .s_valid(mf_valid), .s_ready(mf_ready),
     .o_valid(ot_valid), .o_type(ot_type), .o_ts(ot_ts), .o_locate(ot_locate), .o_side(ot_side),
@@ -141,6 +146,7 @@ module tb_price_ladder;
   task automatic send_msg(input int n);
     int i, k;
     i = 0;
+    while (mf_level > 7'd40) @(negedge clk);   // let the table drain the FIFO
     while (i < n) begin
       k = (n - i > KEEP_W) ? KEEP_W : (n - i);
       @(negedge clk);
@@ -192,13 +198,13 @@ module tb_price_ladder;
     end
     $fclose(fd);
 
-    repeat (60) @(posedge clk);   // ladder pipeline is 11 cy/record; drain the last one
+    repeat (200) @(posedge clk);  // drain: ladder 11 cy + order-table pipe depth
     $fclose(fd_log);
     // oob = prices outside the ladder band (deep/stub quotes far from BBO).
     // Dropping them is by design (PLAN §2.1); the BBO diff is what proves
     // correctness — if an oob price should have been the BBO, the diff fails.
-    $display("TB done: %0d BBO updates, dropped=%0d overflow=%0d oob=%0d (oob ok: deep levels)",
-             n_bbo, n_dropped, overflow_cnt, oob_cnt);
+    $display("TB done: %0d BBO updates, dropped=%0d overflow=%0d oob=%0d miss=%0d",
+             n_bbo, n_dropped, overflow_cnt, oob_cnt, miss_cnt);
     if (mf_drop != 0) $display("FAIL: %0d messages dropped before the table", mf_drop);
     if (n_dropped != 0 || overflow_cnt != 0)
       $display("FAIL: dropped=%0d overflow=%0d", n_dropped, overflow_cnt);
