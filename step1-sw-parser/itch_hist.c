@@ -59,40 +59,64 @@ static void win_feed(int w, uint64_t ts){
     if (++win_cur[w] > win_max[w]) { win_max[w] = win_cur[w]; win_max_ts[w] = ts; }
 }
 
-/* ---------- backlog simulation ---------- */
-#define T_CYC_PS   3103          /* 1/322.265625MHz in ps                   */
+/* ---------- backlog simulation ----------
+ * A single wire (100G serialization) feeds one or more single-server queues,
+ * each with its own service time per message. This is how "does the design
+ * keep up at line rate" is MEASURED rather than assumed: the splitter drains
+ * 1 msg / 3.103 ns, the order table is slower (its FSM takes several cycles at
+ * a slower clock), so both are simulated against the same real arrival trace
+ * and the max backlog / overflow tells whether the input FIFO ever spills.
+ */
 #define WIRE_PS_B  80            /* 100G: 1 byte = 80 ps                    */
-#define QCAP (1u<<22)            /* ring of in-flight msgs (4M)             */
-static struct { uint64_t done_ps; uint16_t len; } q[QCAP];
-static uint32_t q_head, q_tail;                 /* [head, tail)             */
-static uint64_t q_bytes;
-static uint64_t wire_ps, srv_done_ps;           /* wire cursor, server done */
-static uint64_t bl_max_msgs, bl_max_bytes, bl_max_ts;
-static uint64_t bl_hist[64];                    /* log2 bins of msg backlog */
-static uint64_t bl_overflow;
+#define QCAP (1u<<23)            /* ring of in-flight msgs (8M)             */
 
-static void backlog_feed(uint64_t ts, unsigned len){
-    uint64_t ts_ps = ts * 1000ull;
-    uint64_t framed = len + 2;                  /* mold length prefix       */
-    wire_ps = (wire_ps > ts_ps ? wire_ps : ts_ps) + framed * WIRE_PS_B;
-    uint64_t avail = wire_ps;                   /* fully received           */
-    /* retire finished msgs */
-    while (q_head != q_tail && q[q_head & (QCAP-1)].done_ps <= avail) {
-        q_bytes -= q[q_head & (QCAP-1)].len;
-        q_head++;
+typedef struct {
+    const char *name;
+    uint64_t srv_done_ps;                       /* server busy-until        */
+    struct { uint64_t done_ps; uint16_t len; } *q;
+    uint32_t head, tail;
+    uint64_t bytes, max_msgs, max_bytes, max_ts, overflow, hist[64];
+    uint32_t fifo_depth;                         /* FIFO size to test (msgs) */
+    uint64_t fifo_drops;                         /* msgs that would spill it */
+} server_t;
+
+static uint64_t wire_ps;                        /* shared wire cursor       */
+
+static void srv_feed(server_t *s, uint64_t avail, uint64_t ts,
+                     unsigned len, uint64_t srv_ps){
+    while (s->head != s->tail && s->q[s->head & (QCAP-1)].done_ps <= avail) {
+        s->bytes -= s->q[s->head & (QCAP-1)].len;
+        s->head++;
     }
-    srv_done_ps = (srv_done_ps > avail ? srv_done_ps : avail) + T_CYC_PS;
-    if (q_tail - q_head < QCAP) {
-        q[q_tail & (QCAP-1)].done_ps = srv_done_ps;
-        q[q_tail & (QCAP-1)].len = (uint16_t)len;
-        q_tail++;
-        q_bytes += len;
-    } else bl_overflow++;
-    uint64_t depth = q_tail - q_head;
-    if (depth > bl_max_msgs)  { bl_max_msgs = depth; bl_max_ts = ts; }
-    if (q_bytes > bl_max_bytes) bl_max_bytes = q_bytes;
+    s->srv_done_ps = (s->srv_done_ps > avail ? s->srv_done_ps : avail) + srv_ps;
+    if (s->tail - s->head < QCAP) {
+        s->q[s->tail & (QCAP-1)].done_ps = s->srv_done_ps;
+        s->q[s->tail & (QCAP-1)].len = (uint16_t)len;
+        s->tail++;
+        s->bytes += len;
+    } else s->overflow++;
+    uint64_t depth = s->tail - s->head;
+    if (depth > s->max_msgs)  { s->max_msgs = depth; s->max_ts = ts; }
+    if (s->bytes > s->max_bytes) s->max_bytes = s->bytes;
+    if (depth > s->fifo_depth) s->fifo_drops++;  /* would a real FIFO spill? */
     int b = 0; while ((depth >> b) > 1) b++;
-    bl_hist[b]++;
+    s->hist[b]++;
+}
+
+/* splitter: 1 msg / cycle @ 322.265625 MHz. order table: FSM cycles @ core
+ * clock (220 MHz post-route). Non-'U' book/other = 6 cy, 'U' = 11 cy. */
+#define SPLIT_PS   3103
+#define CORE_PS    4545          /* 1/220 MHz in ps                          */
+static server_t sv_split = { .name = "splitter (1 msg/cy @322MHz)", .fifo_depth = 512 };
+static server_t sv_otab  = { .name = "order table (FSM @220MHz)",   .fifo_depth = 512 };
+
+static void backlog_feed(uint64_t ts, unsigned len, uint8_t type){
+    uint64_t ts_ps = ts * 1000ull;
+    wire_ps = (wire_ps > ts_ps ? wire_ps : ts_ps) + (len + 2) * WIRE_PS_B;
+    uint64_t avail = wire_ps;
+    srv_feed(&sv_split, avail, ts, len, SPLIT_PS);
+    uint64_t ot_ps = (type == 'U' ? 11 : 6) * CORE_PS;
+    srv_feed(&sv_otab, avail, ts, len, ot_ps);
 }
 
 /* ---------- live order table (linear probing, backward-shift delete) --- */
@@ -173,6 +197,8 @@ int main(int argc, char **argv){
 
     for (int w = 0; w < NWIN; w++) win_hist[w] = calloc(WCAP, sizeof(uint32_t));
     otab = calloc(OSIZE, sizeof *otab);
+    sv_split.q = malloc((size_t)QCAP * sizeof *sv_split.q);
+    sv_otab.q  = malloc((size_t)QCAP * sizeof *sv_otab.q);
     if (!otab) { fprintf(stderr, "otab alloc failed\n"); return 1; }
 
     uint8_t hdr[2], buf[64];
@@ -193,7 +219,7 @@ int main(int argc, char **argv){
         prev_ts = ts;
 
         for (int w = 0; w < NWIN; w++) win_feed(w, ts);
-        backlog_feed(ts, len);
+        backlog_feed(ts, len, t);
 
         switch (t) {
         case 'A': case 'F': oins(be64(buf+11), be32(buf+20), ts); break;
@@ -235,14 +261,18 @@ int main(int argc, char **argv){
                win_max[w], bt);
     }
 
-    char bt[40]; fmt_ts(bl_max_ts, bt);
-    printf("\n-- splitter FIFO backlog (arrival: 100G wire; drain: 1 msg / %.3f ns) --\n",
-           T_CYC_PS/1000.0);
-    printf("  max backlog: %" PRIu64 " msgs / %" PRIu64 " bytes  @ %s%s\n",
-           bl_max_msgs, bl_max_bytes, bt, bl_overflow ? "  (RING OVERFLOW: rerun bigger QCAP)" : "");
-    printf("  backlog-at-arrival log2 histogram (bin: msgs<2^(b+1)):\n");
-    for (int b = 0; b < 64; b++) if (bl_hist[b])
-        printf("    2^%-2d %12" PRIu64 "\n", b, bl_hist[b]);
+    printf("\n-- FIFO backlog vs a real 100G arrival trace (drain = server rate) --\n");
+    server_t *svs[2] = { &sv_split, &sv_otab };
+    for (int k = 0; k < 2; k++) {
+        server_t *s = svs[k];
+        char bt[40]; fmt_ts(s->max_ts, bt);
+        printf("  %s:\n", s->name);
+        printf("    max backlog: %" PRIu64 " msgs / %" PRIu64 " bytes  @ %s%s\n",
+               s->max_msgs, s->max_bytes, bt,
+               s->overflow ? "  (RING OVERFLOW: bigger QCAP)" : "");
+        printf("    would-spill a %u-msg FIFO: %" PRIu64 " msgs dropped\n",
+               s->fifo_depth, s->fifo_drops);
+    }
 
     fmt_ts(live_peak_ts, b1);
     printf("\n-- live orders (table 2^%d, hash = low bits of ref) --\n", OBITS);

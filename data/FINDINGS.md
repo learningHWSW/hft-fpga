@@ -154,12 +154,44 @@ AAPL, 전일 앞 40M 피드 메시지 슬라이스 (loc=13, [dump_sweep.py](../s
   실제 AAPL 1틱 스프레드를 크로스하는 비용과 같은 자릿수 — edge는 얇고, 그래서 22 ns
   지연과 비용 관리가 곧 알파다.
 
+## 6. II=1이 필요한가 — 측정이 답한다 (order table 처리량 vs 지연)
+
+order table은 correctness-first FSM으로 메시지당 6 사이클(U는 11), 220 MHz에서
+약 36.7 M msg/s. II=1(파이프라인, 사이클당 1 메시지)이 필요한지 **가정하지 말고**
+실제 100G 도착 트레이스로 재봤다 ([itch_hist.c](../step1-sw-parser/itch_hist.c)의
+2-서버 백로그 시뮬: 같은 와이어가 splitter와 order table 두 큐를 각자의 서비스
+레이트로 드레인).
+
+전일 전체:
+
+| 서버 | 최대 백로그 | 512-msg FIFO 드롭 |
+|---|---|---|
+| splitter (1 msg/cy @ 322 MHz) | 76 msgs / 2356 B | 0 |
+| order table (6 cy/msg @ 220 MHz) | **453 msgs** / 14043 B | **0** |
+
+- **처리량으로는 II=1이 필요 없다.** 6 cy/msg FSM이 fh_core의 기존 512-deep msg
+  FIFO로 전일 최악 버스트(453 msgs, 15:59:56의 501 msg/µs 스파이크)를 드롭 0으로
+  흡수한다. 우연이 아니라 측정된 여유(453/512, 12%)다.
+- **II=1이 실제로 사는 건 버스트 중 지연이다.** 453-msg 백로그는 큐 꼬리의 메시지가
+  order table에 닿기까지 453 × 27 ns ≈ **12.4 µs**를 기다린다는 뜻 — 정확히 거래
+  기회가 몰리는 버스트 순간의 지연이라, 틱-투-트레이드에서는 이게 요점이다.
+- 모델은 보수적(안전한 쪽): MoldUDP64/UDP/Eth 패킷 오버헤드를 넣지 않아 도착이
+  실제보다 조밀 → 실제 백로그는 이보다 낮다.
+
+**결론**: 순서는 (1) 값싼 사이클 절감 — 2^13×16은 URAM 캐스케이드가 2단(예전 16단
+아님)이라 RD_LAT를 낮출 수 있다 → 6 cy/msg를 줄여 버스트 지연을 비례 축소, (2) 그래도
+부족하면 full II=1(파이프라인 + 해저드 포워딩)이라는 큰 작업. 지연이 목표지 드롭이
+아니라는 걸 측정이 못 박았다.
+
 ## 재현
 
 ```sh
 cd step1-sw-parser && make itch_hist
 ./itch_hist ../data/12302019.NASDAQ_ITCH50.gz > ../data/hist_full.txt
 # 앞 N개만: ./itch_hist <file.gz> 100000000
+
+# II=1 백로그 (§6): 2-서버 시뮬은 itch_hist에 내장, 전체 파일 1패스
+cd step1-sw-parser && make itch_hist && ./itch_hist ../data/12302019.NASDAQ_ITCH50.gz
 
 # 스윕 신호 (§5): 큰 슬라이스가 필요 — 스윕은 드물다
 python3 step1-sw-parser/itch_slice.py data/12302019.NASDAQ_ITCH50.gz aapl_big.itch 40000000 AAPL
