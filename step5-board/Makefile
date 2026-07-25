@@ -100,13 +100,36 @@ impl-t2t:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem bbo_*.log real.itch real.mold syn/out syn/out_t2t
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp stress synth impl synth-t2t impl-t2t clean
+.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-cfgcdc test-txarb test-axil-top stress synth impl synth-t2t impl-t2t clean
 
 # ---------- AXI4-Lite register file (host config surface) ----------
 # Self-checking, no golden file needed: writes then reads back every register.
 test-axil:
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o axilsim --top-module tb_axil_regfile rtl/axil_regfile.sv tb/tb_axil_regfile.sv
 	./obj_dir/axilsim
+
+# ---------- t2t_axil wrapper: AXI-Lite control plane + CDC + TX arbiter ------
+# Unit checks for the new crossing/arbiter logic, then a wrapper smoke test that
+# drives AXI config across three async clocks and catches the IGMP report on tx.
+test-cfgcdc:
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o cfgcdcsim --top-module tb_cfg_cdc rtl/cfg_cdc.sv tb/tb_cfg_cdc.sv
+	./obj_dir/cfgcdcsim
+
+test-txarb:
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o txarbsim --top-module tb_axis_tx_arb rtl/axis_tx_arb.sv tb/tb_axis_tx_arb.sv
+	./obj_dir/txarbsim
+
+TAXIL_SRC = ../step2-rtl-decoder/rtl/itch5_pkg.sv ../step2-rtl-decoder/rtl/itch_decoder.sv \
+  ../step3b-splitter/rtl/mold_splitter.sv ../step4a-order-table/rtl/otable_mem.sv \
+  ../step4a-order-table/rtl/order_table.sv ../step4a-order-table/rtl/order_table_pipe.sv \
+  ../step4b-book/rtl/price_ladder.sv rtl/drop_fifo.sv rtl/fh_core.sv rtl/eth_ip_udp_rx.sv \
+  rtl/cdc_fifo.sv ../step6-strategy/rtl/strategy.sv ../step6-strategy/rtl/sweep_detect.sv \
+  ../step6-strategy/rtl/ouch_builder.sv ../step6-strategy/rtl/tcp_tx.sv rtl/t2t_top.sv \
+  rtl/axil_regfile.sv rtl/cfg_cdc.sv rtl/axis_tx_arb.sv rtl/igmp_join.sv rtl/t2t_axil.sv
+test-axil-top:
+	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o taxilsim --top-module tb_t2t_axil $(TAXIL_SRC) tb/tb_t2t_axil.sv
+	./obj_dir/taxilsim
 
 # ---------- IGMPv2 membership report (multicast join) ----------
 # Golden frame from an independent Python build; TB diffs every emitted frame
