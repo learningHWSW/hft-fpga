@@ -41,6 +41,7 @@ A_TO_REG = {
     "SRC_PORT": ("cfg_src_port", 0), "DST_PORT": ("cfg_dst_port", 0),
     "INIT_SEQ": ("cfg_init_seq", 0), "ACK_NUM": ("cfg_ack_num", 0),
     "WINDOW": ("cfg_window", 0), "INIT_ID": ("cfg_init_id", 0),
+    "IGMP_EN": ("cfg_igmp_en", 0), "IGMP_INTERVAL": ("cfg_igmp_interval", 0),
 }
 # anchors that are not per-register config words
 ANCHORS = {"CTRL", "STAT", "ID"}

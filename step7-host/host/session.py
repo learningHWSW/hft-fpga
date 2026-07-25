@@ -51,7 +51,8 @@ class HostSession:
                   max_spread, ratio_shift, min_qty, order_qty, pos_limit,
                   max_inflight, sweep_en, sweep_min_levels, sweep_gap,
                   dst_mac, src_mac, src_ip, dst_ip, src_port, dst_port,
-                  init_seq, ack_num, window, init_id):
+                  init_seq, ack_num, window, init_id,
+                  igmp_en=True, igmp_interval=3_000_000):
         d = self.dev
         d.write("cfg_group_ip", regmap.ip2int(group_ip))
         d.write("cfg_udp_port", udp_port)
@@ -84,6 +85,8 @@ class HostSession:
         d.write("cfg_ack_num", ack_num)
         d.write("cfg_window", window)
         d.write("cfg_init_id", init_id)
+        d.write("cfg_igmp_en", 1 if igmp_en else 0)
+        d.write("cfg_igmp_interval", igmp_interval)
 
     # ---- session -------------------------------------------------------
     def connect(self, host, port, username="TRADER", password="pw", timeout=5):

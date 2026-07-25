@@ -24,11 +24,7 @@ module t2t_axil #(
   parameter int DATA_W        = 512,
   parameter int OT_SETS_BITS  = 13,
   parameter int OT_WAYS       = 16,
-  parameter int AXIL_AW       = 12,
-  // IGMP refresh period in core-clock cycles; rejoined on every config commit.
-  // Small default keeps a sim short; a deployment sets it well inside the
-  // switch's ~260 s group timeout (see igmp_join).
-  parameter int IGMP_INTERVAL = 32'd1_000_000
+  parameter int AXIL_AW       = 12
 )(
   // ---- CMAC domain ----
   input  logic                cmac_clk,
@@ -68,7 +64,7 @@ module t2t_axil #(
   output logic                s_axil_rvalid,
   input  logic                s_axil_rready
 );
-  localparam int CFGW = 862;      // sum of all cfg_* widths (checked at elab)
+  localparam int CFGW = 895;      // sum of all cfg_* widths (checked at elab)
   localparam int STW  = 577;      // sum of all st_* widths
 
   // ================= AXI-Lite register file (axil_clk) =================
@@ -81,7 +77,8 @@ module t2t_axil #(
   logic [63:0] a_stock;
   logic [7:0]  a_display, a_capacity, a_sweep, a_cross, a_cust;
   logic [3:0]  a_ratio_shift;
-  logic        a_enable, a_sweep_en, a_load, a_order_ack;
+  logic        a_enable, a_sweep_en, a_load, a_order_ack, a_igmp_en;
+  logic [31:0] a_igmp_interval;
 
   // status, resynced into the axil domain for read-back
   logic [STW-1:0] st_bus_axil;
@@ -104,6 +101,7 @@ module t2t_axil #(
     .cfg_dst_mac(a_dst_mac), .cfg_src_mac(a_src_mac), .cfg_src_ip(a_src_ip), .cfg_dst_ip(a_dst_ip),
     .cfg_src_port(a_src_port), .cfg_dst_port(a_dst_port), .cfg_init_seq(a_init_seq),
     .cfg_ack_num(a_ack_num), .cfg_window(a_window), .cfg_init_id(a_init_id),
+    .cfg_igmp_en(a_igmp_en), .cfg_igmp_interval(a_igmp_interval),
     .cfg_load(a_load), .cfg_order_ack(a_order_ack),
     .st_rx_drop(st_bus_axil[576:545]), .st_rx_hwm(st_bus_axil[544:513]),
     .st_init_done(st_bus_axil[512]), .st_frames_in(st_bus_axil[511:480]),
@@ -125,7 +123,7 @@ module t2t_axil #(
     a_sweep_min_levels, a_sweep_gap, a_token_prefix, a_stock, a_firm, a_tif,
     a_ouch_min_qty, a_display, a_capacity, a_sweep, a_cross, a_cust,
     a_dst_mac, a_src_mac, a_src_ip, a_dst_ip, a_src_port, a_dst_port,
-    a_init_seq, a_ack_num, a_window, a_init_id
+    a_init_seq, a_ack_num, a_window, a_init_id, a_igmp_en, a_igmp_interval
   };
 
   // ================= config crossing (axil -> core) =================
@@ -149,14 +147,15 @@ module t2t_axil #(
   logic [63:0] c_stock;
   logic [7:0]  c_display, c_capacity, c_sweep, c_cross, c_cust;
   logic [3:0]  c_ratio_shift;
-  logic        c_enable, c_sweep_en;
+  logic        c_enable, c_sweep_en, c_igmp_en;
+  logic [31:0] c_igmp_interval;
   assign {
     c_group_ip, c_udp_port, c_track_locate, c_band_base, c_enable, c_max_spread,
     c_ratio_shift, c_min_qty, c_order_qty, c_pos_limit, c_max_inflight, c_sweep_en,
     c_sweep_min_levels, c_sweep_gap, c_token_prefix, c_stock, c_firm, c_tif,
     c_ouch_min_qty, c_display, c_capacity, c_sweep, c_cross, c_cust,
     c_dst_mac, c_src_mac, c_src_ip, c_dst_ip, c_src_port, c_dst_port,
-    c_init_seq, c_ack_num, c_window, c_init_id
+    c_init_seq, c_ack_num, c_window, c_init_id, c_igmp_en, c_igmp_interval
   } = cfg_bus_core;
 
   // ================= the datapath (t2t_top) =================
@@ -206,12 +205,12 @@ module t2t_axil #(
   assign st_bus_axil = st_sync1;
 
   // ================= IGMP join (core) =================
-  // Armed after the first config commit (we now know the group); rejoined on
-  // every commit. i_query stays low until an RX-side query detector exists.
-  logic igmp_armed;
-  always_ff @(posedge core_clk or negedge core_rst_n)
-    if (!core_rst_n)     igmp_armed <= 1'b0;
-    else if (load_core)  igmp_armed <= 1'b1;
+  // Enable and refresh period come from host config (cfg_igmp_en/_interval).
+  // A config commit rejoins the group, but only when IGMP is enabled -- so a
+  // deployment that does not want IGMP simply leaves cfg_igmp_en at 0 and no
+  // report is ever sent. i_query stays low until an RX-side query detector
+  // exists. c_igmp_en updates on the same load_core edge that pulses the join.
+  wire igmp_join_now = load_core & c_igmp_en;
 
   logic [DATA_W-1:0]   ig_tdata;
   logic [DATA_W/8-1:0] ig_tkeep;
@@ -219,8 +218,8 @@ module t2t_axil #(
   igmp_join #(.DATA_W(DATA_W)) u_igmp (
     .clk(core_clk), .rst_n(core_rst_n),
     .cfg_group_ip(c_group_ip), .cfg_src_mac(c_src_mac), .cfg_src_ip(c_src_ip),
-    .cfg_igmp_en(igmp_armed), .cfg_interval(IGMP_INTERVAL[31:0]),
-    .i_join(load_core), .i_query(1'b0),
+    .cfg_igmp_en(c_igmp_en), .cfg_interval(c_igmp_interval),
+    .i_join(igmp_join_now), .i_query(1'b0),
     .m_tdata(ig_tdata), .m_tkeep(ig_tkeep), .m_tvalid(ig_tvalid), .m_tlast(ig_tlast),
     .m_tready(ig_core_ready), .report_cnt()
   );

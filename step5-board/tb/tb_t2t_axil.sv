@@ -38,7 +38,7 @@ module tb_t2t_axil;
   logic [3:0]  wstrb;
   logic [1:0]  bresp, rresp;
 
-  t2t_axil #(.DATA_W(DATA_W), .AXIL_AW(AW), .IGMP_INTERVAL(32'd1000)) dut (
+  t2t_axil #(.DATA_W(DATA_W), .AXIL_AW(AW)) dut (
     .cmac_clk(cmac_clk), .cmac_rst_n(cmac_rst_n),
     .rx_tdata(rx_d), .rx_tkeep(rx_k), .rx_tvalid(rx_v), .rx_tlast(rx_l),
     .tx_tdata(tx_d), .tx_tkeep(tx_k), .tx_tvalid(tx_v), .tx_tlast(tx_l), .tx_tready(tx_r),
@@ -95,7 +95,9 @@ module tb_t2t_axil;
     axi_write('h74, 32'h22334455);          // cfg_src_mac lo
     axi_write('h78, 32'h00000011);          // cfg_src_mac hi (00:11 high bytes)
     axi_write('h7C, 32'h0A000002);          // cfg_src_ip
-    axi_write('h9C, 32'h00000001);          // CTRL: commit (bit0 = load)
+    axi_write('h9C, 32'h00000001);          // cfg_igmp_en = 1
+    axi_write('hA0, 32'h00001000);          // cfg_igmp_interval (cycles)
+    axi_write('hA4, 32'h00000001);          // CTRL: commit (bit0 = load)
 
     // wait for the report to cross all the way to tx
     g = 0;

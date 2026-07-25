@@ -12,9 +12,9 @@
 // contract both sides agree on.
 //
 // ADDRESS MAP (byte offsets, 32-bit words; word index = addr[8:2]):
-//   0x00..0x98  configuration, one word each, in regmap.py REG order
+//   0x00..0xA0  configuration, one word each, in regmap.py REG order
 //               (48/64-bit fields split into _lo then _hi words)
-//   0x9C        CTRL  -- write bit0 pulses cfg_load, bit1 pulses cfg_order_ack
+//   0xA4        CTRL  -- write bit0 pulses cfg_load, bit1 pulses cfg_order_ack
 //   0x100..     status counters (read-only), in t2t_top st_* order
 //   0x1FC       ID = "T2T0" (read-only), a bring-up sanity read
 //
@@ -88,6 +88,8 @@ module axil_regfile #(
   output logic [31:0]         cfg_ack_num,
   output logic [15:0]         cfg_window,
   output logic [15:0]         cfg_init_id,
+  output logic                cfg_igmp_en,
+  output logic [31:0]         cfg_igmp_interval,
 
   // ---- commit pulses (one aclk cycle) ----
   output logic                cfg_load,
@@ -124,9 +126,10 @@ module axil_regfile #(
                  A_CAPACITY=23,  A_SWEEP=24,    A_CROSS=25,      A_CUST=26,
                  A_DSTMAC_LO=27, A_DSTMAC_HI=28,A_SRCMAC_LO=29,  A_SRCMAC_HI=30,
                  A_SRC_IP=31,    A_DST_IP=32,   A_SRC_PORT=33,   A_DST_PORT=34,
-                 A_INIT_SEQ=35,  A_ACK_NUM=36,  A_WINDOW=37,     A_INIT_ID=38;
-  localparam int NCFG   = 39;
-  localparam int A_CTRL = 39;         // 0x9C
+                 A_INIT_SEQ=35,  A_ACK_NUM=36,  A_WINDOW=37,     A_INIT_ID=38,
+                 A_IGMP_EN=39,   A_IGMP_INTERVAL=40;
+  localparam int NCFG   = 41;
+  localparam int A_CTRL = 41;         // 0xA4
   localparam int A_STAT = 64;         // 0x100 status base
   localparam int A_ID   = 127;        // 0x1FC
 
@@ -254,5 +257,7 @@ module axil_regfile #(
   assign cfg_ack_num          = cfgw[A_ACK_NUM];
   assign cfg_window           = cfgw[A_WINDOW][15:0];
   assign cfg_init_id          = cfgw[A_INIT_ID][15:0];
+  assign cfg_igmp_en          = cfgw[A_IGMP_EN][0];
+  assign cfg_igmp_interval    = cfgw[A_IGMP_INTERVAL];
 
 endmodule

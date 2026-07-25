@@ -31,7 +31,8 @@ module tb_axil_regfile;
   logic [63:0] cfg_stock;
   logic [7:0]  cfg_display, cfg_capacity, cfg_sweep, cfg_cross, cfg_cust;
   logic [3:0]  cfg_ratio_shift;
-  logic        cfg_enable, cfg_sweep_en, cfg_load, cfg_order_ack;
+  logic        cfg_enable, cfg_sweep_en, cfg_load, cfg_order_ack, cfg_igmp_en;
+  logic [31:0] cfg_igmp_interval;
 
   // status inputs
   logic [31:0] st_rx_drop, st_rx_hwm, st_frames_in, st_frames_kept;
@@ -68,6 +69,7 @@ module tb_axil_regfile;
     .cfg_src_port(cfg_src_port), .cfg_dst_port(cfg_dst_port),
     .cfg_init_seq(cfg_init_seq), .cfg_ack_num(cfg_ack_num),
     .cfg_window(cfg_window), .cfg_init_id(cfg_init_id),
+    .cfg_igmp_en(cfg_igmp_en), .cfg_igmp_interval(cfg_igmp_interval),
     .cfg_load(cfg_load), .cfg_order_ack(cfg_order_ack),
     .st_rx_drop(st_rx_drop), .st_rx_hwm(st_rx_hwm), .st_init_done(st_init_done),
     .st_frames_in(st_frames_in), .st_frames_kept(st_frames_kept),
@@ -130,7 +132,7 @@ module tb_axil_regfile;
     repeat (2) @(negedge aclk);
 
     // 1) round-trip every config word 0..38 with a distinct pattern
-    for (int i = 0; i < 39; i++) begin
+    for (int i = 0; i < 41; i++) begin
       axi_write(i*4, 32'hC0DE_0000 | i);
       axi_read (i*4, rb);
       check_eq($sformatf("cfgw[%0d] readback", i), rb, 32'hC0DE_0000 | i);
@@ -156,9 +158,9 @@ module tb_axil_regfile;
     check_eq("cfg_enable", cfg_enable, 1'b1);
 
     // 3) CTRL pulses: bit0 -> cfg_load, bit1 -> cfg_order_ack, one cycle each
-    axi_write('h9C, 32'h0000_0001);   // load
-    axi_write('h9C, 32'h0000_0002);   // order_ack
-    axi_write('h9C, 32'h0000_0000);   // no pulse
+    axi_write('hA4, 32'h0000_0001);   // CTRL: load
+    axi_write('hA4, 32'h0000_0002);   // CTRL: order_ack
+    axi_write('hA4, 32'h0000_0000);   // no pulse
     check_eq("cfg_load pulse count",      load_cycles, 1);
     check_eq("cfg_order_ack pulse count", ack_cycles,  1);
 
