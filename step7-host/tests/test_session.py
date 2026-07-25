@@ -23,7 +23,7 @@ from host.mock_exchange import MockExchange
 CFG = dict(
     group_ip="233.54.12.1", udp_port=26477, track_locate=13, band_base=2800000,
     max_spread=2000, ratio_shift=1, min_qty=100, order_qty=100, pos_limit=1000,
-    max_inflight=4, sweep_en=True, sweep_min_levels=3, sweep_gap=1000000,
+    max_inflight=4, sweep_en=True, sweep_min_levels=3, sweep_gap=250000,  # FINDINGS 5.1
     dst_mac="aa:bb:cc:dd:ee:ff", src_mac="00:11:22:33:44:55",
     src_ip="10.0.0.2", dst_ip="10.0.0.9", src_port=40001, dst_port=4001,
     init_seq=0x10000000, ack_num=0x20000000, window=65535, init_id=0x1000,

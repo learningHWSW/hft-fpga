@@ -26,6 +26,13 @@
 // The measured signal (FINDINGS §5): >= 3-level sweeps continue in their
 // direction ~75% of the time over the next millisecond, median one tick. The
 // forward-return validation stays in Python; this block only detects.
+//
+// Tuned operating point (FINDINGS §5.1, a P&L-proxy grid over both knobs):
+// cfg_gap = 250_000 ns (0.25 ms) and cfg_min_levels = 3. gap is the dominant
+// knob -- at the old 1 ms window the signal barely cleared its trading cost;
+// 0.25 ms lifts the net per-trade edge ~4.6x by refusing to merge separate
+// aggressions into one diluted run. These are software-set, so the values live
+// in the host config, not here.
 `timescale 1ns/1ps
 module sweep_detect (
   input  logic         clk,
