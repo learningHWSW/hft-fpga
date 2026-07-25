@@ -263,6 +263,74 @@ full II=1을 실제로 만들었다([order_table_pipe.sv](../step4a-order-table/
   버스트 중 order-table 대기(§6의 ~12.4 µs)를 사이클당 1 메시지로 없애는 것이 II=1의
   교환 조건이다.
 
+## 7. 지연 예산 — tick-to-trade 스테이지별 + II=1의 버스트 효과 (측정)
+
+§6은 II=1이 **버스트 지연**을 위한 것이라 결론냈다. 여기서 그 지연을 두 부분으로
+정확히 합산한다: (A) 파이프가 비어 있을 때 한 메시지의 무부하 tick-to-trade, (B)
+전일 최악 버스트에서 큐가 쌓일 때 더해지는 대기.
+
+### 7.1 무부하 예산 (스테이지 깊이 × 도메인 클럭)
+
+와이어 인 → 주문 아웃 경로의 각 RTL 스테이지 파이프 깊이(코어 4.618 ns = 216.5 MHz,
+CMAC 3.103 ns). 사이클 수는 각 FSM에서 읽은 값이다(±1 cy/스테이지, gate-level 아님).
+
+| 스테이지 (코어 도메인) | 사이클 | 비고 |
+|---|---|---|
+| cdc_fifo RX (CMAC→core) | ~3 | SYNC_FF=2 + 등록 read |
+| eth_ip_udp_rx | ~2 | 헤더 스트립 + 재정렬 |
+| beat FIFO + mold_splitter | ~2 | 첫 메시지까지 |
+| itch_decoder | 1 | 512b, 1 msg/beat |
+| msg FIFO + order_table | 5 | iterative·pipe **동일** (PDEPTH+1) |
+| **[임밸런스]** price_ladder | ~10 | RMW 분할 FSM (타이밍 위해 깊게) |
+| **[스윕]** sweep_detect | ~1 | order-table 델타 직접 탭 → **래더 우회** |
+| strategy | 2 | stage1 평가 + stage2 게이트/emit |
+| ouch_builder | 1 | 상태머신 없음, 조합 |
+| tcp_tx | ~2 | CALC에서 첫 비트 |
+| cdc_fifo TX (core→CMAC) | ~3 CMAC | ≈ 9.3 ns |
+
+- **스윕 경로 ≈ 19 코어 사이클 ≈ 90 ns**, **임밸런스 경로 ≈ 28 코어 사이클 ≈ 135 ns**
+  (+TX cdc ~9 ns). MAC/PHY 직렬화와 와이어 전파는 우리 RTL 밖이라 미포함.
+- **스윕(모멘텀) 경로가 더 빠르다**: sweep_detect가 order-table 델타를 직접 받아
+  11-사이클 price_ladder를 건너뛴다. §6에서 튜닝한 그 전략이 곧 저지연 경로다.
+- **무부하 지연은 iterative와 pipe가 같다** — order table 단일 메시지 레이턴시가
+  둘 다 5 cy. II=1은 여기서 아무것도 안 바꾼다. 이 지연은 대부분 타이밍 클로저를 위해
+  일부러 깊게 쪼갠 FSM(래더 10 cy, 테이블 5 cy)에서 온다 — Fmax와 맞바꾼 값이다.
+
+### 7.2 버스트 꼬리 지연 (전일 268.7M 메시지, itch_hist 3-서버)
+
+같은 100G 도착 트레이스로 splitter·iterative·II=1 pipe를 각자의 서비스 레이트로
+배수시키고, 각 메시지가 실제로 겪는 큐 대기(꼬리)를 직접 추적했다:
+
+| 서버 | max 백로그 | **버스트 꼬리 지연** |
+|---|---|---|
+| splitter (1 cy @322 MHz) | 76 msgs | 0.23 µs |
+| order table iterative (5–9 cy @220) | 443 msgs | **10.04 µs** |
+| order table II=1 pipe (1 cy @220) | 211 msgs | **0.95 µs** |
+
+- **II=1이 버스트 꼬리를 10.04 µs → 0.95 µs, 10.6배 줄인다** (§6의 ~12.4 µs 추정을
+  정밀 측정으로 확증). 최악 순간은 둘 다 15:59:56(장 마감 직전 스파이크).
+- **파이프도 0이 아니다 — 코어가 와이어보다 느리기 때문.** 파이프는 220 msg/µs로
+  배수하는데 splitter는 322 msg/µs로 밀어넣어, 잔여 백로그(211)가 쌓인다. 하지만
+  iterative의 44 msg/µs보다 5배 빨리 빠져 꼬리가 한 자릿수 µs → 서브-µs로 떨어진다.
+  216.5 MHz 코어로는 버스트 큐잉을 없앨 수 없고 **한 자릿수로 줄일** 뿐이다.
+
+### 7.3 종합 — 최악 버스트 tick-to-trade
+
+무부하(A) + 버스트 꼬리(B):
+
+| | 무부하 | + 버스트 꼬리 | = 최악 tick-to-trade |
+|---|---|---|---|
+| iterative | ~135 ns | 10.04 µs | **~10.2 µs** |
+| II=1 pipe | ~135 ns | 0.95 µs | **~1.1 µs** |
+
+- **한가할 땐 ~135 ns, 버스트 땐 큐가 지배한다.** 그래서 II=1의 가치는 전부 버스트에
+  있다(§6 결론 재확인): 최악 tick-to-trade를 **~10 µs → ~1 µs**로.
+- **한계**: (1) 무부하 사이클은 데이터패스 파이프 깊이지 gate-level 아님(±1 cy/스테이지),
+  MAC/PHY/와이어 미포함. (2) 백로그 모델은 order table에 **모든** 메시지를 FSM 레이턴시로
+  먹인다(§6 가정) — iterative는 실제로 비추적 심볼을 더 빨리 스킵하므로 10.04 µs는
+  **보수적 상한**이고, pipe의 1 cy는 타입 무관이라 정확(드문 해저드 스톨만 무시). 따라서
+  10.6배는 이득의 상한 쪽 추정이다. (3) 코어 220 MHz 모델(post-route 216.5).
+
 ## 재현
 
 ```sh
@@ -270,7 +338,7 @@ cd step1-sw-parser && make itch_hist
 ./itch_hist ../data/12302019.NASDAQ_ITCH50.gz > ../data/hist_full.txt
 # 앞 N개만: ./itch_hist <file.gz> 100000000
 
-# II=1 백로그 (§6): 2-서버 시뮬은 itch_hist에 내장, 전체 파일 1패스
+# II=1 백로그 + 버스트 꼬리 지연 (§6, §7): 3-서버 시뮬은 itch_hist에 내장, 전체 파일 1패스
 cd step1-sw-parser && make itch_hist && ./itch_hist ../data/12302019.NASDAQ_ITCH50.gz
 
 # 스윕 신호 (§5): 큰 슬라이스가 필요 — 스윕은 드물다
