@@ -76,7 +76,7 @@ test-t2t: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o t2tsim --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o t2tsim --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/igmp_query_detect.sv rtl/t2t_top.sv tb/tb_t2t.sv
 	./obj_dir/t2tsim +eth=real.eth +loc=13 +base=2800000 +gap=48 +frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: wire -> order frames == golden"
 
@@ -86,7 +86,7 @@ test-t2t-pipe: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -DOT_PIPE -o t2tpipe --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -DOT_PIPE -o t2tpipe --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/igmp_query_detect.sv rtl/t2t_top.sv tb/tb_t2t.sv
 	./obj_dir/t2tpipe +eth=real.eth +loc=13 +base=2800000 +gap=48 +frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: pipe wire -> order frames == golden"
 
@@ -100,7 +100,7 @@ impl-t2t:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem bbo_*.log real.itch real.mold syn/out syn/out_t2t
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-cfgcdc test-txarb test-axil-top stress synth impl synth-t2t impl-t2t clean
+.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-cfgcdc test-txarb test-axil-top stress synth impl synth-t2t impl-t2t clean
 
 # ---------- AXI4-Lite register file (host config surface) ----------
 # Self-checking, no golden file needed: writes then reads back every register.
@@ -124,7 +124,8 @@ TAXIL_SRC = ../step2-rtl-decoder/rtl/itch5_pkg.sv ../step2-rtl-decoder/rtl/itch_
   ../step4a-order-table/rtl/order_table.sv ../step4a-order-table/rtl/order_table_pipe.sv \
   ../step4b-book/rtl/price_ladder.sv rtl/drop_fifo.sv rtl/fh_core.sv rtl/eth_ip_udp_rx.sv \
   rtl/cdc_fifo.sv ../step6-strategy/rtl/strategy.sv ../step6-strategy/rtl/sweep_detect.sv \
-  ../step6-strategy/rtl/ouch_builder.sv ../step6-strategy/rtl/tcp_tx.sv rtl/t2t_top.sv \
+  ../step6-strategy/rtl/ouch_builder.sv ../step6-strategy/rtl/tcp_tx.sv \
+  rtl/igmp_query_detect.sv rtl/t2t_top.sv \
   rtl/axil_regfile.sv rtl/cfg_cdc.sv rtl/axis_tx_arb.sv rtl/igmp_join.sv rtl/t2t_axil.sv
 test-axil-top:
 	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
@@ -134,6 +135,10 @@ test-axil-top:
 # ---------- IGMPv2 membership report (multicast join) ----------
 # Golden frame from an independent Python build; TB diffs every emitted frame
 # against it byte-for-byte. Group/src match tb_igmp_join.sv defaults.
+test-igmpq:
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o igmpqsim --top-module tb_igmp_query_detect rtl/igmp_query_detect.sv tb/tb_igmp_query_detect.sv
+	./obj_dir/igmpqsim
+
 test-igmp:
 	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o igmpsim --top-module tb_igmp_join rtl/igmp_join.sv tb/tb_igmp_join.sv

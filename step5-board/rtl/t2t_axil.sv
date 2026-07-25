@@ -162,6 +162,7 @@ module t2t_axil #(
   logic [DATA_W-1:0]   ord_tdata;
   logic [DATA_W/8-1:0] ord_tkeep;
   logic                ord_tvalid, ord_tlast, ord_tready;
+  logic                igmp_query_core;
   logic [STW-1:0]      st_bus_core;
 
   t2t_top #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS)) u_t2t (
@@ -190,7 +191,8 @@ module t2t_axil #(
     .st_blk_pos(st_bus_core[223:192]), .st_blk_inflight(st_bus_core[191:160]),
     .st_blk_txfull(st_bus_core[159:128]), .st_position(st_bus_core[127:96]),
     .st_seq_num(st_bus_core[95:64]), .st_frame_cnt(st_bus_core[63:32]),
-    .st_tx_drop(st_bus_core[31:0])
+    .st_tx_drop(st_bus_core[31:0]),
+    .o_igmp_query(igmp_query_core)
   );
 
   // ================= status crossing (core -> axil) =================
@@ -210,7 +212,8 @@ module t2t_axil #(
   // deployment that does not want IGMP simply leaves cfg_igmp_en at 0 and no
   // report is ever sent. i_query stays low until an RX-side query detector
   // exists. c_igmp_en updates on the same load_core edge that pulses the join.
-  wire igmp_join_now = load_core & c_igmp_en;
+  wire igmp_join_now  = load_core       & c_igmp_en;
+  wire igmp_query_now = igmp_query_core & c_igmp_en;   // answer queries once joined
 
   logic [DATA_W-1:0]   ig_tdata;
   logic [DATA_W/8-1:0] ig_tkeep;
@@ -219,7 +222,7 @@ module t2t_axil #(
     .clk(core_clk), .rst_n(core_rst_n),
     .cfg_group_ip(c_group_ip), .cfg_src_mac(c_src_mac), .cfg_src_ip(c_src_ip),
     .cfg_igmp_en(c_igmp_en), .cfg_interval(c_igmp_interval),
-    .i_join(igmp_join_now), .i_query(1'b0),
+    .i_join(igmp_join_now), .i_query(igmp_query_now),
     .m_tdata(ig_tdata), .m_tkeep(ig_tkeep), .m_tvalid(ig_tvalid), .m_tlast(ig_tlast),
     .m_tready(ig_core_ready), .report_cnt()
   );

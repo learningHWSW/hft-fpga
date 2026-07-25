@@ -111,7 +111,10 @@ module t2t_top #(
   output logic signed [31:0]  st_position,
   output logic [31:0]         st_seq_num,
   output logic [31:0]         st_frame_cnt,
-  output logic [31:0]         st_tx_drop
+  output logic [31:0]         st_tx_drop,
+
+  // RX-side IGMP query -> drives igmp_join.i_query in the wrapper (RFC 2236)
+  output logic                o_igmp_query
 );
   localparam int KEEP_W = DATA_W / 8;
 
@@ -127,6 +130,14 @@ module t2t_top #(
     .r_clk(core_clk), .r_rst_n(core_rst_n),
     .m_tdata(rxc_tdata), .m_tkeep(rxc_tkeep), .m_tvalid(rxc_tvalid), .m_tlast(rxc_tlast),
     .m_tready(1'b1)                       // the feed path never stalls
+  );
+
+  // ---- RX-side IGMP query detector (taps the raw stream before the UDP
+  // filter, since IGMP is IP protocol 2, not UDP) ----
+  igmp_query_detect #(.DATA_W(DATA_W)) u_igmp_q (
+    .clk(core_clk), .rst_n(core_rst_n), .cfg_group_ip(cfg_group_ip),
+    .s_tdata(rxc_tdata), .s_tvalid(rxc_tvalid), .s_tlast(rxc_tlast),
+    .o_query(o_igmp_query), .query_cnt()
   );
 
   // ---- strip Ethernet/IPv4/UDP ----

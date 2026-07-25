@@ -111,7 +111,8 @@ module tb_t2t;
     .st_sent(st_sent), .st_blk_pos(st_blk_pos),
     .st_blk_inflight(st_blk_inflight), .st_blk_txfull(st_blk_txfull),
     .st_position(st_position), .st_seq_num(st_seq_num),
-    .st_frame_cnt(st_frame_cnt), .st_tx_drop(st_tx_drop)
+    .st_frame_cnt(st_frame_cnt), .st_tx_drop(st_tx_drop),
+    .o_igmp_query()                       // RX query tap, unused in this TB
   );
 
   // ---------------- latency instrumentation ----------------
