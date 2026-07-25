@@ -147,7 +147,13 @@ module fh_core
   logic        ot_has_rem, ot_has_add;
   logic [31:0] ot_rem_price, ot_rem_qty, ot_add_price, ot_add_qty;
 
+  // Select the II=1 pipelined table with +define+OT_PIPE; both are verified
+  // drop-ins with identical ports and byte-identical output (step4a).
+`ifdef OT_PIPE
+  order_table_pipe #(.SETS_BITS(OT_SETS_BITS), .WAYS(OT_WAYS)) u_otab (
+`else
   order_table #(.SETS_BITS(OT_SETS_BITS), .WAYS(OT_WAYS)) u_otab (
+`endif
     .clk(clk), .rst_n(rst_n), .track_locate(track_locate),
     .s_msg(itch_msg_t'(mf_pop_data)), .s_valid(mf_pop_valid), .s_ready(ot_ready),
     .o_valid(ot_valid), .o_type(ot_type), .o_ts(ot_ts),

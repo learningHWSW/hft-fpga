@@ -27,7 +27,7 @@ set srcs [list \
   $repo/step2-rtl-decoder/rtl/itch5_pkg.sv \
   $repo/step2-rtl-decoder/rtl/itch_decoder.sv \
   $repo/step3b-splitter/rtl/mold_splitter.sv \
-  $repo/step4a-order-table/rtl/otable_mem.sv $repo/step4a-order-table/rtl/order_table.sv \
+  $repo/step4a-order-table/rtl/otable_mem.sv $repo/step4a-order-table/rtl/order_table.sv $repo/step4a-order-table/rtl/order_table_pipe.sv \
   $repo/step4b-book/rtl/price_ladder.sv \
   $root/rtl/drop_fifo.sv \
   $root/rtl/fh_core.sv \
@@ -40,7 +40,9 @@ set srcs [list \
 
 create_project -in_memory -part $part
 foreach f $srcs { read_verilog -sv $f }
-set_property verilog_define OTABLE_XPM [current_fileset]
+set defs {OTABLE_XPM}
+if {[info exists ::env(OT_PIPE)]} { lappend defs OT_PIPE }
+set_property verilog_define $defs [current_fileset]
 
 # Constraints must be read BEFORE synth_design: create_clock needs an open
 # design, so they live in an XDC rather than being called here.

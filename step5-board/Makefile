@@ -6,6 +6,7 @@ STEP4B = ../step4b-book
 
 SRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
       $(STEP3B)/rtl/mold_splitter.sv $(STEP4A)/rtl/otable_mem.sv $(STEP4A)/rtl/order_table.sv \
+      $(STEP4A)/rtl/order_table_pipe.sv \
       $(STEP4B)/rtl/price_ladder.sv rtl/drop_fifo.sv ../step6-strategy/rtl/sweep_detect.sv rtl/fh_core.sv
 TB  = tb/tb_fh_core.sv
 TOP = tb_fh_core
@@ -75,9 +76,19 @@ test-t2t: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o t2tsim --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/sweep_detect.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o t2tsim --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/t2t_top.sv tb/tb_t2t.sv
 	./obj_dir/t2tsim +eth=real.eth +loc=13 +base=2800000 +gap=48 +frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: wire -> order frames == golden"
+
+# full chain with the II=1 pipelined order table
+test-t2t-pipe: real.eth
+	python3 $(STEP4B)/scripts/dump_bbo.py real.itch 13 > t2t_bbo.log
+	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
+	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
+	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -DOT_PIPE -o t2tpipe --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	./obj_dir/t2tpipe +eth=real.eth +loc=13 +base=2800000 +gap=48 +frm=t2t_rtl.log
+	diff t2t_gold.log t2t_rtl.log && echo "PASS: pipe wire -> order frames == golden"
 
 # full tick-to-trade chain (t2t_top): two clocks, wire in -> order frame out
 T2T_PERIOD ?= 4.618

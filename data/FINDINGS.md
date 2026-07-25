@@ -183,6 +183,45 @@ order table은 correctness-first FSM으로 메시지당 6 사이클(U는 11), 22
 부족하면 full II=1(파이프라인 + 해저드 포워딩)이라는 큰 작업. 지연이 목표지 드롭이
 아니라는 걸 측정이 못 박았다.
 
+### 6.1 full II=1 파이프 — 검증과 합성 (order_table_pipe)
+
+full II=1을 실제로 만들었다([order_table_pipe.sv](../step4a-order-table/rtl/order_table_pipe.sv),
+해저드-스톨 파이프, iterative order_table과 포트 동일한 drop-in). 검증은 골든-diff로
+끝까지 물었다:
+
+- 서브모듈 합성 골든 PASS, 실데이터 5M BBO == 골든(drop 0, overflow 0),
+  충돌 스트레스 order-table 출력이 iterative와 **바이트 동일**(2250==2250).
+- 전체 체인(t2t_top, `+define+OT_PIPE`) wire→주문프레임이 non-pipe와 바이트 동일:
+  `PASS: pipe wire -> order frames == golden`, gap 0 / ot_overflow 0 / beat·msg·delta
+  drop 0 (oob=465는 래더 밴드 밖 심층호가, 설계상 폐기).
+
+**합성(place & route 전, 낙관적)** — `OT_PIPE=1 make synth-t2t`, xcu55c, OT=2^13×16:
+
+| 지표 | 값 |
+|---|---|
+| LUT | 55,234 |
+| FF (FDRE) | 17,978 |
+| URAM288 | 66 |
+| BRAM (36/18) | 31 / 2 |
+| DSP | 2 |
+| cmac_clk (322.27 MHz) WNS | +1.304 ns (통과) |
+| core_clk (216.5 MHz 타깃) WNS | **−0.298 ns** (미달, Fmax 추정 203.4 MHz) |
+
+- **임계 경로는 II=1 파이프가 아니다.** 최악 경로는 mold_splitter의
+  `msglen_reg[6] → vcnt_reg[7]`(21 로직 레벨, route 71.8% 지배) — 메시지길이에서
+  유효바이트카운트를 만드는 산술 체인이고, non-pipe에도 공유되는 경로다. 파이프
+  order table 자신은 국소적으로 타이밍을 잡았다.
+- **실제 요구치는 195.3 MHz(5.120 ns, 512b×195.3M=100 Gb/s 바닥)**, 216.5는 여유
+  목표였다. 데이터경로 지연 4.899 ns(도착 4.916 ns) 기준 195.3 MHz에서 slack
+  **+0.204 ns → 통과**. 즉 낙관적 합성 수치로도 100G 라인레이트는 이미 만족한다.
+- 단, 이 설계 계열은 예전에 post-route가 합성보다 나빴다(합성이 낙관적). 216.5 MHz의
+  −0.298은 route 추정 성분이 크므로 P&R에서 부호가 그대로일지 미정 — **여기서는
+  요청 범위대로 합성까지만** 돌렸다. 216.5를 굳이 닫으려면 splitter의 msglen→vcnt에
+  레지스터 리타이밍 한 단을 넣거나 core 타깃을 라인레이트 바닥(195.3)로 두면 된다.
+- LUT는 iterative 대비 늘었다(파이프 스테이지 + 해저드 시프트레지스터). 이 비용으로
+  버스트 중 order-table 대기(§6의 ~12.4 µs)를 사이클당 1 메시지로 없애는 것이 II=1의
+  교환 조건이다.
+
 ## 재현
 
 ```sh

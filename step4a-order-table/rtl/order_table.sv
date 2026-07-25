@@ -35,7 +35,7 @@ module order_table
   // all 16 in one cycle. Xilinx recommends >= 3 for a cascade this long, so
   // that is the default; the FSM waits RD_LAT-1 extra cycles rather than
   // assuming a number.
-  parameter int RD_LAT    = 3,
+  parameter int RD_LAT    = 2,
   parameter int WAYS      = 16
                                 // day, data/FINDINGS.md §4.2)
 )(

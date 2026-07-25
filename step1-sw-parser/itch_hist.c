@@ -115,7 +115,7 @@ static void backlog_feed(uint64_t ts, unsigned len, uint8_t type){
     wire_ps = (wire_ps > ts_ps ? wire_ps : ts_ps) + (len + 2) * WIRE_PS_B;
     uint64_t avail = wire_ps;
     srv_feed(&sv_split, avail, ts, len, SPLIT_PS);
-    uint64_t ot_ps = (type == 'U' ? 11 : 6) * CORE_PS;
+    uint64_t ot_ps = (type == 'U' ? 9 : 5) * CORE_PS;  // RD_LAT=2: LOOK is 3 cy
     srv_feed(&sv_otab, avail, ts, len, ot_ps);
 }
 
