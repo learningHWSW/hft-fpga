@@ -1,0 +1,134 @@
+"""The AXI-Lite address map is a contract between two files: the host derives
+word offsets in regmap.py, the RTL hard-codes them as A_* localparams in
+step5-board/rtl/axil_regfile.sv. If they ever drift, a host write lands in the
+wrong register and nothing complains -- exactly the silent-mismatch class this
+project makes a point of turning into a diff.
+
+So this test parses the RTL localparams and diffs them against the host map.
+It also round-trips values through reg_words (the wide-field split) and checks
+the control/status/ID anchors. Run: python3 -m tests.test_regmap (from step7-host/).
+"""
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from host import regmap
+
+RTL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   "..", "..", "step5-board", "rtl", "axil_regfile.sv")
+
+# RTL A_* localparam name -> (host register name, word part: 0=lo, 1=hi)
+A_TO_REG = {
+    "GROUP_IP": ("cfg_group_ip", 0), "UDP_PORT": ("cfg_udp_port", 0),
+    "TRACK_LOCATE": ("cfg_track_locate", 0), "BAND_BASE": ("cfg_band_base", 0),
+    "ENABLE": ("cfg_enable", 0), "MAX_SPREAD": ("cfg_max_spread", 0),
+    "RATIO_SHIFT": ("cfg_ratio_shift", 0), "MIN_QTY": ("cfg_min_qty", 0),
+    "ORDER_QTY": ("cfg_order_qty", 0), "POS_LIMIT": ("cfg_pos_limit", 0),
+    "MAX_INFLIGHT": ("cfg_max_inflight", 0), "SWEEP_EN": ("cfg_sweep_en", 0),
+    "SWEEP_MINLV": ("cfg_sweep_min_levels", 0),
+    "SWEEP_GAP_LO": ("cfg_sweep_gap", 0), "SWEEP_GAP_HI": ("cfg_sweep_gap", 1),
+    "TOKEN_LO": ("cfg_token_prefix", 0), "TOKEN_HI": ("cfg_token_prefix", 1),
+    "STOCK_LO": ("cfg_stock", 0), "STOCK_HI": ("cfg_stock", 1),
+    "FIRM": ("cfg_firm", 0), "TIF": ("cfg_tif", 0),
+    "OUCH_MINQ": ("cfg_ouch_min_qty", 0), "DISPLAY": ("cfg_display", 0),
+    "CAPACITY": ("cfg_capacity", 0), "SWEEP": ("cfg_sweep", 0),
+    "CROSS": ("cfg_cross", 0), "CUST": ("cfg_cust", 0),
+    "DSTMAC_LO": ("cfg_dst_mac", 0), "DSTMAC_HI": ("cfg_dst_mac", 1),
+    "SRCMAC_LO": ("cfg_src_mac", 0), "SRCMAC_HI": ("cfg_src_mac", 1),
+    "SRC_IP": ("cfg_src_ip", 0), "DST_IP": ("cfg_dst_ip", 0),
+    "SRC_PORT": ("cfg_src_port", 0), "DST_PORT": ("cfg_dst_port", 0),
+    "INIT_SEQ": ("cfg_init_seq", 0), "ACK_NUM": ("cfg_ack_num", 0),
+    "WINDOW": ("cfg_window", 0), "INIT_ID": ("cfg_init_id", 0),
+}
+# anchors that are not per-register config words
+ANCHORS = {"CTRL", "STAT", "ID"}
+
+fails = 0
+
+
+def check(cond, msg):
+    global fails
+    print(("PASS" if cond else "FAIL") + ": " + msg)
+    if not cond:
+        fails += 1
+
+
+def parse_rtl_localparams():
+    """Every `A_<NAME>=<int>` in the RTL -> {NAME: index}."""
+    text = open(RTL).read()
+    return {m.group(1): int(m.group(2))
+            for m in re.finditer(r"\bA_([A-Z0-9_]+)\s*=\s*(\d+)", text)}
+
+
+def test_rtl_matches_host():
+    a = parse_rtl_localparams()
+    check(len(a) > 0, f"parsed A_* localparams from axil_regfile.sv ({len(a)})")
+
+    # every config A_* the RTL declares maps to the host offset it expects
+    for key, idx in a.items():
+        if key in ANCHORS:
+            continue
+        check(key in A_TO_REG, f"A_{key} is a known register")
+        if key not in A_TO_REG:
+            continue
+        name, part = A_TO_REG[key]
+        want = regmap.WORD_OFFSET[name][part] // 4
+        check(want == idx, f"A_{key}=word{idx} matches host {name}[{part}]=word{want}")
+
+    # and every host word the RTL should have is actually declared
+    declared = {A_TO_REG[k] for k in a if k in A_TO_REG}
+    for name, offs in regmap.WORD_OFFSET.items():
+        for part in range(len(offs)):
+            check((name, part) in declared, f"RTL declares {name}[{part}]")
+
+    # control / status / ID anchors
+    check(a.get("CTRL", -1) * 4 == regmap.CTRL_OFFSET,
+          f"CTRL at 0x{regmap.CTRL_OFFSET:X}")
+    check(a.get("STAT", -1) * 4 == regmap.STATUS_BASE,
+          f"status base at 0x{regmap.STATUS_BASE:X}")
+    check(a.get("ID", -1) * 4 == regmap.ID_OFFSET,
+          f"ID at 0x{regmap.ID_OFFSET:X}")
+
+
+def test_reg_words_roundtrip():
+    # 64-bit, 48-bit and 32-bit values split into words and reassemble
+    cases = {
+        "cfg_stock": 0x5566_7788_1122_3344,
+        "cfg_sweep_gap": 0x9911_AABB_CCDD,
+        "cfg_dst_mac": 0xAABB_CCDD_EEFF,
+        "cfg_band_base": 2800000,
+        "cfg_track_locate": 13,
+    }
+    for name, val in cases.items():
+        words = regmap.reg_words(name, val)
+        # lo word first, then hi -- reassemble little-word-endian
+        got = sum(w << (32 * k) for k, (_off, w) in enumerate(words))
+        check(got == val, f"{name} round-trips through reg_words (0x{val:X})")
+        # offsets are contiguous and word-aligned
+        offs = [o for o, _ in words]
+        check(offs == regmap.WORD_OFFSET[name], f"{name} offsets match map")
+
+
+def test_axil_writes_cover_config():
+    dev = regmap.Device()
+    dev.write("cfg_track_locate", 13)
+    dev.write("cfg_stock", regmap.ascii_le("AAPL    ", 8))
+    writes = dev.axil_writes()
+    # one entry per config word: 34 registers, 5 of them wide -> 39 words
+    check(len(writes) == regmap.NCFG, f"axil_writes emits {regmap.NCFG} words ({len(writes)})")
+    offs = [o for o, _ in writes]
+    check(offs == sorted(offs), "axil_writes offsets are in ascending order")
+    check(len(set(offs)) == len(offs), "axil_writes offsets are unique")
+    # the value we set shows up at its mapped offset
+    lo_off = regmap.WORD_OFFSET["cfg_track_locate"][0]
+    check(dict(writes)[lo_off] == 13, "cfg_track_locate=13 lands at its offset")
+
+
+if __name__ == "__main__":
+    test_rtl_matches_host()
+    test_reg_words_roundtrip()
+    test_axil_writes_cover_config()
+    print(f"\n{'ALL PASS' if fails == 0 else str(fails) + ' FAILED'}")
+    sys.exit(1 if fails else 0)

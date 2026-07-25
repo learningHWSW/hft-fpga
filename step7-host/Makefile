@@ -9,6 +9,7 @@ STEP6 = ../step6-strategy
 .PHONY: test fpga-fixture clean
 
 test:
+	python3 -m tests.test_regmap
 	python3 -m tests.test_session
 
 # regenerate the FPGA OUCH bytes the interop test replays (needs Verilator).

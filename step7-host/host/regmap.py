@@ -31,6 +31,47 @@ REGS = [
 _WIDTH = dict(REGS)
 
 
+# ---- AXI4-Lite word map (mirrors step5-board/rtl/axil_regfile.sv) ----
+# The RTL and the host must agree on which 32-bit word each register lands in.
+# Both follow one rule -- one word per register in REG order, wide fields
+# (>4 bytes) split into a low word then a high word -- so the offsets are
+# derived here rather than hand-listed, and match the RTL by construction.
+# tests/test_regmap.py parses the RTL localparams and diffs them against this.
+def _word_offsets():
+    off, idx = {}, 0
+    for name, w in REGS:
+        n = 1 if w <= 4 else 2          # 48/64-bit fields take two words
+        off[name] = [4 * (idx + k) for k in range(n)]
+        idx += n
+    return off, idx
+
+
+WORD_OFFSET, NCFG = _word_offsets()
+CTRL_OFFSET    = 4 * NCFG               # 0x9C: write bit0=load, bit1=order_ack
+STATUS_BASE    = 0x100
+ID_OFFSET      = 0x1FC
+ID_VALUE       = 0x54325430            # "T2T0"
+CTRL_LOAD      = 0x1
+CTRL_ORDER_ACK = 0x2
+
+# status counters, read-only, in t2t_top st_* order (offset = STATUS_BASE+4*i)
+STATUS = [
+    "st_rx_drop", "st_rx_hwm", "st_init_done", "st_frames_in", "st_frames_kept",
+    "st_gap_total", "st_ot_overflow", "st_pl_oob", "st_beat_drop", "st_msg_drop",
+    "st_delta_drop", "st_sent", "st_blk_pos", "st_blk_inflight", "st_blk_txfull",
+    "st_position", "st_seq_num", "st_frame_cnt", "st_tx_drop",
+]
+STATUS_OFFSET = {name: STATUS_BASE + 4 * i for i, name in enumerate(STATUS)}
+
+
+def reg_words(name: str, value: int):
+    """Decompose a register value into the (byte_offset, 32-bit word) AXI-Lite
+    writes the RTL expects: low word first, then the high word for 48/64-bit
+    fields. This is the actual bus transaction a driver issues over QDMA."""
+    offs = WORD_OFFSET[name]
+    return [(offs[k], (value >> (32 * k)) & 0xFFFFFFFF) for k in range(len(offs))]
+
+
 def ip2int(s: str) -> int:
     a, b, c, d = (int(x) for x in s.split("."))
     return (a << 24) | (b << 16) | (c << 8) | d
@@ -79,3 +120,13 @@ class Device:
         for name, w in REGS:
             out += self.regs[name].to_bytes(w, "big")
         return bytes(out)
+
+    def axil_writes(self):
+        """The whole config as the ordered (byte_offset, 32-bit word) AXI-Lite
+        writes a driver issues over QDMA -- the transport the RTL register file
+        (axil_regfile.sv) decodes. Off a card this is what a real board's write
+        stream would be; on a card these go straight to the BAR."""
+        out = []
+        for name, _ in REGS:
+            out += reg_words(name, self.regs[name])
+        return out
