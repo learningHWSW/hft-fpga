@@ -100,7 +100,13 @@ impl-t2t:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch real.mold syn/out syn/out_t2t
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t stress synth impl synth-t2t impl-t2t clean
+.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil stress synth impl synth-t2t impl-t2t clean
+
+# ---------- AXI4-Lite register file (host config surface) ----------
+# Self-checking, no golden file needed: writes then reads back every register.
+test-axil:
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o axilsim --top-module tb_axil_regfile rtl/axil_regfile.sv tb/tb_axil_regfile.sv
+	./obj_dir/axilsim
 
 # ---------- clock crossing (CMAC 322 MHz -> core clock) ----------
 # Two clocks, so this is Verilator-only: the checks are about pointer
