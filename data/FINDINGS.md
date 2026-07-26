@@ -295,6 +295,11 @@ full II=1을 실제로 만들었다([order_table_pipe.sv](../step4a-order-table/
 - 라인레이트 바닥(195.3 MHz)이 아니라 여유목표(216.5)를 실물 P&R로 만족했으므로,
   버스트 지연(§7, II=1이 10.04→0.95 µs)을 얻는 코어 주파수가 시뮬 가정(220)과
   일치한다.
+- **전체 래퍼(t2t_axil, 3 클럭)도 post-route로 닫힌다** (`impl-axil`): core +0.056,
+  axil_clk +0.547, cmac +0.281 ns, 전체 +0.056 MET, 에러 0. async 클럭 그룹이 P&R까지
+  유지됐다(아니면 cross-domain이 거대 위반). 46,371 LUT / 23,817 FF / 66 URAM /
+  40 BRAM / 2 DSP — regfile·CDC·아비터·IGMP를 더한 실물 통합 설계 전체가 배치·라우팅·
+  타이밍 클로징된다.
 
 ## 7. 지연 예산 — tick-to-trade 스테이지별 + II=1의 버스트 효과 (측정)
 
