@@ -275,8 +275,26 @@ full II=1을 실제로 만들었다([order_table_pipe.sv](../step4a-order-table/
 - **216.5 MHz가 합성에서 MET**(failing endpoints 0, total violation 0.000 ns). +2
   가산기 하나(캐리 체인 ~3 레벨)를 경로에서 빼 4.899→4.446 ns, 부호가 뒤집혔다.
 - **병목이 스플리터를 떠났다** — 이제 price_ladder의 add-diff→forward 경로가 한계
-  (+0.152). 다음에 여유가 더 필요하면 거기가 대상이다.
-- 여전히 route 지배(~70%)이고 합성 추정치다 — post-route 실측(`impl-t2t`)은 미완.
+  (합성 +0.152, post-route +0.196). 다음에 여유가 더 필요하면 거기가 대상이다.
+
+**Post-route 실측 (`OT_PIPE=1 make impl-t2t`, xcu55c, 216.5 MHz 타깃).** 예전에
+"이 계열은 post-route가 합성보다 나빴다"고 우려했지만, 리타이밍 뒤엔 route 지배
+경로라 P&R가 오히려 합성 추정을 살짝 이겼다:
+
+| 지표 | post-route |
+|---|---|
+| 전체 WNS (core, 216.5 MHz) | **+0.196 ns (MET)**, failing endpoints 0 |
+| core Fmax | ≈ 226 MHz |
+| cmac_clk WNS (322.27 MHz) | +0.567 ns |
+| 임계 경로 | price_ladder `r_add_diff→r_fwd`, 16 로직 레벨 |
+| LUT / FF | 44,511 / 18,553 |
+| URAM / BRAM / DSP | 66 / 32 / 2 |
+
+- **II=1 전체 틱-투-트레이드 체인이 216.5 MHz를 post-route로 닫는다** (+0.196 ns).
+  이제 합성 추정이 아니라 실측이다. LUT는 합성 55k에서 opt/place가 44.5k로 다듬었다.
+- 라인레이트 바닥(195.3 MHz)이 아니라 여유목표(216.5)를 실물 P&R로 만족했으므로,
+  버스트 지연(§7, II=1이 10.04→0.95 µs)을 얻는 코어 주파수가 시뮬 가정(220)과
+  일치한다.
 
 ## 7. 지연 예산 — tick-to-trade 스테이지별 + II=1의 버스트 효과 (측정)
 
