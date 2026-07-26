@@ -255,13 +255,28 @@ full II=1을 실제로 만들었다([order_table_pipe.sv](../step4a-order-table/
 - **실제 요구치는 195.3 MHz(5.120 ns, 512b×195.3M=100 Gb/s 바닥)**, 216.5는 여유
   목표였다. 데이터경로 지연 4.899 ns(도착 4.916 ns) 기준 195.3 MHz에서 slack
   **+0.204 ns → 통과**. 즉 낙관적 합성 수치로도 100G 라인레이트는 이미 만족한다.
-- 단, 이 설계 계열은 예전에 post-route가 합성보다 나빴다(합성이 낙관적). 216.5 MHz의
-  −0.298은 route 추정 성분이 크므로 P&R에서 부호가 그대로일지 미정 — **여기서는
-  요청 범위대로 합성까지만** 돌렸다. 216.5를 굳이 닫으려면 splitter의 msglen→vcnt에
-  레지스터 리타이밍 한 단을 넣거나 core 타깃을 라인레이트 바닥(195.3)로 두면 된다.
 - LUT는 iterative 대비 늘었다(파이프 스테이지 + 해저드 시프트레지스터). 이 비용으로
   버스트 중 order-table 대기(§6의 ~12.4 µs)를 사이클당 1 메시지로 없애는 것이 II=1의
   교환 조건이다.
+
+**리타이밍으로 216.5 MHz 클로징 (splitter msglen→vcnt).** 위 −0.298의 원인 경로에
+예고한 리타이밍을 실제로 넣었다: `msglen+2`(consume와 msg_ready가 둘 다 쓰는 값)를
+`win_next`에서 미리 레지스터(`mlen2`)로 뽑아, 그 +2 가산기를 msglen→consume→vcnt
+체인의 머리에서 msglen 레지스터와 **병렬**로 옮겼다. mlen2 ≡ msglen+2라 동작은 정확히
+동일 — 실데이터 5M BBO와 전체 체인 wire→주문프레임이 **바이트 동일**(둘 다 PASS).
+
+| | 리타이밍 前 | 리타이밍 後 |
+|---|---|---|
+| core_clk WNS (216.5 MHz) | −0.298 ns | **+0.152 ns (MET)** |
+| 로직 레벨 | 21 | **18** |
+| 데이터경로 지연 | 4.899 ns | 4.446 ns |
+| 최악 경로 | mold_splitter `msglen→vcnt` | price_ladder `r_add_diff→r_fwd` |
+
+- **216.5 MHz가 합성에서 MET**(failing endpoints 0, total violation 0.000 ns). +2
+  가산기 하나(캐리 체인 ~3 레벨)를 경로에서 빼 4.899→4.446 ns, 부호가 뒤집혔다.
+- **병목이 스플리터를 떠났다** — 이제 price_ladder의 add-diff→forward 경로가 한계
+  (+0.152). 다음에 여유가 더 필요하면 거기가 대상이다.
+- 여전히 route 지배(~70%)이고 합성 추정치다 — post-route 실측(`impl-t2t`)은 미완.
 
 ## 7. 지연 예산 — tick-to-trade 스테이지별 + II=1의 버스트 효과 (측정)
 

@@ -94,9 +94,18 @@ module mold_splitter #(
   // pipelined. The next window value is computed anyway for the shift, so the
   // next front's length is registered from it and is always in step with `win`.
   logic [15:0] msglen;
+  // mlen2 = msglen + 2 (message length including its 2-byte prefix), REGISTERED
+  // in step with msglen. Retiming: consume and msg_ready both need msglen+2, and
+  // that +2 adder used to sit at the head of the msglen -> consume -> vcnt chain
+  // (the core-clock critical path once the book was pipelined, FINDINGS 6.1).
+  // Precomputing it alongside msglen -- the +2 is computed from win_next, in
+  // parallel with the msglen register, not in series with the vcnt arithmetic --
+  // takes the adder out of that path. mlen2 is exactly msglen+2, so behaviour is
+  // unchanged.
+  logic [15:0] mlen2;
   logic        msg_ready;      // a full message sits at the window front
   logic        hdr_ready;      // a full MoldUDP64 header sits at the front
-  assign msg_ready = (vcnt >= 2) && (32'(vcnt) >= 32'(msglen) + 2);
+  assign msg_ready = (vcnt >= 2) && (32'(vcnt) >= 32'(mlen2));
   assign hdr_ready = (vcnt >= HDR_B);
 
   // consume: bytes removed from front this cycle
@@ -108,10 +117,10 @@ module mold_splitter #(
     unique case (state)
       HDR:  if (hdr_ready) consume = HDR_B[$clog2(WINB):0];
       EMIT: if (msg_ready) begin
-              consume  = ($clog2(WINB)+1)'(msglen + 16'd2);
+              consume  = ($clog2(WINB)+1)'(mlen2);
               emit_now = 1'b1;
             end
-      DROP: if (msg_ready) consume = ($clog2(WINB)+1)'(msglen + 16'd2);
+      DROP: if (msg_ready) consume = ($clog2(WINB)+1)'(mlen2);
       default: ;
     endcase
   end
@@ -163,6 +172,7 @@ module mold_splitter #(
       state         <= HDR;
       win           <= '0;
       msglen        <= '0;
+      mlen2         <= 16'd2;
       vcnt          <= '0;
       msgs_left     <= '0;
       expected_seq  <= 64'd1;
@@ -181,7 +191,8 @@ module mold_splitter #(
 
       // window: shift out `consume` bytes, OR in an accepted beat at the tail
       win    <= win_next;
-      msglen <= {win_next[7:0], win_next[15:8]};   // stays in step with `win`
+      msglen <= {win_next[7:0], win_next[15:8]};       // stays in step with `win`
+      mlen2  <= {win_next[7:0], win_next[15:8]} + 16'd2;  // precomputed msglen+2
       vcnt   <= vcnt - consume + (accept ? beatlen : '0);
 
       // control FSM (mirrors dump_mold.py's receiver model)
