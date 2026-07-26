@@ -1,3 +1,6 @@
 
 # generated golden memory images
 *.mem
+
+# Vivado synth/impl outputs
+syn/out*/
