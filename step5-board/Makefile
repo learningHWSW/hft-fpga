@@ -106,7 +106,7 @@ impl-axil:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-cfgcdc test-txarb test-axil-top test-axil-full stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
+.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
 
 # ---------- AXI4-Lite register file (host config surface) ----------
 # Self-checking, no golden file needed: writes then reads back every register.
@@ -149,6 +149,13 @@ test-axil-full: real.eth
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o taxilfull --top-module tb_t2t_axil_full $(TAXIL_SRC) tb/tb_t2t_axil_full.sv
 	./obj_dir/taxilfull +eth=real.eth +frm=t2t_axil_rtl.log
 	diff t2t_gold.log t2t_axil_rtl.log && echo "PASS: wrapper AXI-config -> order frames == golden"
+
+# ---------- OpenNIC integration: elaborate the box adapter ----------
+# Proves t2t_user_322mhz wires t2t_axil to the box interface correctly, using a
+# stub for the core-clock MMCM (the real IP is a Vivado clk_wiz; see opennic/).
+lint-opennic:
+	verilator --lint-only -sv -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT --top-module t2t_user_322mhz $(TAXIL_SRC) opennic/t2t_core_clk_stub.sv opennic/t2t_user_322mhz.sv
+	@echo "PASS: t2t_user_322mhz elaborates against t2t_axil"
 
 # ---------- IGMPv2 membership report (multicast join) ----------
 # Golden frame from an independent Python build; TB diffs every emitted frame
