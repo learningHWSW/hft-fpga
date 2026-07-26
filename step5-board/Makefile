@@ -97,10 +97,16 @@ synth-t2t:
 impl-t2t:
 	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
 
-clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem bbo_*.log real.itch real.mold syn/out syn/out_t2t
+# t2t_axil wrapper (three clocks): synth checks the 3-clock XDC applies cleanly
+synth-axil:
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000
+impl-axil:
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-cfgcdc test-txarb test-axil-top stress synth impl synth-t2t impl-t2t clean
+clean:
+	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
+
+.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-cfgcdc test-txarb test-axil-top stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
 
 # ---------- AXI4-Lite register file (host config surface) ----------
 # Self-checking, no golden file needed: writes then reads back every register.
