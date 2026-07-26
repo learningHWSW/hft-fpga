@@ -106,7 +106,7 @@ impl-axil:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-cfgcdc test-txarb test-axil-top stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
+.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-cfgcdc test-txarb test-axil-top test-axil-full stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
 
 # ---------- AXI4-Lite register file (host config surface) ----------
 # Self-checking, no golden file needed: writes then reads back every register.
@@ -137,6 +137,18 @@ test-axil-top:
 	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o taxilsim --top-module tb_t2t_axil $(TAXIL_SRC) tb/tb_t2t_axil.sv
 	./obj_dir/taxilsim
+
+# full datapath THROUGH the wrapper: real replay + AXI config, order frames
+# diffed against step 6's golden; IGMP reports (incl. a query-triggered one)
+# ride the same TX through the arbiter.
+test-axil-full: real.eth
+	python3 $(STEP4B)/scripts/dump_bbo.py real.itch 13 > t2t_bbo.log
+	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
+	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
+	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o taxilfull --top-module tb_t2t_axil_full $(TAXIL_SRC) tb/tb_t2t_axil_full.sv
+	./obj_dir/taxilfull +eth=real.eth +frm=t2t_axil_rtl.log
+	diff t2t_gold.log t2t_axil_rtl.log && echo "PASS: wrapper AXI-config -> order frames == golden"
 
 # ---------- IGMPv2 membership report (multicast join) ----------
 # Golden frame from an independent Python build; TB diffs every emitted frame
