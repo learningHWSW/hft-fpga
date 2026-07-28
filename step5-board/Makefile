@@ -132,7 +132,7 @@ TAXIL_SRC = ../step2-rtl-decoder/rtl/itch5_pkg.sv ../step2-rtl-decoder/rtl/itch_
   rtl/cdc_fifo.sv ../step6-strategy/rtl/strategy.sv ../step6-strategy/rtl/sweep_detect.sv \
   ../step6-strategy/rtl/ouch_builder.sv ../step6-strategy/rtl/tcp_tx.sv \
   rtl/igmp_query_detect.sv rtl/t2t_top.sv \
-  rtl/axil_regfile.sv rtl/cfg_cdc.sv rtl/axis_tx_arb.sv rtl/igmp_join.sv rtl/t2t_axil.sv
+  rtl/axil_regfile.sv rtl/cfg_cdc.sv rtl/axis_tx_arb.sv rtl/igmp_join.sv rtl/arp_responder.sv rtl/t2t_axil.sv
 test-axil-top:
 	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o taxilsim --top-module tb_t2t_axil $(TAXIL_SRC) tb/tb_t2t_axil.sv

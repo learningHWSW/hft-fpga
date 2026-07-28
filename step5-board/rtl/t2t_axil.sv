@@ -243,11 +243,51 @@ module t2t_axil #(
   // drops on full), and reports are rare, so hold it ready.
   assign ig_core_ready = 1'b1;
 
-  // ================= TX arbiter (CMAC): orders + IGMP -> one wire =========
+  // ================= ARP responder (CMAC) =================
+  // Runs in the CMAC domain and taps rx_* directly (raw frames, before the RX
+  // cdc), so its reply needs no crossing to reach the arbiter. Its only config
+  // is cfg_src_mac/cfg_src_ip, which are quasi-static core-domain values; resync
+  // them with a plain two-flop (a torn value could only mis-answer one ARP
+  // during a reconfiguration, which the requester retries -- config is set once
+  // at bring-up, before steady-state traffic).
+  (* ASYNC_REG="TRUE" *) logic [47:0] src_mac_s0, src_mac_s1;
+  (* ASYNC_REG="TRUE" *) logic [31:0] src_ip_s0,  src_ip_s1;
+  always_ff @(posedge cmac_clk or negedge cmac_rst_n)
+    if (!cmac_rst_n) begin
+      src_mac_s0 <= '0; src_mac_s1 <= '0; src_ip_s0 <= '0; src_ip_s1 <= '0;
+    end else begin
+      src_mac_s0 <= c_src_mac; src_mac_s1 <= src_mac_s0;
+      src_ip_s0  <= c_src_ip;  src_ip_s1  <= src_ip_s0;
+    end
+
+  logic [DATA_W-1:0]   arp_tdata;
+  logic [DATA_W/8-1:0] arp_tkeep;
+  logic                arp_tvalid, arp_tlast, arp_tready;
+  arp_responder #(.DATA_W(DATA_W)) u_arp (
+    .clk(cmac_clk), .rst_n(cmac_rst_n),
+    .cfg_src_mac(src_mac_s1), .cfg_src_ip(src_ip_s1),
+    .s_tdata(rx_tdata), .s_tvalid(rx_tvalid), .s_tlast(rx_tlast),
+    .m_tdata(arp_tdata), .m_tkeep(arp_tkeep), .m_tvalid(arp_tvalid), .m_tlast(arp_tlast),
+    .m_tready(arp_tready), .reply_cnt()
+  );
+
+  // ================= TX arbiters (CMAC): orders + IGMP + ARP -> one wire ====
+  // Two chained 2-input arbiters (the verified axis_tx_arb, unchanged): merge
+  // the rare control frames (IGMP, ARP) first, then give orders priority over
+  // that merged stream. Frame-lock is preserved at each stage.
+  logic [DATA_W-1:0]   ctl_tdata;
+  logic [DATA_W/8-1:0] ctl_tkeep;
+  logic                ctl_tvalid, ctl_tlast, ctl_tready;
+  axis_tx_arb #(.DATA_W(DATA_W)) u_ctrl_arb (
+    .clk(cmac_clk), .rst_n(cmac_rst_n),
+    .s0_tdata(igc_tdata), .s0_tkeep(igc_tkeep), .s0_tvalid(igc_tvalid), .s0_tlast(igc_tlast), .s0_tready(igc_tready),
+    .s1_tdata(arp_tdata), .s1_tkeep(arp_tkeep), .s1_tvalid(arp_tvalid), .s1_tlast(arp_tlast), .s1_tready(arp_tready),
+    .m_tdata(ctl_tdata), .m_tkeep(ctl_tkeep), .m_tvalid(ctl_tvalid), .m_tlast(ctl_tlast), .m_tready(ctl_tready)
+  );
   axis_tx_arb #(.DATA_W(DATA_W)) u_tx_arb (
     .clk(cmac_clk), .rst_n(cmac_rst_n),
     .s0_tdata(ord_tdata), .s0_tkeep(ord_tkeep), .s0_tvalid(ord_tvalid), .s0_tlast(ord_tlast), .s0_tready(ord_tready),
-    .s1_tdata(igc_tdata), .s1_tkeep(igc_tkeep), .s1_tvalid(igc_tvalid), .s1_tlast(igc_tlast), .s1_tready(igc_tready),
+    .s1_tdata(ctl_tdata), .s1_tkeep(ctl_tkeep), .s1_tvalid(ctl_tvalid), .s1_tlast(ctl_tlast), .s1_tready(ctl_tready),
     .m_tdata(tx_tdata), .m_tkeep(tx_tkeep), .m_tvalid(tx_tvalid), .m_tlast(tx_tlast), .m_tready(tx_tready)
   );
 

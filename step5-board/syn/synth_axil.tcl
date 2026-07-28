@@ -37,7 +37,7 @@ set srcs [list \
   $repo/step6-strategy/rtl/tcp_tx.sv \
   $root/rtl/igmp_query_detect.sv $root/rtl/t2t_top.sv \
   $root/rtl/axil_regfile.sv $root/rtl/cfg_cdc.sv $root/rtl/axis_tx_arb.sv \
-  $root/rtl/igmp_join.sv $root/rtl/t2t_axil.sv ]
+  $root/rtl/igmp_join.sv $root/rtl/arp_responder.sv $root/rtl/t2t_axil.sv ]
 
 create_project -in_memory -part $part
 foreach f $srcs { read_verilog -sv $f }

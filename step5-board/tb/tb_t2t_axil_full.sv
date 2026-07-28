@@ -112,7 +112,7 @@ module tb_t2t_axil_full;
   endtask
 
   // ---------------- TX capture, split by protocol ----------------
-  int ffrm, n_orders = 0, n_igmp = 0;
+  int ffrm, n_orders = 0, n_igmp = 0, n_arp = 0;
   logic [8*106-1:0] acc;
   int acc_b = 0;
 
@@ -123,11 +123,14 @@ module tb_t2t_axil_full;
       for (int i = 0; i < nb; i++) acc[8*(acc_b + i) +: 8] = tx_tdata[8*i +: 8];
       acc_b += nb;
       if (tx_tlast) begin
-        if (acc[8*23 +: 8] == 8'd6) begin          // IP protocol 6 = TCP order
+        automatic logic [15:0] eth = {acc[8*12 +: 8], acc[8*13 +: 8]};
+        if (eth == 16'h0806) begin                 // ethertype ARP -> reply
+          n_arp++;
+        end else if (acc[8*23 +: 8] == 8'd6) begin // IPv4 protocol 6 = TCP order
           for (int i = 0; i < acc_b; i++) $fwrite(ffrm, "%02x", acc[8*i +: 8]);
           $fwrite(ffrm, "\n");
           n_orders++;
-        end else if (acc[8*23 +: 8] == 8'd2) begin // IP protocol 2 = IGMP report
+        end else if (acc[8*23 +: 8] == 8'd2) begin // IPv4 protocol 2 = IGMP report
           n_igmp++;
         end
         acc_b = 0;
@@ -173,8 +176,25 @@ module tb_t2t_axil_full;
     send_frame(46);
   endtask
 
+  // build an ARP who-has request for our IP (10.0.0.2, cfg_src_ip)
+  task automatic inject_arp;
+    payload = new[60];
+    for (int i = 0; i < 60; i++) payload[i] = 8'h00;
+    for (int i = 0; i < 6; i++) payload[i] = 8'hff;             // broadcast dst
+    payload[6]=8'hde; payload[7]=8'had; payload[8]=8'hbe;       // requester mac
+    payload[9]=8'hef; payload[10]=8'h00; payload[11]=8'h01;
+    payload[12]=8'h08; payload[13]=8'h06;                       // ethertype ARP
+    payload[14]=8'h00; payload[15]=8'h01; payload[16]=8'h08; payload[17]=8'h00;
+    payload[18]=8'h06; payload[19]=8'h04; payload[20]=8'h00; payload[21]=8'h01; // request
+    payload[22]=8'hde; payload[23]=8'had; payload[24]=8'hbe;    // sha = requester
+    payload[25]=8'hef; payload[26]=8'h00; payload[27]=8'h01;
+    payload[28]=8'h0a; payload[29]=8'h00; payload[30]=8'h00; payload[31]=8'h63; // spa 10.0.0.99
+    payload[38]=8'h0a; payload[39]=8'h00; payload[40]=8'h00; payload[41]=8'h02; // tpa = our ip
+    send_frame(60);
+  endtask
+
   // ---------------- sequence ----------------
-  int fd, c1, c2, len, n_igmp_pre;
+  int fd, c1, c2, len, n_igmp_pre, n_arp_pre;
   string fname, frmname;
   initial begin
     awvalid=0; wvalid=0; bready=0; arvalid=0; rready=0;
@@ -204,19 +224,26 @@ module tb_t2t_axil_full;
     end
     $fclose(fd);
 
-    // now the RX-side query: it must produce at least one more report
+    // RX-side IGMP query: must produce at least one more report
     repeat (40) @(negedge cmac_clk);
     n_igmp_pre = n_igmp;
     inject_query();
     repeat (200) @(posedge cmac_clk);
+
+    // RX-side ARP who-has us: must produce a reply on the same TX
+    n_arp_pre = n_arp;
+    inject_arp();
+    repeat (200) @(posedge cmac_clk);
     $fclose(ffrm);
 
-    $display("TB done: %0d order frames, %0d IGMP reports (%0d after the query)",
-             n_orders, n_igmp, n_igmp - n_igmp_pre);
+    $display("TB done: %0d orders, %0d IGMP (%0d after query), %0d ARP (%0d after who-has)",
+             n_orders, n_igmp, n_igmp - n_igmp_pre, n_arp, n_arp - n_arp_pre);
     if (n_orders == 0) $display("FAIL: no order frames out through the wrapper");
     if (n_igmp == 0)   $display("FAIL: no IGMP reports (join path dead)");
     if (n_igmp - n_igmp_pre < 1)
       $display("FAIL: RX query produced no report (detector path dead)");
+    if (n_arp - n_arp_pre < 1)
+      $display("FAIL: ARP who-has produced no reply (responder path dead)");
     $finish;
   end
 
