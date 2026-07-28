@@ -106,7 +106,7 @@ impl-axil:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
+.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
 
 # ---------- AXI4-Lite register file (host config surface) ----------
 # Self-checking, no golden file needed: writes then reads back every register.
@@ -156,6 +156,12 @@ test-axil-full: real.eth
 lint-opennic:
 	verilator --lint-only -sv -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT --top-module t2t_user_322mhz $(TAXIL_SRC) opennic/t2t_core_clk_stub.sv opennic/t2t_user_322mhz.sv
 	@echo "PASS: t2t_user_322mhz elaborates against t2t_axil"
+
+# ---------- ARP responder (answer who-has our IP) ----------
+test-arp:
+	python3 scripts/gen_arp.py 00:11:22:33:44:55 10.0.0.2 aa:bb:cc:dd:ee:ff 10.0.0.9 > arp_gold.mem
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o arpsim --top-module tb_arp_responder rtl/arp_responder.sv tb/tb_arp_responder.sv
+	./obj_dir/arpsim
 
 # ---------- IGMPv2 membership report (multicast join) ----------
 # Golden frame from an independent Python build; TB diffs every emitted frame
