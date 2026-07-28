@@ -42,6 +42,7 @@ A_TO_REG = {
     "INIT_SEQ": ("cfg_init_seq", 0), "ACK_NUM": ("cfg_ack_num", 0),
     "WINDOW": ("cfg_window", 0), "INIT_ID": ("cfg_init_id", 0),
     "IGMP_EN": ("cfg_igmp_en", 0), "IGMP_INTERVAL": ("cfg_igmp_interval", 0),
+    "GROUP_IP_B": ("cfg_group_ip_b", 0),
 }
 # anchors that are not per-register config words
 ANCHORS = {"CTRL", "STAT", "ID"}

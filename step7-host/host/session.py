@@ -52,7 +52,7 @@ class HostSession:
                   max_inflight, sweep_en, sweep_min_levels, sweep_gap,
                   dst_mac, src_mac, src_ip, dst_ip, src_port, dst_port,
                   init_seq, ack_num, window, init_id,
-                  igmp_en=True, igmp_interval=3_000_000):
+                  igmp_en=True, igmp_interval=3_000_000, group_ip_b=None):
         d = self.dev
         d.write("cfg_group_ip", regmap.ip2int(group_ip))
         d.write("cfg_udp_port", udp_port)
@@ -87,6 +87,8 @@ class HostSession:
         d.write("cfg_init_id", init_id)
         d.write("cfg_igmp_en", 1 if igmp_en else 0)
         d.write("cfg_igmp_interval", igmp_interval)
+        # B-line multicast group for A/B gap recovery; default to A (single feed)
+        d.write("cfg_group_ip_b", regmap.ip2int(group_ip_b) if group_ip_b else regmap.ip2int(group_ip))
 
     # ---- session -------------------------------------------------------
     def connect(self, host, port, username="TRADER", password="pw", timeout=5):

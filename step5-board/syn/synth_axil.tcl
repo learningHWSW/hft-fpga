@@ -35,7 +35,7 @@ set srcs [list \
   $repo/step6-strategy/rtl/strategy.sv $repo/step6-strategy/rtl/sweep_detect.sv \
   $repo/step6-strategy/rtl/ouch_builder.sv \
   $repo/step6-strategy/rtl/tcp_tx.sv \
-  $root/rtl/igmp_query_detect.sv $root/rtl/t2t_top.sv \
+  $root/rtl/feed_ab_arb.sv $root/rtl/igmp_query_detect.sv $root/rtl/t2t_top.sv \
   $root/rtl/axil_regfile.sv $root/rtl/cfg_cdc.sv $root/rtl/axis_tx_arb.sv \
   $root/rtl/igmp_join.sv $root/rtl/arp_responder.sv $root/rtl/t2t_axil.sv ]
 

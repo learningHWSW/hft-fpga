@@ -108,7 +108,8 @@ module tb_t2t_axil_full;
     axi_write('h98, 32'h0000_1000);      // cfg_init_id
     axi_write('h9C, 32'h0000_0001);      // cfg_igmp_en
     axi_write('hA0, 32'h4000_0000);      // cfg_igmp_interval (huge: no periodic in-sim)
-    axi_write('hA4, 32'h0000_0001);      // CTRL: commit (load)
+    axi_write('hA4, GROUP);              // cfg_group_ip_b (= A: single-feed replay)
+    axi_write('hA8, 32'h0000_0001);      // CTRL: commit (load)
   endtask
 
   // ---------------- TX capture, split by protocol ----------------

@@ -77,7 +77,8 @@ module tb_t2t;
     .tx_tready(tx_tready),
     .core_clk(core_clk), .core_rst_n(core_rst_n),
 
-    .cfg_group_ip(32'hE9360C01), .cfg_udp_port(16'd26477),   // 233.54.12.1
+    .cfg_group_ip(32'hE9360C01), .cfg_group_ip_b(32'hE9360C01),  // 233.54.12.1 (B=A: single feed)
+    .cfg_udp_port(16'd26477),
     .cfg_track_locate(track_locate), .cfg_band_base(cfg_base),
 
     .cfg_enable(1'b1),

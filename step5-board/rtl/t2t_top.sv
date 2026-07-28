@@ -50,6 +50,7 @@ module t2t_top #(
 
   // feed configuration
   input  logic [31:0]         cfg_group_ip,
+  input  logic [31:0]         cfg_group_ip_b,   // B line (A/B gap recovery); =A for single feed
   input  logic [15:0]         cfg_udp_port,
   input  logic [15:0]         cfg_track_locate,
   input  logic [31:0]         cfg_band_base,
@@ -155,6 +156,55 @@ module t2t_top #(
     .drop_not_ipv4(drop_not_ipv4), .drop_not_udp(drop_not_udp), .drop_group(drop_group)
   );
 
+  // ---- B line: same raw RX, filtered to the B multicast group ----
+  logic [DATA_W-1:0] payb_tdata;
+  logic [KEEP_W-1:0] payb_tkeep;
+  logic              payb_tvalid, payb_tlast;
+  eth_ip_udp_rx #(.DATA_W(DATA_W)) u_rx_b (
+    .clk(core_clk), .rst_n(core_rst_n),
+    .cfg_group_ip(cfg_group_ip_b), .cfg_udp_port(cfg_udp_port),
+    .s_tdata(rxc_tdata), .s_tkeep(rxc_tkeep), .s_tvalid(rxc_tvalid), .s_tlast(rxc_tlast),
+    .m_tdata(payb_tdata), .m_tkeep(payb_tkeep), .m_tvalid(payb_tvalid), .m_tlast(payb_tlast),
+    .frames_in(), .frames_kept(),
+    .drop_not_ipv4(), .drop_not_udp(), .drop_group()
+  );
+
+  // ---- A/B line arbiter: merge the two into one clean, in-order stream ----
+  // Elastic FIFOs adapt the free-running rx outputs to the arb's backpressure
+  // (drop on full; A/B packets are well under an MTU and the arb drains fast).
+  // With B unconfigured (cfg_group_ip_b = cfg_group_ip) the B filter mirrors A,
+  // so both lines carry the same packets and the arb dedups to a pass-through;
+  // point B at the real second group to actually recover single-line drops.
+  localparam int PAYW = DATA_W + KEEP_W + 1;
+  logic            fa_pv, fa_pr, fb_pv, fb_pr;
+  logic [PAYW-1:0] fa_pd, fb_pd;
+  drop_fifo #(.WIDTH(PAYW), .DEPTH(256)) u_afifo (
+    .clk(core_clk), .rst_n(core_rst_n),
+    .push_valid(pay_tvalid), .push_data({pay_tlast, pay_tkeep, pay_tdata}),
+    .pop_valid(fa_pv), .pop_data(fa_pd), .pop_ready(fa_pr),
+    .drop_cnt(), .level(), .level_max()
+  );
+  drop_fifo #(.WIDTH(PAYW), .DEPTH(256)) u_bfifo (
+    .clk(core_clk), .rst_n(core_rst_n),
+    .push_valid(payb_tvalid), .push_data({payb_tlast, payb_tkeep, payb_tdata}),
+    .pop_valid(fb_pv), .pop_data(fb_pd), .pop_ready(fb_pr),
+    .drop_cnt(), .level(), .level_max()
+  );
+
+  logic [DATA_W-1:0] mrg_tdata;
+  logic [KEEP_W-1:0] mrg_tkeep;
+  logic              mrg_tvalid, mrg_tlast;
+  feed_ab_arb #(.DATA_W(DATA_W)) u_ab (
+    .clk(core_clk), .rst_n(core_rst_n),
+    .a_tdata(fa_pd[DATA_W-1:0]), .a_tkeep(fa_pd[DATA_W +: KEEP_W]),
+    .a_tvalid(fa_pv), .a_tlast(fa_pd[PAYW-1]), .a_tready(fa_pr),
+    .b_tdata(fb_pd[DATA_W-1:0]), .b_tkeep(fb_pd[DATA_W +: KEEP_W]),
+    .b_tvalid(fb_pv), .b_tlast(fb_pd[PAYW-1]), .b_tready(fb_pr),
+    .m_tdata(mrg_tdata), .m_tkeep(mrg_tkeep), .m_tvalid(mrg_tvalid), .m_tlast(mrg_tlast),
+    .m_tready(1'b1),                      // fh_core's beat FIFO never backpressures
+    .ev_gap(), .fwd_cnt(), .dup_cnt(), .gap_cnt(), .a_src_cnt(), .b_src_cnt()
+  );
+
   // ---- feed handler: MoldUDP64 -> ITCH -> order table -> book ----
   logic        bbo_valid, bbo_has_bid, bbo_has_ask;
   logic [47:0] bbo_ts;
@@ -167,7 +217,7 @@ module t2t_top #(
   fh_core #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS)) u_fh (
     .clk(core_clk), .rst_n(core_rst_n),
     .track_locate(cfg_track_locate), .cfg_base(cfg_band_base),
-    .s_tdata(pay_tdata), .s_tkeep(pay_tkeep), .s_tvalid(pay_tvalid), .s_tlast(pay_tlast),
+    .s_tdata(mrg_tdata), .s_tkeep(mrg_tkeep), .s_tvalid(mrg_tvalid), .s_tlast(mrg_tlast),
     .init_done(st_init_done),
     .cfg_sweep_min_levels(cfg_sweep_min_levels), .cfg_sweep_gap(cfg_sweep_gap),
     .o_sweep(sweep_pulse), .o_sweep_is_buy(sweep_is_buy), .st_sweep_cnt(st_sweep_cnt),

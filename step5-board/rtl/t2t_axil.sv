@@ -64,7 +64,7 @@ module t2t_axil #(
   output logic                s_axil_rvalid,
   input  logic                s_axil_rready
 );
-  localparam int CFGW = 895;      // sum of all cfg_* widths (checked at elab)
+  localparam int CFGW = 927;      // sum of all cfg_* widths (checked at elab)
   localparam int STW  = 577;      // sum of all st_* widths
 
   // ================= AXI-Lite register file (axil_clk) =================
@@ -78,7 +78,7 @@ module t2t_axil #(
   logic [7:0]  a_display, a_capacity, a_sweep, a_cross, a_cust;
   logic [3:0]  a_ratio_shift;
   logic        a_enable, a_sweep_en, a_load, a_order_ack, a_igmp_en;
-  logic [31:0] a_igmp_interval;
+  logic [31:0] a_igmp_interval, a_group_ip_b;
 
   // status, resynced into the axil domain for read-back
   logic [STW-1:0] st_bus_axil;
@@ -102,6 +102,7 @@ module t2t_axil #(
     .cfg_src_port(a_src_port), .cfg_dst_port(a_dst_port), .cfg_init_seq(a_init_seq),
     .cfg_ack_num(a_ack_num), .cfg_window(a_window), .cfg_init_id(a_init_id),
     .cfg_igmp_en(a_igmp_en), .cfg_igmp_interval(a_igmp_interval),
+    .cfg_group_ip_b(a_group_ip_b),
     .cfg_load(a_load), .cfg_order_ack(a_order_ack),
     .st_rx_drop(st_bus_axil[576:545]), .st_rx_hwm(st_bus_axil[544:513]),
     .st_init_done(st_bus_axil[512]), .st_frames_in(st_bus_axil[511:480]),
@@ -123,7 +124,8 @@ module t2t_axil #(
     a_sweep_min_levels, a_sweep_gap, a_token_prefix, a_stock, a_firm, a_tif,
     a_ouch_min_qty, a_display, a_capacity, a_sweep, a_cross, a_cust,
     a_dst_mac, a_src_mac, a_src_ip, a_dst_ip, a_src_port, a_dst_port,
-    a_init_seq, a_ack_num, a_window, a_init_id, a_igmp_en, a_igmp_interval
+    a_init_seq, a_ack_num, a_window, a_init_id, a_igmp_en, a_igmp_interval,
+    a_group_ip_b
   };
 
   // ================= config crossing (axil -> core) =================
@@ -148,14 +150,15 @@ module t2t_axil #(
   logic [7:0]  c_display, c_capacity, c_sweep, c_cross, c_cust;
   logic [3:0]  c_ratio_shift;
   logic        c_enable, c_sweep_en, c_igmp_en;
-  logic [31:0] c_igmp_interval;
+  logic [31:0] c_igmp_interval, c_group_ip_b;
   assign {
     c_group_ip, c_udp_port, c_track_locate, c_band_base, c_enable, c_max_spread,
     c_ratio_shift, c_min_qty, c_order_qty, c_pos_limit, c_max_inflight, c_sweep_en,
     c_sweep_min_levels, c_sweep_gap, c_token_prefix, c_stock, c_firm, c_tif,
     c_ouch_min_qty, c_display, c_capacity, c_sweep, c_cross, c_cust,
     c_dst_mac, c_src_mac, c_src_ip, c_dst_ip, c_src_port, c_dst_port,
-    c_init_seq, c_ack_num, c_window, c_init_id, c_igmp_en, c_igmp_interval
+    c_init_seq, c_ack_num, c_window, c_init_id, c_igmp_en, c_igmp_interval,
+    c_group_ip_b
   } = cfg_bus_core;
 
   // ================= the datapath (t2t_top) =================
@@ -171,7 +174,8 @@ module t2t_axil #(
     .tx_tdata(ord_tdata), .tx_tkeep(ord_tkeep), .tx_tvalid(ord_tvalid), .tx_tlast(ord_tlast),
     .tx_tready(ord_tready),
     .core_clk(core_clk), .core_rst_n(core_rst_n),
-    .cfg_group_ip(c_group_ip), .cfg_udp_port(c_udp_port), .cfg_track_locate(c_track_locate),
+    .cfg_group_ip(c_group_ip), .cfg_group_ip_b(c_group_ip_b),
+    .cfg_udp_port(c_udp_port), .cfg_track_locate(c_track_locate),
     .cfg_band_base(c_band_base), .cfg_enable(c_enable), .cfg_max_spread(c_max_spread),
     .cfg_ratio_shift(c_ratio_shift), .cfg_min_qty(c_min_qty), .cfg_order_qty(c_order_qty),
     .cfg_pos_limit(c_pos_limit), .cfg_max_inflight(c_max_inflight), .cfg_order_ack(ack_core),

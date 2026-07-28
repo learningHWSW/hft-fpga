@@ -74,6 +74,7 @@ module feed_ab_arb #(
 
   logic [63:0] next_seq;
   logic [15:0] wait_cnt;                      // cycles stalled on a suspected gap
+  logic        synced;                        // next_seq locked to the first packet
 
   typedef enum logic [1:0] { IDLE, FWD, DROP } state_t;
   state_t state;
@@ -128,12 +129,18 @@ module feed_ab_arb #(
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       state <= IDLE; sel <= 1'b0; next_seq <= 64'd1; wait_cnt <= 16'd0;
-      cur_target <= 64'd1; ev_gap <= 1'b0;
+      synced <= 1'b0; cur_target <= 64'd1; ev_gap <= 1'b0;
       fwd_cnt <= 0; dup_cnt <= 0; gap_cnt <= 0; a_src_cnt <= 0; b_src_cnt <= 0;
     end else begin
       ev_gap <= 1'b0;
       case (state)
-        IDLE: begin
+        // lock next_seq to the first packet seen (no startup gap), then merge
+        IDLE: if (!synced) begin
+          if (p_kind != K_NONE) begin
+            sel <= p_sel; cur_target <= p_seq + 64'(p_cnt);
+            synced <= 1'b1; wait_cnt <= 16'd0; state <= FWD;
+          end
+        end else begin
           case (p_kind)
             K_FWD: begin
               sel <= p_sel; cur_target <= next_seq + 64'(p_cnt);

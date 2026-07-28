@@ -97,7 +97,8 @@ module tb_t2t_axil;
     axi_write('h7C, 32'h0A000002);          // cfg_src_ip
     axi_write('h9C, 32'h00000001);          // cfg_igmp_en = 1
     axi_write('hA0, 32'h00001000);          // cfg_igmp_interval (cycles)
-    axi_write('hA4, 32'h00000001);          // CTRL: commit (bit0 = load)
+    axi_write('hA4, 32'hE9360C01);          // cfg_group_ip_b (= A: single feed)
+    axi_write('hA8, 32'h00000001);          // CTRL: commit (bit0 = load)
 
     // wait for the report to cross all the way to tx
     g = 0;

@@ -27,7 +27,7 @@ REGS = [
     ("cfg_dst_mac", 6), ("cfg_src_mac", 6), ("cfg_src_ip", 4), ("cfg_dst_ip", 4),
     ("cfg_src_port", 2), ("cfg_dst_port", 2), ("cfg_init_seq", 4),
     ("cfg_ack_num", 4), ("cfg_window", 2), ("cfg_init_id", 2),
-    ("cfg_igmp_en", 1), ("cfg_igmp_interval", 4),
+    ("cfg_igmp_en", 1), ("cfg_igmp_interval", 4), ("cfg_group_ip_b", 4),
 ]
 _WIDTH = dict(REGS)
 
