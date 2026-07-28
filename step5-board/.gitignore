@@ -4,3 +4,5 @@
 
 # Vivado synth/impl outputs
 syn/out*/
+*.hex
+*.frames

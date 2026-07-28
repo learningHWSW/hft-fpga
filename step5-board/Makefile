@@ -104,9 +104,9 @@ impl-axil:
 	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000
 
 clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
+	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
+.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
 
 # ---------- AXI4-Lite register file (host config surface) ----------
 # Self-checking, no golden file needed: writes then reads back every register.
@@ -156,6 +156,18 @@ test-axil-full: real.eth
 lint-opennic:
 	verilator --lint-only -sv -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT --top-module t2t_user_322mhz $(TAXIL_SRC) opennic/t2t_core_clk_stub.sv opennic/t2t_user_322mhz.sv
 	@echo "PASS: t2t_user_322mhz elaborates against t2t_axil"
+
+# ---------- A/B line arbiter (redundant-feed gap recovery) ----------
+# Two lines with different drops must merge to the clean golden stream; a
+# double-line gap must be skipped (ev_gap). gen_ab.py builds both cases.
+test-ab:
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o absim --top-module tb_feed_ab rtl/feed_ab_arb.sv tb/tb_feed_ab.sv
+	python3 scripts/gen_ab.py recover 30
+	./obj_dir/absim +gap=0
+	diff ab_gold.hex ab_rtl.hex && echo "PASS: A/B recover == golden (single-line drops filled)"
+	python3 scripts/gen_ab.py gap 30
+	./obj_dir/absim +gap=1
+	diff ab_gold.hex ab_rtl.hex && echo "PASS: A/B double-gap skipped == golden"
 
 # ---------- ARP responder (answer who-has our IP) ----------
 test-arp:
