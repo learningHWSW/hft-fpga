@@ -1,71 +1,83 @@
-# Step 1 — ITCH 5.0 소프트웨어 레퍼런스 파서 (golden model)
+# Step 1 — ITCH 5.0 software reference parser (golden model)
 
-SystemVerilog 디코더(step 2)를 만들기 전에 프로토콜을 손으로 익히고,
-이후 cocotb 테스트벤치에서 기대값을 만들어 줄 golden model.
+A golden model to learn the protocol by hand before building the SystemVerilog
+decoder (step 2), and then to produce the expected values for the cocotb
+testbenches that follow.
 
-## 빌드 / 테스트
+## Build / test
 
 ```sh
-make test          # 합성 데이터 생성 + 파서 실행
+make test          # generate synthetic data + run the parser
 ```
 
-- `gen_itch.py` — 알려진 시나리오(기대 BBO 시퀀스가 파일 상단 주석에 있음)로
-  합성 ITCH 파일 생성. step 2 TB의 stimulus로도 사용.
-  - `--mold test.mold` 추가 시 같은 시나리오를 **MoldUDP64 패킷 스트림**으로도
-    출력 (step 3a stripper용). 하트비트 2회, 2-메시지 시퀀스 갭(MSFT 노이즈만
-    유실이라 AAPL BBO 불변), End-of-Session 포함. 파일 포맷: UDP payload마다
-    2B BE 길이 prefix. 패킷 플랜은 스크립트 상단 주석 참조. 생성 직후
-    셀프체크(재파싱, seq 연속성, 갭 크기)를 통과해야 파일이 써진다.
-- `itch_parser.c` — 파서 + 단일 종목 top-of-book. BBO가 바뀔 때마다 출력.
-- `itch5.h` — 메시지 크기/오프셋 테이블. **step 2에서 SystemVerilog package로
-  그대로 옮길 파일.**
+- `gen_itch.py` — generate a synthetic ITCH file from a known scenario (the
+  expected BBO sequence is in a comment at the top of the file). Also used as the
+  stimulus for the step-2 TB.
+  - With `--mold test.mold` it also emits the same scenario as a **MoldUDP64
+    packet stream** (for the step-3a stripper). Includes two heartbeats, a
+    2-message sequence gap (only MSFT noise is lost, so the AAPL BBO is
+    unchanged), and End-of-Session. File format: a 2-byte BE length prefix per
+    UDP payload. See the comment at the top of the script for the packet plan.
+    Right after generation it must pass a self-check (re-parse, sequence
+    continuity, gap size) before the file is written.
+- `itch_parser.c` — the parser + a single-symbol top-of-book. Prints whenever the
+  BBO changes.
+- `itch5.h` — the message size/offset table. **The file that step 2 carries over
+  verbatim into a SystemVerilog package.**
 
-## 실데이터로 돌리기
+## Running on real data
 
-NASDAQ이 실제 하루치 캡처를 무료 공개한다 (압축 5–6 GB, 해제 시 10 GB+):
+NASDAQ publishes a real full-day capture for free (5–6 GB compressed, 10 GB+
+uncompressed):
 
 ```sh
-# https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/ 에서 파일명 확인 후
+# find the filename at https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/ , then
 wget https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/<date>.NASDAQ_ITCH50.gz
-./itch_parser <date>.NASDAQ_ITCH50.gz AAPL 1000000 > bbo.log   # 앞 100만 메시지만
+./itch_parser <date>.NASDAQ_ITCH50.gz AAPL 1000000 > bbo.log   # first 1M messages only
 ```
 
-하루치 전체는 3~4억 메시지 수준. stderr의 stats에서 메시지 타입 분포와
-소프트웨어 처리율(M msg/s)을 확인해 두면 FPGA 대비 기준선이 된다.
+A full day is on the order of 300–400M messages. Note the message-type
+distribution and the software throughput (M msg/s) from the stats on stderr —
+it becomes the baseline against the FPGA.
 
-## 프로토콜에서 확인한 것 → RTL 설계 포인트
+## What the protocol confirms -> RTL design points
 
-1. **모든 메시지는 고정 길이이고, 길이는 첫 바이트(타입)로 결정된다.**
-   → RTL 디코더는 타입 바이트를 본 순간 남은 길이를 알 수 있다. 상태머신이
-   단순해지고, 메시지 경계에서 재정렬(realignment)만 처리하면 된다.
+1. **Every message is fixed length, and the length is decided by the first
+   (type) byte.** -> the RTL decoder knows the remaining length the moment it
+   sees the type byte. The state machine is simple, and only boundary
+   realignment needs handling.
 
-2. **모든 필드는 big-endian, 바이트 정렬.**
-   → 필드 추출은 순수한 byte-lane select. 곱셈/시프트 없음.
+2. **Every field is big-endian, byte aligned.** -> field extraction is pure
+   byte-lane select. No multiplies/shifts.
 
-3. **종목 필터는 8바이트 심볼 비교가 아니라 2바이트 stock locate로 한다.**
-   locate는 헤더(offset 1)에 있어 모든 메시지에서 같은 위치.
-   → 하드웨어에서는 구독 심볼들의 locate를 작은 CAM/LUT에 넣고 헤더만 보고
-   조기 드롭(early drop) 가능. 'R'(directory) 메시지에서 locate를 학습.
+3. **The symbol filter is a 2-byte stock locate, not an 8-byte symbol compare.**
+   The locate is in the header (offset 1), the same position in every message.
+   -> in hardware, put the subscribed symbols' locates in a small CAM/LUT and
+   early-drop looking only at the header. Learn the locate from the 'R'
+   (directory) message.
 
-4. **E/X/D/U 메시지에는 가격·사이드가 없다** — order reference로 기존 주문을
-   찾아야 한다. → RTL에서 order table(해시 → U55C의 URAM/HBM)이 필수이며,
-   이게 feed handler의 실제 난이도 포인트. 이 파서의 open-addressing 해시가
-   그 참조 구현.
+4. **E/X/D/U messages have no price or side** — the resting order must be found
+   by its order reference. -> an order table (hash -> URAM/HBM on the U55C) is
+   mandatory in RTL, and this is the real difficulty of the feed handler. This
+   parser's open-addressing hash is that reference implementation.
 
-5. **'U'(replace)는 원 주문의 side/stock을 상속**하고, 'C'(exec with price)는
-   체결가는 메시지의 가격이지만 **호가창에서 빠지는 위치는 원 주문의 표시
-   가격**이다. 이런 코너 케이스가 RTL 검증 항목이 된다.
+5. **'U' (replace) inherits the original order's side/stock**, and 'C' (exec
+   with price) executes at the message's price but **leaves the book at the
+   original order's display price**. These corner cases become RTL verification
+   items.
 
-6. **파일 framing(2바이트 길이 prefix)과 와이어 framing(MoldUDP64)은 다르다.**
-   실제 수신 경로: Ethernet → IP → UDP → MoldUDP64 헤더(session 10B +
-   seq 8B + count 2B) → [len(2) + msg] × count.
-   → RTL 파이프라인에 MoldUDP64 스트리퍼 스테이지가 하나 더 필요하고,
-   sequence number 갭 검출(패킷 유실 → 스냅샷/재요청)도 여기서 한다.
+6. **File framing (a 2-byte length prefix) differs from wire framing
+   (MoldUDP64).** The real receive path is: Ethernet -> IP -> UDP -> MoldUDP64
+   header (session 10 B + seq 8 B + count 2 B) -> [len(2) + msg] × count.
+   -> the RTL pipeline needs one more MoldUDP64 stripper stage, and
+   sequence-number gap detection (packet loss -> snapshot/re-request) happens
+   there too.
 
-## 다음 (step 2)
+## Next (step 2)
 
-cocotb + Verilator 환경에서:
-1. `itch5.h` → `itch5_pkg.sv` (타입/크기/오프셋 상수)
-2. AXI-Stream(64bit @ ~322 MHz, U55C의 100G 경로 기준이면 512bit) 입력을 받는
-   ITCH 디코더 모듈 — 타입별 필드를 병렬 추출해 내부 구조체 버스로 출력
-3. 이 파서의 출력(BBO 로그)과 RTL 시뮬레이션 출력을 diff로 대조
+In a cocotb + Verilator environment:
+1. `itch5.h` -> `itch5_pkg.sv` (type/size/offset constants)
+2. An ITCH decoder module taking an AXI-Stream input (64-bit @ ~322 MHz, or
+   512-bit for the U55C's 100G path) — extract per-type fields in parallel and
+   emit them on an internal struct bus
+3. Diff this parser's output (BBO log) against the RTL simulation output

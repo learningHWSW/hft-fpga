@@ -1,171 +1,194 @@
-# 실데이터 측정 결과 — 2019-12-30 NASDAQ TotalView-ITCH 5.0
+# Real-data measurements — 2019-12-30 NASDAQ TotalView-ITCH 5.0
 
-전체 하루치(268,744,780 메시지, 7.71 GB 압축해제, 03:04:32–20:05:00 ET).
-측정 도구: [step1-sw-parser/itch_hist.c](../step1-sw-parser/itch_hist.c),
-원본 리포트: [hist_full.txt](hist_full.txt). out-of-order ts 0건, order-table
-miss-op 0건 → 파서·테이블 모델이 실데이터에서 자기일관적.
+A full day (268,744,780 messages, 7.71 GB uncompressed, 03:04:32–20:05:00 ET).
+Measurement tool: [step1-sw-parser/itch_hist.c](../step1-sw-parser/itch_hist.c),
+raw report: [hist_full.txt](hist_full.txt). 0 out-of-order ts, 0 order-table
+miss-ops -> the parser and table models are self-consistent on real data.
 
-## 1. 메시지 타입 믹스 (설계 우선순위)
+## 1. Message-type mix (design priorities)
 
-| 타입 | 비중 | 오더북 동작 | 함의 |
+| Type | Share | Book action | Implication |
 |---|---|---|---|
-| A | 43.59% | 신규 삽입 | 최다. 삽입 경로가 핫 |
-| D | 42.55% | 완전 삭제 | 삽입과 거의 동률 — **삭제 경로도 똑같이 핫** |
-| U | 8.05% | 삭제+삽입 (해시 2연산) | hot path 사이클 예산을 지배 |
-| E | 2.13% | 수량 차감 | |
-| X | 1.04% | 부분 취소 | |
-| I,P,F 등 | ~2.6% | (대부분 북 미영향) | |
+| A | 43.59% | new insert | most frequent. The insert path is hot |
+| D | 42.55% | full delete | almost tied with insert — **the delete path is just as hot** |
+| U | 8.05% | delete + insert (two hash ops) | dominates the hot-path cycle budget |
+| E | 2.13% | qty decrement | |
+| X | 1.04% | partial cancel | |
+| I, P, F etc. | ~2.6% | (mostly no book impact) | |
 
-A+D+U+E+X = **97.4%**. **A·D·U 세 개가 94%** — 오더북 엔진은 삽입/삭제/
-replace 세 경로만 II=1로 만들면 사실상 라인레이트. avg 메시지 길이 28.7 B,
-최대 50 B('I' NOII).
+A+D+U+E+X = **97.4%**. **The three A/D/U are 94%** — making just the
+insert/delete/replace paths of the book engine II=1 is effectively line rate.
+avg message length 28.7 B, max 50 B ('I' NOII).
 
-## 2. Step 3b — 스플리터 입력 FIFO 크기 (측정으로 확정)
+## 2. Step 3b — splitter input FIFO size (fixed by measurement)
 
-모델: 도착 = (len+2)B를 100G 와이어에 직렬화(타임스탬프 하한 존중),
-드레인 = 1 msg / 3.103 ns (322.265625 MHz, 1 msg/cycle).
+Model: arrival = serialise (len+2) B onto the 100G wire (respecting the timestamp
+lower bound), drain = 1 msg / 3.103 ns (322.265625 MHz, 1 msg/cycle).
 
-**전일 최악 백로그 = 76 msgs / 2356 bytes** @ 15:59:56.7 (마감 임박 버스트).
+**Worst backlog over the day = 76 msgs / 2356 bytes** @ 15:59:56.7 (a
+near-close burst).
 
-| 백로그(도착 시점) | 발생 횟수 | 비중 |
+| Backlog (at arrival) | Occurrences | Share |
 |---|---|---|
-| 1 msg (여유) | 265.8M | 98.9% |
+| 1 msg (idle) | 265.8M | 98.9% |
 | 2–3 | 2.94M | 1.09% |
 | 4–7 | 24k | 0.009% |
-| ≥ 64 | 85 | 3e-7 |
+| >= 64 | 85 | 3e-7 |
 
-**결론**: 입력 FIFO **256-엔트리(2^8)면 76에 3.4× 여유**. 512b 폭 beat 기준으로는
-2356 B ÷ 64 B/beat ≈ 37 beat → **64-deep 512b FIFO(4 KB)로 충분**. 백로그 ≥2가
-1%뿐이라 대부분은 FIFO가 거의 비어 있음.
+**Conclusion**: a **256-entry (2^8) input FIFO gives 3.4× headroom over 76**. In
+512-b beats, 2356 B ÷ 64 B/beat ≈ 37 beats -> a **64-deep 512-b FIFO (4 KB) is
+enough**. With backlog >=2 only 1% of the time, the FIFO is nearly empty most of
+the time.
 
-> 주의(보수적 방향): MoldUDP64/UDP/Eth 패킷 오버헤드와 패킷 간 갭을 도착
-> 모델에 넣지 않아 실제보다 도착이 조밀 → 76은 상한(안전측). 실제 ITCH-only
-> 구간 백로그는 이보다 작다.
+> Note (conservative direction): the arrival model omits MoldUDP64/UDP/Eth packet
+> overhead and inter-packet gaps, so arrivals are denser than reality -> 76 is an
+> upper bound (safe side). The real ITCH-only backlog is smaller.
 
-## 3. 창별 메시지 밀도 (버스트 특성)
+## 3. Per-window message density (burst characteristics)
 
-| 창 | p50 | p99 | p99.9 | p99.99 | max |
+| Window | p50 | p99 | p99.9 | p99.99 | max |
 |---|---|---|---|---|---|
 | 1 µs | 1 | 2 | 4 | 16 | 501 |
 | 10 µs | 1 | 6 | 16 | 25 | 501 |
 | 100 µs | 2 | 19 | 66 | 126 | 506 |
 | 1 ms | 6 | 90 | 340 | 1066 | 1822 |
 
-1 µs 안에 최대 501 메시지(≈ 순간 500 Mmsg/s 버스트)가 존재하지만 p99.99가
-16이라 지속 부하는 낮음 — §2의 작은 FIFO로 흡수되는 이유. 마이크로버스트는
-있으나 짧다.
+Up to 501 messages exist within 1 µs (≈ an instantaneous 500 Mmsg/s burst), but
+p99.99 is 16 so the sustained load is low — the reason the small FIFO of §2
+absorbs it. Micro-bursts happen but are short.
 
-## 4. Step 4a — order table 설계점 (측정으로 확정)
+## 4. Step 4a — order table design point (fixed by measurement)
 
-측정 도구: [otable_sim.c](../step1-sw-parser/otable_sim.c) (d-way set-assoc 오버플로우
-스윕, 원본 [otable_sweep.txt](otable_sweep.txt)), [sym_conc.c](../step1-sw-parser/sym_conc.c)
-(심볼별 피크, [sym_conc.txt](sym_conc.txt)).
+Measurement tools: [otable_sim.c](../step1-sw-parser/otable_sim.c) (d-way
+set-assoc overflow sweep, raw [otable_sweep.txt](otable_sweep.txt)),
+[sym_conc.c](../step1-sw-parser/sym_conc.c) (per-symbol peak,
+[sym_conc.txt](sym_conc.txt)).
 
-### 4.1 전 종목 = HBM 확정
-동시 미체결 피크 ~1.92M(전 종목). d-way set-associative 오버플로우 스윕(전일):
+### 4.1 All symbols = HBM, confirmed
+Concurrent live-order peak ~1.92M (all symbols). d-way set-associative overflow
+sweep (over the day):
 
-| 용량 | 2-way | 4-way | 8-way |
+| Capacity | 2-way | 4-way | 8-way |
 |---|---|---|---|
 | 8.39M (load ~23%) | 48190 ppm | 4356 ppm | **75 ppm** |
 | 4.19M (load ~44%) | 163131 ppm | 57003 ppm | 11551 ppm |
 
-- **어떤 구성도 오버플로우 0 아님** (8-way/23%도 하루 10,490건 드롭).
-- 8.39M × ~152b ≈ 159 MB ≫ VU35P URAM(~11.5 MB). → **전 종목은 HBM**.
-- **way 수가 오버플로우를 지배**: 같은 용량에서 2→4→8-way가 자릿수로 감소.
-- **raw 하위비트 > mix 해시** (모든 구성에서): order_ref가 단조증가라 하위비트가
-  이미 라운드로빈. 곱셈-시프트 믹스는 오히려 군집 유발. → **해시 믹서 넣지 말 것.**
+- **No configuration reaches 0 overflow** (even 8-way/23% drops 10,490 over the
+  day).
+- 8.39M × ~152b ≈ 159 MB ≫ VU35P URAM (~11.5 MB). -> **all symbols = HBM**.
+- **Way count dominates overflow**: at the same capacity, 2->4->8-way drops by
+  orders of magnitude.
+- **Raw low bits > mixing hash** (in every configuration): order_ref is
+  monotonically increasing, so the low bits already round-robin. A multiply-shift
+  mix actually induces clustering. -> **do not add a hash mixer.**
 
-### 4.2 심볼 필터 = URAM (hot-path 설계)
-심볼별 동시 미체결 피크 (전일):
+### 4.2 Symbol filter = URAM (the hot-path design)
+Per-symbol concurrent live-order peak (over the day):
 
-| 심볼 | 피크 | | 심볼 | 피크 |
+| Symbol | Peak | | Symbol | Peak |
 |---|---|---|---|---|
 | AMZN | 37,068 | | NVDA | 12,800 |
 | AAPL | 27,110 | | AMD | 11,614 |
 | MSFT | 23,005 | | NFLX | 11,560 |
 | TSLA | 17,482 | | ROKU | 10,072 |
-| FB | 14,736 | | (top-16 누적) | ~231K |
+| FB | 14,736 | | (top-16 cumulative) | ~231K |
 
-**반전(측정으로 발견): 필터 테이블에서는 raw 하위비트가 아니라 mix 해시가
-필요하다.** 4.1의 "단조 ref → 라운드로빈"은 **전 종목 합산일 때만** 성립하고,
-한 종목으로 필터링하면 그 종목 ref 부분집합이 하위비트에서 군집한다. AAPL
-전일 오버플로우 (loc=13 필터, [otable_aapl2.txt](otable_aapl2.txt)):
+**A reversal (found by measurement): the filter table needs a mixing hash, not
+the raw low bits.** §4.1's "monotonic ref -> round-robin" holds **only for the
+all-symbols aggregate**; filtering to one symbol makes that symbol's ref subset
+cluster in the low bits. AAPL full-day overflow (loc=13 filter,
+[otable_aapl2.txt](otable_aapl2.txt)):
 
-| config | 슬롯 | load% | overflow | ppm |
+| config | slots | load% | overflow | ppm |
 |---|---|---|---|---|
 | 16b ×4 **raw** | 262K | 10.1 | 24,142 | 33920 |
 | 16b ×4 **mix** | 262K | 10.3 | 132 | 174 |
 | **16b ×8 mix** | 524K | 5.2 | **0** | **0** |
 | 18b ×4 mix | 1.05M | 2.6 | 0 | 0 |
 
-- mix가 raw 대비 오버플로우를 180× 감소. → **필터 테이블은 mix 해시.**
-- **채택 설계점(step 4a RTL): `2^16 sets × 8-way + 믹싱 해시`** — AAPL 전일
-  오버플로우 0. 524K 슬롯 × ~153b ≈ 80 Mbit ≈ 10 MB (VU35P URAM ~11.5 MB의 87%).
-- 저비용 대안: `16b ×4`(≈5 MB, URAM 43%) — 하루 100건 내외(약 110~170 ppm)
-  딥오더 드롭, BBO 영향 무시 가능. 다종목/URAM 절약 시 tag 압축·HBM은 후속 과제.
+- mix reduces overflow 180× over raw. -> **the filter table uses a mixing hash.**
+- **Adopted design point (step 4a RTL): `2^16 sets × 8-way + mixing hash`** — AAPL
+  full-day overflow 0. 524K slots × ~153b ≈ 80 Mbit ≈ 10 MB (87% of VU35P URAM
+  ~11.5 MB).
+- Cheaper alternative: `16b ×4` (≈5 MB, 43% URAM) — ~100/day (about 110–170 ppm)
+  deep-order drops, negligible BBO impact. Tag compression / HBM for multi-symbol
+  or URAM savings is a follow-on.
 
-### 4.3 어떤 믹서를 쓸 것인가 — 곱셈은 불필요 (합성이 던진 질문)
-4.2의 mix는 64×64 곱셈-시프트였는데, 메모리 문제를 고치고 나니 **그 곱셈이
-크리티컬 패스**가 됐다(다중 DSP 캐스케이드, 4.6 ns — step5-board/README.md).
-그래서 "더 싼 믹서로도 충분한가"를 다시 실측했다 (AAPL 필터, 전일,
-[hash_sweep.txt](hash_sweep.txt)):
+### 4.3 Which mixer to use — no multiply needed (a question synthesis raised)
+The §4.2 mix was a 64×64 multiply-shift, but once the memory problem was fixed,
+**that multiply became the critical path** (a multi-DSP cascade, 4.6 ns —
+step5-board/README.md). So "does a cheaper mixer suffice" was re-measured (AAPL
+filter, over the day, [hash_sweep.txt](hash_sweep.txt)):
 
-| 16b × 8way | overflow | maxset | 하드웨어 비용 |
+| 16b × 8way | overflow | maxset | hardware cost |
 |---|---|---|---|
-| mul64 (곱셈-시프트) | 0 | 7 | 64×64 곱셈, DSP 캐스케이드 |
-| **xorfold** (`r^(r>>16)^(r>>32)^(r>>48)`) | **0** | **6** | **DSP 0, ~2 LUT단** |
-| mul32 (32비트로 접고 32×32) | 0 | 5 | 32×32 곱셈 |
-| raw 하위비트 | 3 | 8 | 최저 |
+| mul64 (multiply-shift) | 0 | 7 | 64×64 multiply, DSP cascade |
+| **xorfold** (`r^(r>>16)^(r>>32)^(r>>48)`) | **0** | **6** | **0 DSP, ~2 LUT levels** |
+| mul32 (fold to 32 bits then 32×32) | 0 | 5 | 32×32 multiply |
+| raw low bits | 3 | 8 | lowest |
 
-- **순수 XOR 폴딩이 곱셈과 동일하게 오버플로우 0**이고, 최악 셋 점유는 오히려
-  더 낮다(6 vs 7). → **곱셈은 필요 없다. 파이프라인화도 불필요.**
-- 더 빡빡한 16b×4에서도 xorfold(95) / mul32(84)가 mul64(132)보다 낫다.
-- 교훈: "곱셈-시프트가 좋은 믹서"라는 통념을 이 워크로드에 그대로 적용하면
-  DSP를 낭비하고 타이밍을 망친다. 여기서도 측정이 통념을 뒤집었다.
+- **Pure XOR folding matches the multiply at 0 overflow**, and its worst-set
+  occupancy is even lower (6 vs 7). -> **no multiply needed. No pipelining
+  needed either.**
+- Even at the tighter 16b×4, xorfold (95) / mul32 (84) beat mul64 (132).
+- Lesson: applying the "multiply-shift is a good mixer" folklore straight to this
+  workload wastes DSPs and wrecks timing. Here too, measurement reversed the
+  folklore.
 
-## 5. 스윕(모멘텀 점화) 신호 — 실데이터로 측정 (step 6 전략)
+## 5. Sweep (momentum ignition) signal — measured on real data (step 6 strategy)
 
-스윕 = 공격적 시장가 주문이 한쪽 잔량을 여러 레벨에 걸쳐 쓸어내는 것. ITCH에서는
-D/X(주문자 취소)가 아니라 **체결(E/C)**이 잔량을 소진하는 것 — resting ASK 소진 =
-매수 스윕(상방), resting BID 소진 = 매도 스윕(하방). 같은 방향 체결이 gap 이내로
-이어지며 MIN_LEVELS 이상의 서로 다른 가격 레벨을 소진하면 스윕으로 판정.
+A sweep = an aggressive marketable order walking one side's resting liquidity
+across several levels. In ITCH it is not D/X (the owner's cancel) but an
+**execution (E/C)** consuming the resting size — resting ASK consumed = a buy
+sweep (up), resting BID consumed = a sell sweep (down). It qualifies as a sweep
+when same-direction executions continue within a gap and consume >= MIN_LEVELS
+distinct price levels.
 
-**감지는 쉬운 절반이다. 거래 가치를 결정하는 건 forward return** — 스윕 뒤 mid가
-그 방향으로 이어지는가(지속) vs 되돌아가는가(회귀). 모멘텀 점화 전략은 스윕과 같은
-방향을 취하므로, 부호 있는 forward return이 양수여야 의미가 있다.
+**Detection is the easy half. What decides the trading value is the forward
+return** — after a sweep, does the mid continue in that direction (continuation)
+or revert? A momentum-ignition strategy takes the sweep's direction, so the
+signed forward return has to be positive to mean anything.
 
-AAPL, 전일 앞 40M 피드 메시지 슬라이스 (loc=13, [dump_sweep.py](../step6-strategy/scripts/dump_sweep.py)):
+AAPL, the first 40M feed-message slice of the day (loc=13,
+[dump_sweep.py](../step6-strategy/scripts/dump_sweep.py)):
 
-| 스윕 크기 | 이벤트 | +1ms 지속 | +1ms 중앙값 | +100ms 지속 |
+| Sweep size | Events | +1ms continuation | +1ms median | +100ms continuation |
 |---|---|---|---|---|
-| ≥2 레벨 | 554 | 58.5% | +50 (½틱) | 63.0% |
-| ≥3 레벨 | 88 | **75.0%** | +100 (1틱) | 75.0% |
-| ≥4 레벨 | 26 | 76.9% | +125 | 76.9% |
+| >=2 levels | 554 | 58.5% | +50 (½ tick) | 63.0% |
+| >=3 levels | 88 | **75.0%** | +100 (1 tick) | 75.0% |
+| >=4 levels | 26 | 76.9% | +125 | 76.9% |
 
-- **표본 크기가 결론을 뒤집었다.** 처음 5M 슬라이스(장 초반, n=23)에서는 단기 지속이
-  39%로 50% 미만(회귀)이고 평균만 양수였다 — 소수 이상치가 끌어올린 노이즈. 40M로
-  키우니 전 지평에서 지속 58~63%로 안정. 스윕은 드문 사건이라 작은 창으로는 못 본다.
-- **스윕이 클수록 지속이 강하다** (단조): ≥2→≥3→≥4 레벨에서 +1ms 지속이
-  58.5%→75.0%→76.9%, 중앙값 이동이 +50→+100→+125. 모멘텀 점화 가설이 예측하는
-  그대로 — 큰 점화가 큰 연속을 부른다. 채택 신호점: **≥3 레벨** (88건, 75% 지속,
-  중앙값 1틱).
-- **한계 명시**: 단일 심볼·단일 일. 거래비용·큐 위치·역선택 미모델. 양수 forward
-  return은 "메커니즘이 실재한다"는 증거지 tradeable edge가 아니다. 중앙값 1틱 이동은
-  실제 AAPL 1틱 스프레드를 크로스하는 비용과 같은 자릿수 — edge는 얇고, 그래서 22 ns
-  지연과 비용 관리가 곧 알파다.
+- **Sample size flipped the conclusion.** In the first 5M slice (early session,
+  n=23) short-term continuation was 39% — under 50% (reversion) with only the mean
+  positive, noise pulled up by a few outliers. Growing to 40M stabilises
+  continuation at 58–63% across horizons. A sweep is a rare event you cannot see
+  in a small window.
+- **The bigger the sweep, the stronger the continuation** (monotonic): from
+  >=2 -> >=3 -> >=4 levels, +1ms continuation is 58.5% -> 75.0% -> 76.9%, and the
+  median move +50 -> +100 -> +125. Exactly what the momentum-ignition hypothesis
+  predicts — a bigger ignition draws a bigger follow-through. Adopted signal
+  point: **>=3 levels** (88 events, 75% continuation, median 1 tick).
+- **Stated limits**: one symbol, one day. Transaction cost, queue position and
+  adverse selection are unmodelled. A positive forward return is evidence the
+  mechanism is real, not a tradeable edge. The median 1-tick move is the same
+  order of magnitude as the cost of crossing AAPL's real 1-tick spread — the edge
+  is thin, which is exactly why 22 ns latency and cost management are the alpha.
 
-### 5.1 두 knob 실측 튜닝 — gap이 지배한다 (cfg_sweep_gap / min_levels)
+### 5.1 Tuning the two knobs on real data — gap dominates (cfg_sweep_gap / min_levels)
 
-§5는 신호점을 ≥3 레벨로 골랐지만 **gap 창을 1 ms에 고정**한 채 지속%로만 판단했다.
-gap도 knob이다(cfg_sweep_gap): 너무 좁으면 한 스윕이 조각나 각 조각이 MIN_LEVELS를
-못 채우고, 너무 넓으면 별개 공격이 하나로 병합돼 forward return이 희석된다. 그리고
-판정 기준을 지속%가 아니라 **손익 프록시**로 바꿨다 — net = 스윕 방향 +1 ms 평균 수익
-− 왕복비용(1틱=100, 스프레드 두 번 크로스). 책 상태는 두 knob과 무관하므로 40M 피드를
-**한 번 파싱**해 mid 타임라인과 체결 리스트를 만들고, (gap, min_levels) 격자를 값싸게
-재검출했다 ([sweep_grid.py](../step6-strategy/scripts/sweep_grid.py), AAPL loc=13, 40M
-메시지, 체결 10155건).
+§5 chose the signal point at >=3 levels but judged it on continuation % alone,
+with the **gap window pinned at 1 ms**. gap is a knob too (cfg_sweep_gap): too
+small and one sweep is cut into pieces that each miss MIN_LEVELS; too large and
+separate aggressions merge into one run whose forward return is diluted. And the
+metric was changed from continuation % to a **P&L proxy** — net = avg +1ms return
+in the sweep direction − a round-trip cost (1 tick = 100, crossing the spread
+twice). The book state is independent of the two knobs, so the 40M feed is parsed
+**once** to build the mid timeline and the execution list, then the
+(gap, min_levels) grid is re-scored cheaply
+([sweep_grid.py](../step6-strategy/scripts/sweep_grid.py), AAPL loc=13, 40M
+messages, 10155 executions).
 
-net/trade (1e-4 단위, +값 = 비용 넘는 지속):
+net/trade (1e-4 units, +ve = continuation beyond cost):
 
 | gap↓ \ min_levels→ | 2 | 3 | 4 |
 |---|---|---|---|
@@ -176,210 +199,241 @@ net/trade (1e-4 단위, +값 = 비용 넘는 지속):
 | **2.00 ms** | −36.8 (n=599) | −10.5 (n=114) | −12.9 (n=35) |
 | **5.00 ms** | −42.7 (n=704) | −20.8 (n=149) | −28.7 (n=47) |
 
-- **gap이 지배적 knob이고, §5의 1 ms는 나빴다.** 1 ms에서 ml=2는 net −24.8로 **돈을
-  잃고**, ml=3도 +33에 불과하다. gap을 0.25 ms로 줄이면 ml=3가 +152.6으로 뛴다. gap이
-  0.25→5 ms로 커질수록 모든 셀이 단조 악화 — "별개 공격이 병합돼 희석"되는 메커니즘.
-  §5가 이걸 못 본 건 gap을 고정했기 때문이다.
-- **knee는 없다 — 빈도/순도 프론티어다.** net/trade는 테스트 범위(5 ms→0.10 ms) 내내
-  단조 개선되고, 대신 n은 줄어든다(ml≥3: 53→38→28). 이 n 감소는 진짜 스윕을 쪼갠 게
-  아니라 대부분 **병합 거부**다(넓은 창에서 하나로 뭉쳤던 게 실은 별개 공격). 총 포획
-  net×n은 ml=3에서 0.10~0.35 ms에 걸쳐 평평(5800~6750).
-- **채택: gap = 0.25 ms (250,000 ns), min_levels = 3.** 자동 최적화는 net×n 기준
-  gap=0.10 ms·ml=2(총 10150)를 고르지만, 그건 +43.8/trade의 얇은-edge·고빈도 코너로
-  모델이 뺀 비용(큐 위치·역선택·수수료)에 가장 취약하다. §5의 "edge는 얇다" 카페앗대로
-  **마진을 빈도보다 우선**한다: 0.25 ms·ml=3은 net **+152.6/trade**(비용의 2.5배까지
-  견딤), 지속 81.6%, n=38, net×n 5800 — 평탄대의 견고한 내부점. min_levels=3은 §5에서
-  지속%로 고른 값을 이번엔 **손익 근거로 재확인**한 것이다.
-- **한계**: 여전히 단일 심볼·단일 일이고 비용 프록시는 거칠다(고정 1틱 왕복, 큐·역선택
-  없음). 0.10 ms 아래에서 U-턴을 못 봤으니 0.25 ms는 "증명된 전역 최적"이 아니라
-  **견고성 선택**이다. 배포 config(예: [test_session.py](../step7-host/tests/test_session.py)의
-  CFG)의 sweep_gap을 1 ms→0.25 ms로 내렸다.
+- **gap is the dominant knob, and §5's 1 ms was bad.** At 1 ms, ml=2 has net −24.8
+  and **loses money**, and ml=3 is only +33. Dropping gap to 0.25 ms lifts ml=3 to
+  +152.6. As gap grows 0.25 -> 5 ms every cell degrades monotonically — the
+  "separate aggressions merge and dilute" mechanism. §5 missed it because gap was
+  pinned.
+- **There is no knee — it is a frequency/purity frontier.** net/trade improves
+  monotonically across the tested range (5 ms -> 0.10 ms) while n falls (ml>=3:
+  53 -> 38 -> 28). That drop in n is not real sweeps being split but mostly
+  **merges being rejected** (what a wide window bundled into one was actually
+  separate aggressions). Total capture net×n is flat for ml=3 across 0.10–0.35 ms
+  (5800–6750).
+- **Adopted: gap = 0.25 ms (250,000 ns), min_levels = 3.** The auto-optimiser picks
+  gap=0.10 ms · ml=2 by net×n (total 10150), but that is the thin-edge/high-freq
+  corner at +43.8/trade, the most exposed to the costs the model omits (queue
+  position, adverse selection, fees). Per §5's "the edge is thin" caveat, **margin
+  is preferred over frequency**: 0.25 ms · ml=3 has net **+152.6/trade** (survives
+  2.5× the cost proxy), 81.6% continuation, n=38, net×n 5800 — a robust interior
+  point on the plateau. min_levels=3, chosen on continuation % in §5, is here
+  **re-confirmed on a P&L basis**.
+- **Limits**: still one symbol, one day, and the cost proxy is crude (fixed 1-tick
+  round trip, no queue/adverse selection). No U-turn was seen below 0.10 ms, so
+  0.25 ms is a **robustness choice**, not a proven global optimum. The deployment
+  config's sweep_gap (e.g. the CFG in
+  [test_session.py](../step7-host/tests/test_session.py)) was lowered 1 ms ->
+  0.25 ms.
 
-## 6. II=1이 필요한가 — 측정이 답한다 (order table 처리량 vs 지연)
+## 6. Is II=1 needed — measurement answers (order table throughput vs latency)
 
-order table은 correctness-first FSM으로 메시지당 6 사이클(U는 11), 220 MHz에서
-약 36.7 M msg/s. II=1(파이프라인, 사이클당 1 메시지)이 필요한지 **가정하지 말고**
-실제 100G 도착 트레이스로 재봤다 ([itch_hist.c](../step1-sw-parser/itch_hist.c)의
-2-서버 백로그 시뮬: 같은 와이어가 splitter와 order table 두 큐를 각자의 서비스
-레이트로 드레인).
+The order table is a correctness-first FSM at 6 cycles per message (11 for U),
+~36.7 M msg/s at 220 MHz. Rather than **assume** II=1 (a pipeline, 1 message per
+cycle) is needed, it was re-measured on a real 100G arrival trace (the 2-server
+backlog sim in [itch_hist.c](../step1-sw-parser/itch_hist.c): the same wire drains
+two queues, splitter and order table, at their own service rates).
 
-전일 전체:
+Full day:
 
-| 서버 | 최대 백로그 | 512-msg FIFO 드롭 |
+| Server | Max backlog | 512-msg FIFO drops |
 |---|---|---|
 | splitter (1 msg/cy @ 322 MHz) | 76 msgs / 2356 B | 0 |
 | order table (6 cy/msg @ 220 MHz) | **453 msgs** / 14043 B | **0** |
 
-- **처리량으로는 II=1이 필요 없다.** 6 cy/msg FSM이 fh_core의 기존 512-deep msg
-  FIFO로 전일 최악 버스트(453 msgs, 15:59:56의 501 msg/µs 스파이크)를 드롭 0으로
-  흡수한다. 우연이 아니라 측정된 여유(453/512, 12%)다.
-- **II=1이 실제로 사는 건 버스트 중 지연이다.** 453-msg 백로그는 큐 꼬리의 메시지가
-  order table에 닿기까지 453 × 27 ns ≈ **12.4 µs**를 기다린다는 뜻 — 정확히 거래
-  기회가 몰리는 버스트 순간의 지연이라, 틱-투-트레이드에서는 이게 요점이다.
-- 모델은 보수적(안전한 쪽): MoldUDP64/UDP/Eth 패킷 오버헤드를 넣지 않아 도착이
-  실제보다 조밀 → 실제 백로그는 이보다 낮다.
+- **Throughput does not need II=1.** The 6 cy/msg FSM absorbs the day's worst burst
+  (453 msgs, the 501 msg/µs spike at 15:59:56) with 0 drops into fh_core's existing
+  512-deep msg FIFO. That is not luck but measured headroom (453/512, 12%).
+- **What II=1 actually buys is latency during a burst.** A 453-msg backlog means a
+  message at the queue tail waits 453 × 27 ns ≈ **12.4 µs** to reach the order
+  table — precisely the latency at the burst moment where trading opportunities
+  cluster, which is the point in tick-to-trade.
+- The model is conservative (safe side): it omits MoldUDP64/UDP/Eth packet
+  overhead, so arrivals are denser than reality -> the real backlog is lower.
 
-**결론**: 순서는 (1) 값싼 사이클 절감 — 2^13×16은 URAM 캐스케이드가 2단(예전 16단
-아님)이라 RD_LAT를 낮출 수 있다 → 6 cy/msg를 줄여 버스트 지연을 비례 축소, (2) 그래도
-부족하면 full II=1(파이프라인 + 해저드 포워딩)이라는 큰 작업. 지연이 목표지 드롭이
-아니라는 걸 측정이 못 박았다.
+**Conclusion**: the order is (1) cheap cycle savings — 2^13×16 has a 2-deep URAM
+cascade (not the old 16-deep), so RD_LAT can be lowered -> reduce 6 cy/msg and
+shrink the burst latency proportionally; (2) if still short, full II=1 (a pipeline
++ hazard forwarding), the big job. Measurement nailed down that latency, not
+drops, is the target.
 
-### 6.1 full II=1 파이프 — 검증과 합성 (order_table_pipe)
+### 6.1 full II=1 pipe — verification and synthesis (order_table_pipe)
 
-full II=1을 실제로 만들었다([order_table_pipe.sv](../step4a-order-table/rtl/order_table_pipe.sv),
-해저드-스톨 파이프, iterative order_table과 포트 동일한 drop-in). 검증은 골든-diff로
-끝까지 물었다:
+full II=1 was actually built
+([order_table_pipe.sv](../step4a-order-table/rtl/order_table_pipe.sv), a
+hazard-stall pipe, a drop-in with ports identical to the iterative order_table).
+It was pressed all the way with golden diffs:
 
-- 서브모듈 합성 골든 PASS, 실데이터 5M BBO == 골든(drop 0, overflow 0),
-  충돌 스트레스 order-table 출력이 iterative와 **바이트 동일**(2250==2250).
-- 전체 체인(t2t_top, `+define+OT_PIPE`) wire→주문프레임이 non-pipe와 바이트 동일:
-  `PASS: pipe wire -> order frames == golden`, gap 0 / ot_overflow 0 / beat·msg·delta
-  drop 0 (oob=465는 래더 밴드 밖 심층호가, 설계상 폐기).
+- Submodule synthetic golden PASS, real-data 5M BBO == golden (0 drops, 0
+  overflow), collision-stress order-table output **byte-identical** to iterative
+  (2250==2250).
+- Full chain (t2t_top, `+define+OT_PIPE`) wire -> order frames byte-identical to
+  non-pipe: `PASS: pipe wire -> order frames == golden`, gap 0 / ot_overflow 0 /
+  beat·msg·delta drops 0 (oob=465 are deep quotes outside the ladder band,
+  dropped by design).
 
-**합성(place & route 전, 낙관적)** — `OT_PIPE=1 make synth-t2t`, xcu55c, OT=2^13×16:
+**Synthesis (pre place & route, optimistic)** — `OT_PIPE=1 make synth-t2t`,
+xcu55c, OT=2^13×16:
 
-| 지표 | 값 |
+| Metric | Value |
 |---|---|
 | LUT | 55,234 |
 | FF (FDRE) | 17,978 |
 | URAM288 | 66 |
 | BRAM (36/18) | 31 / 2 |
 | DSP | 2 |
-| cmac_clk (322.27 MHz) WNS | +1.304 ns (통과) |
-| core_clk (216.5 MHz 타깃) WNS | **−0.298 ns** (미달, Fmax 추정 203.4 MHz) |
+| cmac_clk (322.27 MHz) WNS | +1.304 ns (met) |
+| core_clk (216.5 MHz target) WNS | **−0.298 ns** (missed, Fmax est. 203.4 MHz) |
 
-- **임계 경로는 II=1 파이프가 아니다.** 최악 경로는 mold_splitter의
-  `msglen_reg[6] → vcnt_reg[7]`(21 로직 레벨, route 71.8% 지배) — 메시지길이에서
-  유효바이트카운트를 만드는 산술 체인이고, non-pipe에도 공유되는 경로다. 파이프
-  order table 자신은 국소적으로 타이밍을 잡았다.
-- **실제 요구치는 195.3 MHz(5.120 ns, 512b×195.3M=100 Gb/s 바닥)**, 216.5는 여유
-  목표였다. 데이터경로 지연 4.899 ns(도착 4.916 ns) 기준 195.3 MHz에서 slack
-  **+0.204 ns → 통과**. 즉 낙관적 합성 수치로도 100G 라인레이트는 이미 만족한다.
-- LUT는 iterative 대비 늘었다(파이프 스테이지 + 해저드 시프트레지스터). 이 비용으로
-  버스트 중 order-table 대기(§6의 ~12.4 µs)를 사이클당 1 메시지로 없애는 것이 II=1의
-  교환 조건이다.
+- **The critical path is not the II=1 pipe.** The worst path is mold_splitter's
+  `msglen_reg[6] -> vcnt_reg[7]` (21 logic levels, route-dominated 71.8%) — the
+  arithmetic chain from message length to a valid-byte count, a path shared with
+  non-pipe too. The pipe order table itself closed timing locally.
+- **The real requirement is 195.3 MHz** (5.120 ns, 512b × 195.3M = 100 Gb/s floor);
+  216.5 was a headroom target. At the 4.899 ns data-path delay (4.916 ns arrival),
+  195.3 MHz gives slack **+0.204 ns -> met**. So even the optimistic synthesis
+  number already satisfies 100G line rate.
+- LUT grew over iterative (pipeline stages + a hazard shift register). Trading that
+  cost to remove the burst-time order-table wait (§6's ~12.4 µs) with one message
+  per cycle is II=1's exchange.
 
-**리타이밍으로 216.5 MHz 클로징 (splitter msglen→vcnt).** 위 −0.298의 원인 경로에
-예고한 리타이밍을 실제로 넣었다: `msglen+2`(consume와 msg_ready가 둘 다 쓰는 값)를
-`win_next`에서 미리 레지스터(`mlen2`)로 뽑아, 그 +2 가산기를 msglen→consume→vcnt
-체인의 머리에서 msglen 레지스터와 **병렬**로 옮겼다. mlen2 ≡ msglen+2라 동작은 정확히
-동일 — 실데이터 5M BBO와 전체 체인 wire→주문프레임이 **바이트 동일**(둘 다 PASS).
+**Closing 216.5 MHz by retiming (splitter msglen -> vcnt).** The retiming flagged
+for the −0.298 path above was actually applied: `msglen+2` (the value both consume
+and msg_ready use) is precomputed into a register (`mlen2`) from `win_next`, moving
+that +2 adder out of the head of the msglen -> consume -> vcnt chain and into
+**parallel** with the msglen register. mlen2 ≡ msglen+2, so behaviour is exactly
+the same — real-data 5M BBO and the full chain wire -> order frames are both
+**byte-identical** (both PASS).
 
-| | 리타이밍 前 | 리타이밍 後 |
+| | before retiming | after retiming |
 |---|---|---|
 | core_clk WNS (216.5 MHz) | −0.298 ns | **+0.152 ns (MET)** |
-| 로직 레벨 | 21 | **18** |
-| 데이터경로 지연 | 4.899 ns | 4.446 ns |
-| 최악 경로 | mold_splitter `msglen→vcnt` | price_ladder `r_add_diff→r_fwd` |
+| logic levels | 21 | **18** |
+| data-path delay | 4.899 ns | 4.446 ns |
+| worst path | mold_splitter `msglen->vcnt` | price_ladder `r_add_diff->r_fwd` |
 
-- **216.5 MHz가 합성에서 MET**(failing endpoints 0, total violation 0.000 ns). +2
-  가산기 하나(캐리 체인 ~3 레벨)를 경로에서 빼 4.899→4.446 ns, 부호가 뒤집혔다.
-- **병목이 스플리터를 떠났다** — 이제 price_ladder의 add-diff→forward 경로가 한계
-  (합성 +0.152, post-route +0.196). 다음에 여유가 더 필요하면 거기가 대상이다.
+- **216.5 MHz is MET at synthesis** (0 failing endpoints, total violation
+  0.000 ns). Removing one +2 adder (a carry chain ~3 levels) took 4.899 -> 4.446 ns
+  and flipped the sign.
+- **The bottleneck left the splitter** — now price_ladder's add-diff -> forward path
+  is the limiter (synth +0.152, post-route +0.196). If more headroom is needed
+  next, that is the target.
 
-**Post-route 실측 (`OT_PIPE=1 make impl-t2t`, xcu55c, 216.5 MHz 타깃).** 예전에
-"이 계열은 post-route가 합성보다 나빴다"고 우려했지만, 리타이밍 뒤엔 route 지배
-경로라 P&R가 오히려 합성 추정을 살짝 이겼다:
+**Post-route measurement (`OT_PIPE=1 make impl-t2t`, xcu55c, 216.5 MHz target).**
+The old worry that "this family's post-route was worse than synthesis" is reversed:
+after retiming the limiting path is route-dominated and P&R slightly beat the synth
+estimate:
 
-| 지표 | post-route |
+| Metric | post-route |
 |---|---|
-| 전체 WNS (core, 216.5 MHz) | **+0.196 ns (MET)**, failing endpoints 0 |
+| Overall WNS (core, 216.5 MHz) | **+0.196 ns (MET)**, 0 failing endpoints |
 | core Fmax | ≈ 226 MHz |
 | cmac_clk WNS (322.27 MHz) | +0.567 ns |
-| 임계 경로 | price_ladder `r_add_diff→r_fwd`, 16 로직 레벨 |
+| critical path | price_ladder `r_add_diff->r_fwd`, 16 logic levels |
 | LUT / FF | 44,511 / 18,553 |
 | URAM / BRAM / DSP | 66 / 32 / 2 |
 
-- **II=1 전체 틱-투-트레이드 체인이 216.5 MHz를 post-route로 닫는다** (+0.196 ns).
-  이제 합성 추정이 아니라 실측이다. LUT는 합성 55k에서 opt/place가 44.5k로 다듬었다.
-- 라인레이트 바닥(195.3 MHz)이 아니라 여유목표(216.5)를 실물 P&R로 만족했으므로,
-  버스트 지연(§7, II=1이 10.04→0.95 µs)을 얻는 코어 주파수가 시뮬 가정(220)과
-  일치한다.
-- **전체 래퍼(t2t_axil, 3 클럭)도 post-route로 닫힌다** (`impl-axil`): core +0.056,
-  axil_clk +0.547, cmac +0.281 ns, 전체 +0.056 MET, 에러 0. async 클럭 그룹이 P&R까지
-  유지됐다(아니면 cross-domain이 거대 위반). 46,371 LUT / 23,817 FF / 66 URAM /
-  40 BRAM / 2 DSP — regfile·CDC·아비터·IGMP를 더한 실물 통합 설계 전체가 배치·라우팅·
-  타이밍 클로징된다.
+- **The II=1 full tick-to-trade chain closes 216.5 MHz post-route** (+0.196 ns).
+  Now measured, not a synth estimate. LUT dropped from synth 55k as opt/place
+  trimmed it to 44.5k.
+- Meeting the headroom target (216.5) rather than the line-rate floor (195.3) on
+  real P&R means the core frequency that buys the burst latency (§7, II=1 takes
+  10.04 -> 0.95 µs) matches the sim assumption (220).
+- **The full wrapper (t2t_axil, 3 clocks) also closes post-route** (`impl-axil`):
+  core +0.056, axil_clk +0.547, cmac +0.281 ns, overall +0.056 MET, 0 errors. The
+  async clock groups held through P&R (otherwise the cross-domain paths would show
+  huge violations). 46,371 LUT / 23,817 FF / 66 URAM / 40 BRAM / 2 DSP — the whole
+  integrated design (datapath + regfile + CDC + arbiter + IGMP) places, routes and
+  closes timing.
 
-## 7. 지연 예산 — tick-to-trade 스테이지별 + II=1의 버스트 효과 (측정)
+## 7. Latency budget — tick-to-trade per stage + II=1's burst effect (measured)
 
-§6은 II=1이 **버스트 지연**을 위한 것이라 결론냈다. 여기서 그 지연을 두 부분으로
-정확히 합산한다: (A) 파이프가 비어 있을 때 한 메시지의 무부하 tick-to-trade, (B)
-전일 최악 버스트에서 큐가 쌓일 때 더해지는 대기.
+§6 concluded II=1 is for **burst latency**. Here that latency is summed exactly in
+two parts: (A) the unloaded tick-to-trade of one message with the pipe empty, and
+(B) the added wait when the queue builds during the day's worst burst.
 
-### 7.1 무부하 예산 (스테이지 깊이 × 도메인 클럭)
+### 7.1 Unloaded budget (stage depth × domain clock)
 
-와이어 인 → 주문 아웃 경로의 각 RTL 스테이지 파이프 깊이(코어 4.618 ns = 216.5 MHz,
-CMAC 3.103 ns). 사이클 수는 각 FSM에서 읽은 값이다(±1 cy/스테이지, gate-level 아님).
+Pipe depth of each RTL stage on the wire-in -> order-out path (core 4.618 ns =
+216.5 MHz, CMAC 3.103 ns). Cycle counts are read from each FSM (±1 cy/stage, not
+gate-level).
 
-| 스테이지 (코어 도메인) | 사이클 | 비고 |
+| Stage (core domain) | Cycles | Note |
 |---|---|---|
-| cdc_fifo RX (CMAC→core) | ~3 | SYNC_FF=2 + 등록 read |
-| eth_ip_udp_rx | ~2 | 헤더 스트립 + 재정렬 |
-| beat FIFO + mold_splitter | ~2 | 첫 메시지까지 |
+| cdc_fifo RX (CMAC->core) | ~3 | SYNC_FF=2 + registered read |
+| eth_ip_udp_rx | ~2 | header strip + realign |
+| beat FIFO + mold_splitter | ~2 | to the first message |
 | itch_decoder | 1 | 512b, 1 msg/beat |
-| msg FIFO + order_table | 5 | iterative·pipe **동일** (PDEPTH+1) |
-| **[임밸런스]** price_ladder | ~10 | RMW 분할 FSM (타이밍 위해 깊게) |
-| **[스윕]** sweep_detect | ~1 | order-table 델타 직접 탭 → **래더 우회** |
-| strategy | 2 | stage1 평가 + stage2 게이트/emit |
-| ouch_builder | 1 | 상태머신 없음, 조합 |
-| tcp_tx | ~2 | CALC에서 첫 비트 |
-| cdc_fifo TX (core→CMAC) | ~3 CMAC | ≈ 9.3 ns |
+| msg FIFO + order_table | 5 | iterative and pipe **identical** (PDEPTH+1) |
+| **[imbalance]** price_ladder | ~10 | RMW-split FSM (deep for timing) |
+| **[sweep]** sweep_detect | ~1 | taps the order-table delta directly -> **bypasses the ladder** |
+| strategy | 2 | stage1 eval + stage2 gate/emit |
+| ouch_builder | 1 | no state machine, combinational |
+| tcp_tx | ~2 | first beat at CALC |
+| cdc_fifo TX (core->CMAC) | ~3 CMAC | ≈ 9.3 ns |
 
-- **스윕 경로 ≈ 19 코어 사이클 ≈ 90 ns**, **임밸런스 경로 ≈ 28 코어 사이클 ≈ 135 ns**
-  (+TX cdc ~9 ns). MAC/PHY 직렬화와 와이어 전파는 우리 RTL 밖이라 미포함.
-- **스윕(모멘텀) 경로가 더 빠르다**: sweep_detect가 order-table 델타를 직접 받아
-  11-사이클 price_ladder를 건너뛴다. §6에서 튜닝한 그 전략이 곧 저지연 경로다.
-- **무부하 지연은 iterative와 pipe가 같다** — order table 단일 메시지 레이턴시가
-  둘 다 5 cy. II=1은 여기서 아무것도 안 바꾼다. 이 지연은 대부분 타이밍 클로저를 위해
-  일부러 깊게 쪼갠 FSM(래더 10 cy, 테이블 5 cy)에서 온다 — Fmax와 맞바꾼 값이다.
+- **Sweep path ≈ 19 core cycles ≈ 90 ns**, **imbalance path ≈ 28 core cycles ≈
+  135 ns** (+TX cdc ~9 ns). MAC/PHY serialisation and wire propagation are outside
+  our RTL and not included.
+- **The sweep (momentum) path is faster**: sweep_detect takes the order-table delta
+  directly and skips the 11-cycle price_ladder. The very strategy tuned in §6 is
+  the low-latency path.
+- **Unloaded latency is the same for iterative and pipe** — the order table's
+  single-message latency is 5 cy either way. II=1 changes nothing here. This
+  latency comes mostly from FSMs deliberately split deep for timing closure (ladder
+  10 cy, table 5 cy) — traded against Fmax.
 
-### 7.2 버스트 꼬리 지연 (전일 268.7M 메시지, itch_hist 3-서버)
+### 7.2 Burst tail latency (full day 268.7M messages, itch_hist 3-server)
 
-같은 100G 도착 트레이스로 splitter·iterative·II=1 pipe를 각자의 서비스 레이트로
-배수시키고, 각 메시지가 실제로 겪는 큐 대기(꼬리)를 직접 추적했다:
+The same 100G arrival trace drains splitter, iterative and II=1 pipe at their own
+service rates, and the queuing wait (tail) each message actually experiences is
+tracked directly:
 
-| 서버 | max 백로그 | **버스트 꼬리 지연** |
+| Server | max backlog | **burst tail latency** |
 |---|---|---|
 | splitter (1 cy @322 MHz) | 76 msgs | 0.23 µs |
 | order table iterative (5–9 cy @220) | 443 msgs | **10.04 µs** |
 | order table II=1 pipe (1 cy @220) | 211 msgs | **0.95 µs** |
 
-- **II=1이 버스트 꼬리를 10.04 µs → 0.95 µs, 10.6배 줄인다** (§6의 ~12.4 µs 추정을
-  정밀 측정으로 확증). 최악 순간은 둘 다 15:59:56(장 마감 직전 스파이크).
-- **파이프도 0이 아니다 — 코어가 와이어보다 느리기 때문.** 파이프는 220 msg/µs로
-  배수하는데 splitter는 322 msg/µs로 밀어넣어, 잔여 백로그(211)가 쌓인다. 하지만
-  iterative의 44 msg/µs보다 5배 빨리 빠져 꼬리가 한 자릿수 µs → 서브-µs로 떨어진다.
-  216.5 MHz 코어로는 버스트 큐잉을 없앨 수 없고 **한 자릿수로 줄일** 뿐이다.
+- **II=1 cuts the burst tail 10.04 µs -> 0.95 µs, 10.6×** (confirming §6's ~12.4 µs
+  estimate with a precise measurement). The worst moment is 15:59:56 for both (the
+  spike just before the close).
+- **The pipe is not zero either — because the core is slower than the wire.** The
+  pipe drains at 220 msg/µs while the splitter pushes at 322 msg/µs, so a residual
+  backlog (211) builds. But it drains 5× faster than iterative's 44 msg/µs, so the
+  tail falls from single-digit µs to sub-µs. A 216.5 MHz core cannot remove burst
+  queuing, only **cut it by an order of magnitude**.
 
-### 7.3 종합 — 최악 버스트 tick-to-trade
+### 7.3 Combined — worst-burst tick-to-trade
 
-무부하(A) + 버스트 꼬리(B):
+Unloaded (A) + burst tail (B):
 
-| | 무부하 | + 버스트 꼬리 | = 최악 tick-to-trade |
+| | unloaded | + burst tail | = worst tick-to-trade |
 |---|---|---|---|
 | iterative | ~135 ns | 10.04 µs | **~10.2 µs** |
 | II=1 pipe | ~135 ns | 0.95 µs | **~1.1 µs** |
 
-- **한가할 땐 ~135 ns, 버스트 땐 큐가 지배한다.** 그래서 II=1의 가치는 전부 버스트에
-  있다(§6 결론 재확인): 최악 tick-to-trade를 **~10 µs → ~1 µs**로.
-- **한계**: (1) 무부하 사이클은 데이터패스 파이프 깊이지 gate-level 아님(±1 cy/스테이지),
-  MAC/PHY/와이어 미포함. (2) 백로그 모델은 order table에 **모든** 메시지를 FSM 레이턴시로
-  먹인다(§6 가정) — iterative는 실제로 비추적 심볼을 더 빨리 스킵하므로 10.04 µs는
-  **보수적 상한**이고, pipe의 1 cy는 타입 무관이라 정확(드문 해저드 스톨만 무시). 따라서
-  10.6배는 이득의 상한 쪽 추정이다. (3) 코어 220 MHz 모델(post-route 216.5).
+- **~135 ns when idle, queue-dominated in a burst.** So II=1's entire value is in
+  the burst (re-confirming §6's conclusion): worst tick-to-trade **~10 µs -> ~1 µs**.
+- **Limits**: (1) unloaded cycles are datapath pipe depth, not gate-level (±1
+  cy/stage), and exclude MAC/PHY/wire. (2) The backlog model charges the order
+  table full FSM latency for **every** message (§6's assumption) — iterative
+  actually skips non-tracked symbols faster, so 10.04 µs is a **conservative upper
+  bound**, while the pipe's 1 cy is exact regardless of type (only rare hazard
+  stalls ignored). So 10.6× is an upper-ish estimate of the benefit. (3) The core
+  220 MHz model (post-route 216.5).
 
-## 재현
+## Reproduce
 
 ```sh
 cd step1-sw-parser && make itch_hist
 ./itch_hist ../data/12302019.NASDAQ_ITCH50.gz > ../data/hist_full.txt
-# 앞 N개만: ./itch_hist <file.gz> 100000000
+# first N only: ./itch_hist <file.gz> 100000000
 
-# II=1 백로그 + 버스트 꼬리 지연 (§6, §7): 3-서버 시뮬은 itch_hist에 내장, 전체 파일 1패스
+# II=1 backlog + burst tail latency (§6, §7): the 3-server sim is built into
+# itch_hist, one pass over the whole file
 cd step1-sw-parser && make itch_hist && ./itch_hist ../data/12302019.NASDAQ_ITCH50.gz
 
-# 스윕 신호 (§5): 큰 슬라이스가 필요 — 스윕은 드물다
+# Sweep signal (§5): needs a large slice — sweeps are rare
 python3 step1-sw-parser/itch_slice.py data/12302019.NASDAQ_ITCH50.gz aapl_big.itch 40000000 AAPL
 python3 step6-strategy/scripts/dump_sweep.py aapl_big.itch 13 3 1000000 >/dev/null   # summary on stderr
 ```

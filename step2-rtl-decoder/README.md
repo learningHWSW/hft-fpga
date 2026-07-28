@@ -1,52 +1,57 @@
-# Step 2 — SystemVerilog ITCH 디코더 + 셀프체킹 시뮬레이션
+# Step 2 — SystemVerilog ITCH decoder + self-checking simulation
 
-xsim(Vivado/Vitis)이 1순위 플로우. Verilator는 Vivado 없는 환경용 보조.
+xsim (Vivado/Vitis) is the primary flow. Verilator is the fallback for
+environments without Vivado.
 
-## 실행
+## Run
 
 ```sh
-# Vivado/Vitis 환경 (settings64.sh source 후)
+# Vivado/Vitis environment (after sourcing settings64.sh)
 make test
 
-# Vivado 없는 환경
+# environment without Vivado
 make test-verilator
 ```
 
-두 플로우 모두: step1의 `gen_itch.py`로 만든 test.itch를 TB가 AXI-Stream으로
-주입 → 디코더 출력이 `decode_rtl.log`로 기록 → `scripts/dump_itch.py`(golden)
-출력과 **diff가 비면 PASS**.
+Both flows: the TB injects the test.itch made by step 1's `gen_itch.py` as an
+AXI-Stream -> the decoder output is logged to `decode_rtl.log` -> **an empty diff
+against `scripts/dump_itch.py` (golden) is PASS**.
 
-## 구조
+## Structure
 
 ```
-rtl/itch5_pkg.sv     — 오프셋/크기 상수 + itch_msg_t (step1 itch5.h의 SV 미러)
-rtl/itch_decoder.sv  — AXI-Stream(64bit) 입력, itch_msg_t + valid 펄스 출력
-tb/tb_itch_decoder.sv— 파일 주입 드라이버 + 캐노니컬 로그 모니터
-scripts/dump_itch.py — 같은 파일에서 같은 포맷의 golden 로그 생성
+rtl/itch5_pkg.sv     — offset/size constants + itch_msg_t (an SV mirror of step1's itch5.h)
+rtl/itch_decoder.sv  — AXI-Stream (64-bit) input, itch_msg_t + a valid pulse output
+tb/tb_itch_decoder.sv— file-injection driver + canonical-log monitor
+scripts/dump_itch.py — a golden log in the same format from the same file
 ```
 
-## 설계 결정 (현재 상태)
+## Design decisions (current state)
 
-- **인터페이스**: 메시지당 1 packet(tlast) AXI-Stream. 프레이밍(MoldUDP64 또는
-  파일의 길이 prefix) 제거는 상류(step 3) 담당.
-- **store-then-decode**: tlast 다음 사이클에 전체 필드 병렬 추출 + valid 펄스.
-  기능 검증용으로 단순 명확. 지연 최적화(마지막 필요 필드 도착 즉시 발화하는
-  cut-through)는 파이프라인이 완성된 뒤에.
-- **s_tready = 상수 1**: 시장 데이터 경로는 절대 wire를 backpressure하지
-  않는다. 하류가 느리면 FIFO로 흡수하고, 넘치면 드롭+갭 처리.
-- **길이 검증**: 수신 길이 ≠ 스펙 길이면 `m_len_err` — 상류 프레이밍 버그나
-  피드 이상 검출용.
+- **Interface**: one packet (tlast) per message on AXI-Stream. Removing the
+  framing (MoldUDP64 or the file's length prefix) is the upstream (step 3) job.
+- **store-then-decode**: extract all fields in parallel + a valid pulse on the
+  cycle after tlast. Simple and clear for functional verification. The latency
+  optimisation (cut-through — fire the instant the last needed field arrives)
+  comes after the pipeline is complete.
+- **s_tready = constant 1**: the market-data path never backpressures the wire.
+  If a downstream is slow it is absorbed in a FIFO, and overflow is drop + gap
+  handling.
+- **length check**: if the received length != the spec length, `m_len_err` — for
+  detecting an upstream framing bug or a feed anomaly.
 
-## xsim 사용 팁
+## xsim tips
 
-- 파형 보려면: `xelab -debug typical` 상태이므로
-  `xsim tb_itch_decoder_sim -gui -testplusarg itch=...` 로 열면 됨.
-- 회귀 돌릴 때는 `-runall`(배치)이 빠름. `-R` 옵션으로 xelab과 합칠 수도 있음.
+- To see waveforms: since `xelab -debug typical` is in effect, open with
+  `xsim tb_itch_decoder_sim -gui -testplusarg itch=...`.
+- For regressions, `-runall` (batch) is faster. It can also be combined with
+  xelab via the `-R` option.
 
-## 다음 (step 3+)
+## Next (step 3+)
 
-1. 디코더를 512bit(100G CMAC) 폭으로 일반화 — 핵심 난제: 한 beat에 여러
-   메시지가 끝나고 시작하는 realignment. 현재 64bit 버전이 그대로
-   레퍼런스가 됨.
-2. MoldUDP64 스트리퍼(sequence gap 검출 포함) + UDP/IP/Ethernet 파서 결합.
-3. order table + top-of-book 엔진 (step1 C 모델이 golden).
+1. Generalise the decoder to 512-bit (100G CMAC) width — the core challenge: the
+   realignment where several messages end and start within one beat. The current
+   64-bit version stays as the reference.
+2. Combine a MoldUDP64 stripper (with sequence-gap detection) + a
+   UDP/IP/Ethernet parser.
+3. The order table + top-of-book engine (the step-1 C model is the golden).

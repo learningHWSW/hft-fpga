@@ -1,87 +1,138 @@
-# 개선된 계획 — ITCH 틱-투-트레이드 (U55C, SystemVerilog RTL)
+# Revised plan — ITCH tick-to-trade (U55C, SystemVerilog RTL)
 
-원래 계획서(HLS 기반 초안)를 현재 리포 상태에 맞게 재작성한 버전.
-step 1(C golden parser)·step 2(64bit SV 디코더, golden diff PASS)는 완료.
+A rewrite of the original plan (an HLS-based draft) to match the current state of
+the repo. Step 1 (C golden parser) and step 2 (64-bit SV decoder, golden diff
+PASS) are done.
 
-## 0. 원안 대비 바뀐 것 (개선 포인트)
+## 0. What changed from the original (the improvements)
 
-| # | 원안 | 개선 | 근거 |
+| # | Original | Improvement | Rationale |
 |---|---|---|---|
-| 1 | HLS(`hls::stream`, `DATAFLOW`, II=1) 기준 서술 | SV RTL 기준으로 재기술. 성능 지표는 "II"가 아니라 **msg/cycle @ 322.27 MHz(CMAC 512bit 클록)** | 프로젝트가 RTL로 확정됨 (step 2 완료) |
-| 2 | 심볼 → 해시 테이블 조회 | **stock locate(2B)를 배열 인덱스로 직접 사용** — 모든 메시지 헤더에 있고, 하루 동안 조밀한 소정수. 심볼 해시 자체가 불필요 | step 1에서 프로토콜 확인으로 발견 |
-| 3 | 오더북에 심볼 해시 + order_ref 해시 2중 조회 | 해시는 **order_ref 하나만**. `hash(order_ref) → {locate, side, level_idx, qty}` | 위 2번의 결과 |
-| 4 | 파서가 메시지당 1개 처리, 폭 언급 없음 | **처리량 수치 명시**: 최악(전부 'D' 19B+len 2B)은 512b beat당 ~3 msg 경계. 단, 실제 피크는 수 M msg/s 수준 → **1 msg/cycle 스플리터 + 입력 FIFO(버스트 흡수) + overflow 카운터**. FIFO 깊이는 실데이터 버스트 분포를 측정해서 결정 | 322 M msg/s(1 msg/cycle)는 실제 피드 대비 두 자릿수 여유. beat-내 다중 경계는 순간치일 뿐 |
-| 5 | 갭 리커버리 언급만 | 확정: **HW는 갭 검출 + 카운터 + 세션 리셋만, 재전송/리와인드는 SW** (hot path 아님) | 원안 권장을 결정으로 승격 |
-| 6 | HBM 활용을 전제 | **hot path는 URAM 우선, HBM은 보류**. 추적 심볼을 필터링하면 order table이 on-chip에 들어감. 전 종목 추적이 필요해질 때만 HBM 검토 — 실데이터에서 동시 미체결 주문 수 피크를 먼저 측정 | HBM 레이턴시(수백 ns)는 시장데이터 hot path에 부적합 |
-| 7 | Stage A/B/C 구분 (PCIe DMA 스테이지 포함) | **PCIe 주입 스테이지 축소**: 시뮬레이션에서 실데이터 리플레이가 이미 되므로(step 1 실데이터 파이프), PCIe는 "호스트 리포팅/제어 경로"로만. 데이터 주입 경로로서의 Stage B는 삭제 | AF_XDP→DMA→FPGA 주입은 검증 가치 대비 공수 큼. TB 리플레이가 같은 걸 더 정확히 검증 |
-| 8 | 'U'(Replace) 처리를 단순 취소+추가로 서술 | 'U'는 **stock/side 필드가 없음** → old ref 조회로 상속. 'E'/'X'/'D'도 조회 필수. **book 엔진의 사이클 예산은 'U'(조회+삭제+삽입, 해시 2연산) 기준으로 산정** | 스펙 재확인. 처리량 병목이 여기서 결정됨 |
-| 9 | 검증 방법 산발적 서술 | **golden diff 패턴을 전 단계에 일관 적용**: 각 step마다 C/Python golden이 캐노니컬 로그 생성, RTL TB가 같은 포맷 출력, diff 빈 것이 PASS. 실데이터 앞 N백만 msg 리플레이를 회귀로 고정 | step 2에서 이미 검증된 방식 |
+| 1 | Described in HLS terms (`hls::stream`, `DATAFLOW`, II=1) | Re-stated in SV RTL terms. The performance metric is not "II" but **msg/cycle @ 322.27 MHz (the CMAC 512-bit clock)** | The project settled on RTL (step 2 done) |
+| 2 | Symbol -> hash-table lookup | **Use the stock locate (2 B) directly as an array index** — it is in every message header and is a dense small integer over a day. A symbol hash itself is unnecessary | Found by confirming the protocol in step 1 |
+| 3 | Two lookups in the book: symbol hash + order_ref hash | Hash **only order_ref**. `hash(order_ref) -> {locate, side, level_idx, qty}` | Follows from #2 |
+| 4 | Parser handles one message at a time, no width discussion | **State the throughput**: the worst case (all 'D', 19 B + 2 B len) is ~3 message boundaries per 512-bit beat. But the real peak is a few M msg/s -> **a 1 msg/cycle splitter + an input FIFO (burst absorption) + an overflow counter**. FIFO depth is set by measuring the real burst distribution | 322 M msg/s (1 msg/cycle) is two orders of magnitude over the real feed. Multiple boundaries within a beat are only an instantaneous peak |
+| 5 | Gap recovery only mentioned | Decided: **the HW does gap detection + a counter + session reset only; retransmit/rewind is SW** (not the hot path) | Promoting the original's recommendation to a decision |
+| 6 | Assumes HBM is used | **URAM-first for the hot path, HBM deferred**. Filtering to the tracked symbols keeps the order table on-chip. Consider HBM only when all-symbol tracking becomes necessary — measure the peak concurrent live-order count on real data first | HBM latency (hundreds of ns) is unsuited to the market-data hot path |
+| 7 | Stage A/B/C split (with a PCIe DMA stage) | **Shrink the PCIe injection stage**: simulation already replays real data (the step-1 real-data pipe), so PCIe is only the "host reporting/control path". Stage B as a data-injection path is dropped | AF_XDP -> DMA -> FPGA injection is a lot of work for the verification value. TB replay verifies the same thing more precisely |
+| 8 | 'U' (Replace) described as a plain cancel + add | 'U' has **no stock/side fields** -> inherited by looking up the old ref. 'E'/'X'/'D' also require a lookup. **The book engine's cycle budget is sized on 'U' (lookup + delete + insert, two hash operations)** | Re-checking the spec. This is where the throughput bottleneck is decided |
+| 9 | Verification described piecemeal | **Apply the golden-diff pattern consistently across every stage**: each step's C/Python golden emits a canonical log, the RTL TB emits the same format, an empty diff is PASS. A replay of the first N million real messages is pinned as the regression | The method already proven in step 2 |
 
-## 1. 목표 아키텍처
+## 1. Target architecture
 
 ```
-QSFP28 ──► CMAC(100G) ──► eth/ip/udp 파서 ──► MoldUDP64 스트리퍼 ──► msg 스플리터
-              512b@322M      (필터+체크섬)       (seq gap 검출)        (경계 재정렬)
-                                                                          │ itch raw msg
-                                                                          ▼
-   호스트(PCIe) ◄── BBO/이벤트 리포트 ◄── top-of-book 엔진 ◄── order table ◄── itch 디코더
-                                          (locate별 ladder)    (ref 해시, URAM)   (step2 확장)
-                                                │
-                                                ▼ 트리거
-                                          OUCH 빌더 ──► TX (스트레치, 세션은 SW)
+QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stripper ──► msg splitter
+              512b@322M      (filter+checksum)     (seq gap detect)      (boundary realign)
+                                                                              │ itch raw msg
+                                                                              ▼
+   host(PCIe) ◄── BBO/event report ◄── top-of-book engine ◄── order table ◄── itch decoder
+                                        (per-locate ladder)   (ref hash, URAM)  (step 2 extended)
+                                            │
+                                            ▼ trigger
+                                      OUCH builder ──► TX (stretch, session in SW)
 ```
 
-- 시장데이터 경로는 전 구간 **backpressure 없음**(tready=1). 흡수는 FIFO, 초과는 드롭+카운터. (step 2에서 확립한 원칙)
-- 심볼 필터는 locate 기반 bitmap (R 메시지로 SW가 설정, 섀도우/커밋 레지스터).
+- The market-data path has **no backpressure** anywhere (tready=1). Absorption is
+  in FIFOs, overflow is drop + counter. (The principle established in step 2.)
+- The symbol filter is a locate-based bitmap (SW sets it from the R message,
+  shadow/commit registers).
 
-## 2. 단계별 계획
+## 2. Stage-by-stage plan
 
-### Step 3a — MoldUDP64 스트리퍼 + 메시지 스플리터 (64bit 먼저)
-- MoldUDP64 헤더(20B) 제거, MsgCount 루프, 하트비트 처리, **seq gap 검출**(카운터 + SW 인터럽트/플래그).
-- 길이 prefix 기반으로 메시지 경계 분할 → step 2 디코더 인터페이스(msg당 tlast)로 출력.
-- gen_itch.py에 MoldUDP64 래핑 모드 추가 (갭·하트비트·beat 경계 걸침 케이스 포함).
-- **DoD**: 갭/하트비트/경계 케이스 포함 golden diff PASS (xsim + Verilator).
+### Step 3a — MoldUDP64 stripper + message splitter (64-bit first)
+- Strip the MoldUDP64 header (20 B), MsgCount loop, heartbeat handling,
+  **seq gap detection** (counter + SW interrupt/flag).
+- Split message boundaries by the length prefix -> emit on the step-2 decoder
+  interface (tlast per message).
+- Add a MoldUDP64 wrapping mode to gen_itch.py (including gap / heartbeat /
+  beat-boundary-straddling cases).
+- **DoD**: golden diff PASS with gap/heartbeat/boundary cases (xsim + Verilator).
 
-### Step 3b — 512bit 폭 확장 + 재정렬 (기술적 핵심 1) ✅
-- 스플리터를 512bit로 일반화: 한 beat 안에서 메시지가 끝나고 시작하는 재정렬, beat당 최대 3개 경계. → [step3b-splitter/rtl/mold_splitter.sv](step3b-splitter/rtl/mold_splitter.sv). 2-beat(128B) 윈도우 + 배럴시프트로 fill/emit 동시 처리해 **1 msg/cycle 유지**.
-- 설계: 1 msg/cycle 출력 + 앞단 elastic FIFO. **FIFO 깊이 확정(측정 완료, [data/FINDINGS.md](data/FINDINGS.md))**: 전일 최악 백로그 76 msgs / 2356 B → 입력 FIFO **256-엔트리(2^8)** 또는 512b 폭 **64-deep beat FIFO(4 KB)**. 백로그 ≥2가 1%뿐이라 대부분 거의 빈 상태. (FIFO 인스턴스화는 CMAC 결합 시 step 5에서.)
-- 디코더(step 2)는 폭만 맞추면 재사용 — `itch_decoder #(.DATA_W(512))` 무변경.
-- **DoD 달성**: 실데이터 리플레이(2019-12-30) diff PASS — Verilator 100만 msg, xsim 5만 msg, 합성 test.mold(gap/dup/hb/eos)는 두 플로우 모두. 실데이터는 BinaryFILE라 [itch2mold.py](step1-sw-parser/itch2mold.py)로 다중 메시지 MoldUDP64 재포장해 재정렬 자극.
+### Step 3b — 512-bit width extension + realignment (technical core 1) ✅
+- Generalise the splitter to 512-bit: realign where a message ends and another
+  starts within one beat, up to 3 boundaries per beat. -> [step3b-splitter/rtl/mold_splitter.sv](step3b-splitter/rtl/mold_splitter.sv).
+  A 2-beat (128 B) window + barrel shift does fill/emit concurrently to hold
+  **1 msg/cycle**.
+- Design: 1 msg/cycle output + an upstream elastic FIFO. **FIFO depth fixed
+  (measured, [data/FINDINGS.md](data/FINDINGS.md))**: worst backlog over the day
+  is 76 msgs / 2356 B -> a **256-entry (2^8) input FIFO** or a 512-bit-wide
+  **64-deep beat FIFO (4 KB)**. Backlog >=2 is only 1%, so it sits nearly empty
+  most of the time. (The FIFO is instantiated in step 5, when joined to CMAC.)
+- The decoder (step 2) is reused by just matching the width — `itch_decoder
+  #(.DATA_W(512))` unchanged.
+- **DoD met**: real-data replay (2019-12-30) diff PASS — Verilator 1M msg, xsim
+  50k msg, and the synthetic test.mold (gap/dup/hb/eos) on both flows. The real
+  data is a BinaryFILE, so [itch2mold.py](step1-sw-parser/itch2mold.py) repacks
+  it into multi-message MoldUDP64 to stimulate realignment.
 
-### Step 4a — order table (기술적 핵심 2) ✅
-- `hash(order_ref) → {locate, side, price, qty}` d-way set-associative, URAM. → [step4a-order-table/rtl/order_table.sv](step4a-order-table/rtl/order_table.sv). 메시지당 book-delta(rem/add 레벨) 출력.
-- **측정으로 설계점 확정** ([data/FINDINGS.md](data/FINDINGS.md) §4): 전 종목은 HBM(8M+ 엔트리, 어떤 구성도 오버플로우 0 불가). **심볼 필터 → URAM**. 반전 발견: 필터 테이블은 **raw가 아니라 mix 해시** 필요(단일 종목 ref가 하위비트에서 군집; raw 16b×4=24142 vs mix=132 오버플로우). 채택 `2^16×8 + mix` → AAPL 전일 오버플로우 0.
-- **검증 완료**: 합성 test.itch(전 op 타입) xsim+Verilator PASS, 실데이터 AAPL 슬라이스(500K xsim, 5M Verilator, 실제 U/X 포함) PASS. drop 0, overflow 0.
-- **성능(다음)**: 현재 정확성 우선 FSM(2 cy/msg, U 3). II=1 파이프라인(read/modify/write + 포워딩, U dual-port)이 후속 — 전후 처리율 비교.
-- 'U' 처리(조회→삭제→삽입)가 최다 사이클 — 이걸 기준으로 msg당 처리 사이클 예산 확정.
-- golden: step 1 파서를 확장해 order table 연산 로그(insert/erase/modify + 결과) 출력.
-- **DoD**: 실데이터 리플레이에서 테이블 상태 diff PASS, 충돌/점유율 리포트.
+### Step 4a — order table (technical core 2) ✅
+- `hash(order_ref) -> {locate, side, price, qty}`, d-way set-associative, URAM.
+  -> [step4a-order-table/rtl/order_table.sv](step4a-order-table/rtl/order_table.sv).
+  Emits a book delta (rem/add level) per message.
+- **Design point fixed by measurement** ([data/FINDINGS.md](data/FINDINGS.md) §4):
+  all-symbols is HBM (8M+ entries, no configuration reaches zero overflow).
+  **Symbol filter -> URAM**. A reversal found: the filter table needs a **mixing
+  hash, not raw** (a single symbol's refs cluster in the low bits; raw 16b×4 =
+  24142 vs mix = 132 overflows). Adopted `2^16×8 + mix` -> zero overflow on AAPL
+  over the day.
+- **Verified**: synthetic test.itch (every op type) xsim + Verilator PASS,
+  real-data AAPL slice (500K xsim, 5M Verilator, including real U/X) PASS.
+  0 drops, 0 overflow.
+- **Performance (next)**: currently a correctness-first FSM (2 cy/msg, 3 for U).
+  II=1 pipelining (read/modify/write + forwarding, dual-port U) is the follow-on
+  — compare throughput before/after.
+- 'U' handling (lookup -> delete -> insert) is the most cycles — the per-message
+  cycle budget is sized on it.
+- golden: extend the step-1 parser to emit an order-table op log
+  (insert/erase/modify + result).
+- **DoD**: table-state diff PASS on real-data replay, collision/occupancy report.
 
 ### Step 4b — top-of-book / price ladder ✅
-- 가격 사다리(레벨당 aggregate qty, L2), occupancy 비트맵 위 priority scan으로 BBO. → [step4b-book/rtl/price_ladder.sv](step4b-book/rtl/price_ladder.sv). `cfg_base`로 밴드 시작가 설정(재중심화 훅), 밴드 이탈은 드롭 + `oob_cnt`(저빈도 경로 빈도 측정 — AAPL 500만서 465건, 전부 딥/스텁, BBO 불변).
-- **golden**: [dump_bbo.py](step4b-book/scripts/dump_bbo.py) = step 1 book 모델 정규 포맷. step 1 C 파서 BBO와 byte 단위 교차검증(합성·실데이터).
-- **DoD 달성**: `decoder→order_table→price_ladder` 전 체인이 AAPL BBO 시퀀스에서 diff PASS — 합성 xsim+Verilator, 실데이터 xsim 50만 + Verilator 500만(1779 BBO). drop 0, overflow 0.
-- **성능(다음)**: 정확성 우선 FSM(3 cy/record). best 탐색 파이프라인화 + qty BRAM화가 후속. 레이턴시 실측·L3(레벨당 고정 슬롯)도 이후.
+- A price ladder (aggregate qty per level, L2), BBO by a priority scan over an
+  occupancy bitmap. -> [step4b-book/rtl/price_ladder.sv](step4b-book/rtl/price_ladder.sv).
+  `cfg_base` sets the band's start price (a re-centring hook); out-of-band is
+  dropped + `oob_cnt` (measuring how often that low-frequency path fires — 465
+  cases over AAPL's 5M, all deep/stub, BBO unchanged).
+- **golden**: [dump_bbo.py](step4b-book/scripts/dump_bbo.py) = the step-1 book
+  model's canonical format. Cross-checked byte-for-byte against the step-1 C
+  parser's BBO (synthetic and real data).
+- **DoD met**: the whole `decoder -> order_table -> price_ladder` chain diff PASS
+  on the AAPL BBO sequence — synthetic xsim + Verilator, real data xsim 500k +
+  Verilator 5M (1779 BBO). 0 drops, 0 overflow.
+- **Performance (next)**: correctness-first FSM (3 cy/record). Pipelining the
+  best-level search + moving qty to BRAM is the follow-on. Measured latency and
+  L3 (fixed slots per level) come later.
 
-### Step 5 — U55C 실보드
-- CMAC + verilog-ethernet(또는 벤더 IP)로 UDP/IP 수신, IGMP 조인. U55C 예제 디자인 호환성 사전 확인.
-- 호스트 리포팅: BBO 변화·갭 이벤트를 QDMA로 스트리밍, 제어 레지스터(심볼 bitmap, 파라미터)는 섀도우/커밋.
-- **DoD**: 리플레이 장비(또는 tcpreplay 100G) → 와이어 수신 → BBO가 시뮬레이션과 일치. MAC 수신~BBO 갱신 레이턴시 실측 (사이클 카운터, ns 환산).
+### Step 5 — U55C real board
+- Receive UDP/IP with CMAC + verilog-ethernet (or a vendor IP), IGMP join. Check
+  U55C example-design compatibility up front.
+- Host reporting: stream BBO changes / gap events over QDMA; control registers
+  (symbol bitmap, parameters) are shadow/commit.
+- **DoD**: replay gear (or tcpreplay 100G) -> wire receive -> BBO matches
+  simulation. Measure MAC-receive-to-BBO-update latency (a cycle counter,
+  converted to ns).
 
-### Step 6 (스트레치) — OUCH 발사
-- 세션(SoupBinTCP 수립·재전송·하트비트)은 SW, **FPGA는 수립된 세션의 seq/ack를 섀도우 레지스터로 받아 hot path 패킷 조립·발사만**.
-- 트리거: 4b의 BBO 이벤트 → 비교기 → 미리 스테이징된 주문 템플릿.
-- 안 되더라도 설계 문서로 남김 (원안 §8 방침 유지).
+### Step 6 (stretch) — OUCH fire
+- The session (SoupBinTCP establishment / retransmit / heartbeat) is SW; **the
+  FPGA takes the established session's seq/ack in shadow registers and only
+  assembles + fires the hot-path packet**.
+- Trigger: a step-4b BBO event -> comparator -> a pre-staged order template.
+- Keep it as a design document even if it does not get built (holding the
+  original's §8 policy).
 
-## 3. 측정 체크리스트 (전 단계 공통)
+## 3. Measurement checklist (common to every stage)
 
-- 각 step 완료 시: 레이턴시 p50/p99(사이클→ns), 자원(LUT/FF/BRAM/URAM), 최대 클록.
-- 실데이터 기준선: step 1 SW 처리율(M msg/s) 대비 RTL 배수.
-- 드롭/갭/오버플로우 카운터는 모든 모듈에 표준으로 내장.
-- cut-through 디코드(마지막 필요 필드 도착 즉시 발화)는 **전체 파이프 완성 후** 별도 최적화 커밋으로 — 개선 전후 레이턴시를 같은 리플레이로 비교.
+- On each step's completion: latency p50/p99 (cycles -> ns), resources
+  (LUT/FF/BRAM/URAM), max clock.
+- Real-data baseline: RTL multiple over the step-1 SW throughput (M msg/s).
+- Drop/gap/overflow counters are built into every module as standard.
+- Cut-through decode (fire the instant the last needed field arrives) is a
+  separate optimisation commit **after the whole pipe is complete** — compare
+  before/after latency on the same replay.
 
-## 4. 우선순위
+## 4. Priority
 
-1. **3a → 3b → 4a → 4b** 순서 고정. 4a(order table)가 이 프로젝트의 기술적 핵심 — 여기까지가 완결된 포트폴리오.
-2. Step 5는 보드 접근 가능 시점에.
-3. Step 6은 시간 남을 때. 문서만으로도 가치 있음.
+1. **3a -> 3b -> 4a -> 4b** in fixed order. 4a (order table) is the technical
+   core of this project — up to here is a complete portfolio.
+2. Step 5 when board access is available.
+3. Step 6 when time allows. It has value as a document alone.

@@ -1,49 +1,54 @@
-# Step 3a — MoldUDP64 스트리퍼 + 시퀀스 갭 검출
+# Step 3a — MoldUDP64 stripper + sequence gap detection
 
-MoldUDP64 패킷(UDP payload)을 받아 ITCH 메시지 단위 AXI-Stream으로
-재프레이밍하고, 시퀀스 갭/하트비트/중복/EOS를 검출한다. 출력은 step 2
-디코더 입력 규약(메시지당 tlast) 그대로 — TB에서 실제로 디코더를 체인해
-통합 검증한다.
+Takes MoldUDP64 packets (UDP payload), re-frames them into a per-ITCH-message
+AXI-Stream, and detects sequence gaps / heartbeats / duplicates / EOS. The
+output follows the step-2 decoder input contract (tlast per message) — the TB
+actually chains the decoder for an integration check.
 
-## 실행
+## Run
 
 ```sh
-make test            # xsim (Vivado/Vitis 환경)
-make test-verilator  # Vivado 없는 환경
+make test            # xsim (Vivado/Vitis environment)
+make test-verilator  # environment without Vivado
 ```
 
-test.mold가 없으면 step 1의 `gen_itch.py --mold`로 자동 생성된다.
-시나리오: 하트비트 2회, 2-메시지 갭(seq 11–12 유실), 중복 패킷 1회, EOS.
+If test.mold is missing it is generated automatically by step 1's
+`gen_itch.py --mold`. Scenario: two heartbeats, a 2-message gap (seq 11–12
+lost), one duplicate packet, EOS.
 
-## 구조
+## Structure
 
 ```
-rtl/mold_stripper.sv   — 스트리퍼 (store-and-forward, 64bit 레퍼런스)
-tb/tb_mold_stripper.sv — 파일 주입 → 스트리퍼 → step2 itch_decoder 체인
-scripts/dump_mold.py   — golden (메시지 라인은 step2 dump_itch.fmt_msg 재사용)
+rtl/mold_stripper.sv   — the stripper (store-and-forward, 64-bit reference)
+tb/tb_mold_stripper.sv — file injection -> stripper -> step2 itch_decoder chain
+scripts/dump_mold.py   — golden (message lines reuse step2 dump_itch.fmt_msg)
 ```
 
-로그 한 파일에 디코드 라인과 이벤트 라인(`GAP expected=.. got=.. missing=..`,
-`HB seq=..`, `EOS seq=..`)이 스트림 순서대로 섞여 기록되고, golden과 diff가
-비면 PASS. 갭 이벤트는 항상 해당 패킷의 메시지들보다 먼저 나온다.
+Decode lines and event lines (`GAP expected=.. got=.. missing=..`, `HB seq=..`,
+`EOS seq=..`) are logged interleaved in stream order in one file; an empty diff
+against the golden is PASS. A gap event always comes before that packet's
+messages.
 
-## 설계 결정
+## Design decisions
 
-- **시퀀스 추적**: reset 시 expected=1. 갭(seq > expected)은 데이터/하트비트
-  모두에서 검출 — 펄스 + `gap_total` 누적 후 새 seq에서 계속. 중복
-  (seq < expected)은 패킷 통째로 드롭 + `dup_cnt`. **재전송 요청/리와인드는
-  SW 몫** (PLAN.md §0-5).
-- **store-and-forward + s_tready**: 패킷 전체 버퍼 후 메시지 워크. 드레인
-  중 s_tready=0. 메시지당 tlast 재프레이밍은 패딩 때문에 입력보다 최대
-  ~1.14× 느릴 수 있어, 실제 와이어 뒤에는 흡수 FIFO(오버플로우 드롭+카운터)가
-  필수 — MAC을 backpressure하지 않는다는 원칙 그대로.
-- **이 모듈은 behavioral 레퍼런스**: 바이트 단위 랜덤 액세스 버퍼라 합성
-  뮤스가 크다. 512bit 라인레이트 버전(step 3b)이 이걸 golden 삼아 대체한다.
-- **frame_err_cnt**: 헤더 미달/길이 불일치/버퍼 초과 등 프레이밍 이상 카운터.
-  정상 스트림에서 0이어야 하고 TB가 마지막에 확인한다.
+- **Sequence tracking**: expected=1 at reset. A gap (seq > expected) is detected
+  on both data and heartbeats — a pulse + `gap_total` accumulation, then continue
+  at the new seq. A duplicate (seq < expected) drops the whole packet +
+  `dup_cnt`. **Retransmit request / rewind is the SW job** (PLAN.md §0-5).
+- **store-and-forward + s_tready**: buffer the whole packet, then walk its
+  messages. s_tready=0 during drain. The per-message tlast re-framing can be up
+  to ~1.14× slower than the input because of padding, so an absorption FIFO
+  (overflow drop + counter) is mandatory behind the real wire — the same
+  principle of never backpressuring the MAC.
+- **This module is a behavioural reference**: a byte-granular random-access
+  buffer, so its synthesis footprint is large. The 512-bit line-rate version
+  (step 3b) replaces it using this as the golden.
+- **frame_err_cnt**: a counter for framing anomalies (short header / length
+  mismatch / buffer overrun). It must be 0 on a clean stream, which the TB checks
+  at the end.
 
-## 상태
+## Status
 
 - xsim (Vivado 2025.2): PASS
 - Verilator: PASS
-- 둘 다 19/21 msgs 전달, gap_total=2, dup=1, frame_err=0, EOS 검출
+- Both deliver 19/21 msgs, gap_total=2, dup=1, frame_err=0, EOS detected
