@@ -344,8 +344,51 @@ A `misses` counter is exposed alongside: an order citing a message whose slot ha
 since been reused counts as a miss rather than a wrong latency. On the synthetic
 run it is zero.
 
-*Not yet measured on silicon* — the loaded probe postdates the bitstream currently
-on the card, so it needs a rebuild.
+#### Measured on silicon
+
+The probe first reproduces simulation exactly on the same synthetic stimulus —
+min 33, avg 51.2, max 73 core cycles on the card against min 33, avg 51, max 73 in
+xsim. Checking an instrument against a known answer before asking it an unknown
+one is the whole reason that run was done first.
+
+Then the real 5 M-message AAPL replay, sweeping `--gap` to vary offered load. 70
+orders and 70 samples with 0 misses at every non-saturated point:
+
+| offered | msg drops | golden | min | mean | max |
+|---|---|---|---|---|---|
+| 25.1 M msg/s | 0 | ✅ | 107.0 ns | **159.2 ns** | 330.2 ns |
+| 29.6 M msg/s | 0 | ✅ | 107.0 ns | **172.7 ns** | 358.1 ns |
+| 32.6 M msg/s | 0 | ✅ | 107.0 ns | **184.5 ns** | 432.6 ns |
+| 36.1 M msg/s | 0 | ✅ | 107.0 ns | **206.1 ns** | 567.4 ns |
+| 40.6 M msg/s | 0 | ✅ | 107.0 ns | **237.9 ns** | **730.2 ns** |
+| 46.3 M msg/s | 389,994 | ❌ | — saturated — | | |
+
+The floor never moves (23 cycles at every load), the mean grows 1.49× while the
+max grows 2.21× over the same range — the tail is the thing that degrades — and
+saturation arrives abruptly between 40.6 and 46.3 M msg/s. Every non-saturated
+point is byte-identical to the golden: the design degrades by dropping and
+counting, never by emitting a wrong order. Full analysis in `FINDINGS §7.5.1`.
+
+The binding limit is **messages per second, not bytes per second**, which is worth
+stating because it is easy to get wrong: a 512-bit beat carries several ITCH
+messages and the order table costs ~6 core cycles each, so the design saturates at
+a byte rate far below what the 512-bit path could carry. A load sweep computed
+from beat rate will put the knee in the wrong place by a factor of three.
+
+#### A saturating run wedges the card until a device reset
+
+**Open bug.** After any run that drops messages, the next run produces `sent=0`
+even at a gap that is known-good from clean — RX counters identical
+(`kept=1,122,567`, `oob=465`), zero drops, no orders. The soft reset
+(`K_CTRL_SOFT_RESET`, which does hold `core_rst_n` and does re-run the order
+table's clear sweep) does not recover it; only `xrt-smi reset` does. So the sweep
+above resets the device before every point.
+
+This cost real time and nearly produced a wrong conclusion: the first sweep looked
+like a dead card, because the failures were being read off `feed: gap=` (MoldUDP64
+sequence gaps, which report garbage in this state) instead of
+`drops(msg=)`, which is the counter that actually says the pipeline overran. Two
+different faults — genuine saturation and this wedge — were being seen as one.
 
 ### The synthetic feed at wide gaps: an open card-versus-simulation disagreement
 

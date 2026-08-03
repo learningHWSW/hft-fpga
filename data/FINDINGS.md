@@ -479,9 +479,54 @@ whole.
 In simulation (synthetic feed, 215 MHz core): **min 33, mean 51, max 73 core
 cycles** — 153/237/340 ns — with 0 misses. That is the unloaded shape of this
 interval, not the burst tail; the offered load in that run is one frame at a time.
-**The number that would test §7.2 needs the real 5 M-message replay on the card,
-which has not been run.** The 10.04 µs / 0.95 µs figures above remain model
-output until it is.
+The card reproduces those three numbers bit-for-bit on the same stimulus, which is
+the probe being checked against a known answer before it is asked an unknown one.
+
+### 7.5.1 The burst tail, measured on silicon
+
+Run on the card against the real 5 M-message AAPL replay, sweeping `--gap` (idle
+`ap_clk` cycles between injected frames) to vary offered load. 70 orders, 70
+samples, 0 misses at every non-saturated point; core 215 MHz, 4.651 ns/cycle:
+
+| offered | msg drops | golden | min | mean | max |
+|---|---|---|---|---|---|
+| 25.1 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 34.2 cy / **159.2 ns** | 71 cy / 330.2 ns |
+| 29.6 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 37.1 cy / **172.7 ns** | 77 cy / 358.1 ns |
+| 32.6 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 39.7 cy / **184.5 ns** | 93 cy / 432.6 ns |
+| 36.1 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 44.3 cy / **206.1 ns** | 122 cy / 567.4 ns |
+| 40.6 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 51.1 cy / **237.9 ns** | 157 cy / **730.2 ns** |
+| 46.3 M msg/s | 389,994 | ❌ | — saturated — | | |
+
+Four things this says that the model could not:
+
+1. **The floor is load-independent.** `min` is 23 cycles / 107.0 ns at every point.
+   An empty pipeline costs what it costs, and load never improves or erodes it.
+2. **The tail degrades 2.2× faster than the mean.** Across the same 1.6× increase
+   in offered rate the mean grows 1.49× (159 → 238 ns) while the max grows 2.21×
+   (330 → 730 ns). That divergence is the burst tail, and it is why quoting a mean
+   for this design would be misleading.
+3. **Saturation is sharp, not gradual** — zero drops at 40.6 M msg/s, then 389,994
+   dropped messages at 46.3 M. There is no soft shoulder to operate on.
+4. **Degradation is by dropping, never by lying.** Every non-saturated point is
+   byte-identical to the golden; the saturated one drops and counts. The design
+   has no regime in which it emits a *wrong* order.
+
+The measured tail is **730 ns, not the ~10 µs §7.2's model predicted** — but the
+two are not measuring the same thing and the model is not thereby refuted. §7.2
+models a full trading day's worst 1 ms burst arriving at a server pipeline; this
+sweeps a uniform offered rate over a 5 M-message slice. What the silicon result
+does establish is the shape (flat floor, superlinear tail, sharp knee) and the
+saturation point, neither of which was previously measured on hardware.
+
+Context for the rates: the design saturates above 40 M msg/s, which is **20–40×
+the real NASDAQ peak** this project sized itself against. The load at which the
+tail reaches 730 ns is not a rate this feed will present.
+
+**Reproducing this needs a device reset between runs.** A run that saturates
+leaves the datapath in a state the soft reset does not clear: the next run, even
+at a gap with zero drops, produces `sent=0` with the RX counters otherwise
+identical. Only `xrt-smi reset` recovers it. That is an open bug, not a
+measurement artifact — see step8-hw/README.md.
 
 A slot-index detail worth recording, because it is the same lesson as §4: the
 correlation table indexes on an **XOR fold** of the timestamp, not its low bits.
