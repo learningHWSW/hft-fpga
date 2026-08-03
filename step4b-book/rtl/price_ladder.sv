@@ -88,6 +88,39 @@ module price_ladder #(
   logic [31:0] askq [LEVELS];
   initial for (int i = 0; i < LEVELS; i++) begin bidq[i] = '0; askq[i] = '0; end
 
+  // ---- clear-on-reset sweep ----
+  // The `initial` above is correct for POWER-ON and a lie for RESET. These arrays
+  // infer BRAM, whose contents the bitstream loads once; `rst_n` clears the
+  // occupancy flops below but cannot touch the memory. Simulation cannot see the
+  // difference, because `initial` runs at time 0 and the array looks cleared
+  // either way -- which is why this survived every testbench.
+  //
+  // It matters because the update path is read-modify-write. After a soft reset
+  // that leaves stale quantities behind, the first add at a level accumulates
+  // onto the stale value, and a later removal computes a nonzero remainder and
+  // never releases the level. The book fills with phantom levels, best bid and
+  // best ask cross, the spread never reads tight, and the strategy stops firing
+  // silently -- sent=0 with every blocked counter at zero, which is the signature
+  // that made this look like a dead card. Measured on the U55C: only a device
+  // reprogram recovered it, because reprogramming is what reloads `initial`.
+  //
+  // order_table.sv learned the same lesson for URAM, which cannot be initialised
+  // at all. BRAM is the narrower case: it comes up correct and only diverges once
+  // something asserts reset without reloading the bitstream, so the earlier fix
+  // did not generalise here.
+  logic          clr_busy;
+  logic [LEVW:0] clr_addr;
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      clr_busy <= 1'b1;
+      clr_addr <= '0;
+    end else if (clr_busy) begin
+      clr_addr <= clr_addr + 1'b1;
+      if (clr_addr == (LEVW+1)'(LEVELS-1)) clr_busy <= 1'b0;
+    end
+  end
+
   logic [LEVW-1:0] bq_raddr, aq_raddr;
   logic [31:0]     bq_rdata, aq_rdata;
   logic            bq_we,    aq_we;
@@ -232,9 +265,21 @@ module price_ladder #(
       end
       default: ;
     endcase
+    // The sweep owns the write ports until it finishes. It cannot collide with
+    // the FSM's own writes because i_ready is held low throughout, so no delta
+    // has been accepted yet.
+    if (clr_busy) begin
+      bq_we = 1'b1; bq_waddr = clr_addr[LEVW-1:0]; bq_wdata = '0;
+      aq_we = 1'b1; aq_waddr = clr_addr[LEVW-1:0]; aq_wdata = '0;
+    end
   end
 
-  assign i_ready = (state == IDLE);
+  // Backpressure during the sweep. fh_core wires i_ready to the delta FIFO's pop
+  // enable, so this actually holds -- the deltas wait rather than being dropped.
+  // In the full chain it is belt and braces: the order table's own clear sweep is
+  // longer than this one and gates the feed behind init_done, so nothing can
+  // arrive here that early anyway.
+  assign i_ready = (state == IDLE) && !clr_busy;
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin

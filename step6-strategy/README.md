@@ -190,6 +190,51 @@ firm: 'HFT1'   disp/cap/sw: Y P N   min qty: 0   cross/cust: N N
 which matches the first order log line, `... SELL qty=100 px=2890300`. All 52
 tokens across the run are unique.
 
+### Verified a third way: against the published spec
+
+The two checks above prove the RTL and the Python agree, and that the bytes decode
+to the intended values. Neither can catch a field that both sides encode the same
+way and the *exchange* reads differently. So every offset and every enum was
+checked against **O*U*C*H Version 4.2, updated October 2025**
+([nasdaqtrader.com](https://www.nasdaqtrader.com/content/technicalsupport/specifications/tradingproducts/ouch4.2.pdf)).
+
+**The layout is exact.** All fourteen fields of Enter Order, offsets 0 to 48,
+49 bytes total, match byte for byte (the builder's comment numbers them from the
+start of the SoupBinTCP frame, so subtract the 3-byte header):
+
+| Field | Spec offset | Len | Ours |
+|---|---|---|---|
+| Type `O` / Order Token / Buy-Sell | 0 / 1 / 15 | 1 / 14 / 1 | same |
+| Shares / Stock / Price | 16 / 20 / 28 | 4 / 8 / 4 | same |
+| Time in Force / Firm | 32 / 36 | 4 / 4 | same |
+| Display / Capacity / Sweep | 40 / 41 / 42 | 1 / 1 / 1 | same |
+| Minimum Quantity | 43 | 4 | same |
+| Cross Type / Customer Type | 47 / 48 | 1 / 1 | same |
+
+**Every code we emit is a legal value**: `B`/`S` for buy and sell, `TIF = 0`
+(Immediate or Cancel, confirmed in Data Types), Capacity `P` = principal, sweep
+eligibility `N` = not eligible, Cross Type `N` = no cross (continuous market),
+Customer Type `N` = not a retail designated order. The "placeholder" caveat that
+stood here is therefore retired: nothing we send would be rejected as malformed.
+
+Two things the check found that the golden diff structurally could not:
+
+- **`Display = "Y"` is a legal code that does not mean what it looks like.** In
+  OUCH 4.2, `Y` is *Anonymous-Price to Comply* — not "yes, display this". An
+  attributable displayed order is `A` = *Attributable-Price to Display*. Both are
+  accepted by the exchange, so this is precisely the failure mode a self-agreeing
+  golden cannot see: the order would be *live and anonymous* when the intent may
+  have been attributable. The value is a config register, so it costs nothing to
+  change — but somebody has to decide which was meant.
+- **The Shares range is not enforced in hardware.** The spec requires shares
+  "greater than zero and less than 1,000,000". We emit
+  `min(resting_qty, cfg_order_qty)` with no clamp, so the upper bound holds only
+  if the host sets `cfg_order_qty` below a million, and the lower bound only
+  because the imbalance path gates on `i_ask_qty >= cfg_min_qty` — with
+  `cfg_min_qty = 0`, a zero-share order is reachable. Deliberately left as
+  documentation rather than a silent clamp: clamping would hide a misconfigured
+  register, and a rejected order is more informative than a quietly resized one.
+
 ## The TCP transmit engine
 
 OUCH runs over SoupBinTCP over TCP, so the packet needs a carrier. This is a

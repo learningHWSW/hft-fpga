@@ -213,7 +213,14 @@ Honest scope, all of it stated in the step READMEs:
   and host are two senders on one TCP connection, so their sequence numbers must
   be coordinated and inbound segments forwarded — the host owns the socket in the
   test instead.
-- **No retransmission** in the transmit path (fire-and-forget), and the OUCH
-  enum codes are placeholders to confirm against the current NASDAQ spec.
+- **No retransmission** in the transmit path (fire-and-forget).
+- **One OUCH field is legal but possibly not what was meant.** Every offset and
+  enum is now checked against O*U*C*H 4.2 (updated October 2025): the layout is
+  exact and every code we emit is valid, so the "placeholder" caveat is retired
+  ([step6-strategy](step6-strategy/)). The check did surface that `Display = "Y"`
+  means *Anonymous-Price to Comply*, not "yes, display" — a legal code with
+  different semantics, which a golden that agrees with itself can never catch.
+  It is a config register, but somebody has to decide which was intended. The
+  spec's `0 < shares < 1,000,000` range is also not enforced in hardware.
 
 Per-step READMEs (Korean) carry the detailed design notes for each block.
