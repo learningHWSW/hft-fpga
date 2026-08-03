@@ -522,11 +522,39 @@ Context for the rates: the design saturates above 40 M msg/s, which is **20–40
 the real NASDAQ peak** this project sized itself against. The load at which the
 tail reaches 730 ns is not a rate this feed will present.
 
-**Reproducing this needs a device reset between runs.** A run that saturates
-leaves the datapath in a state the soft reset does not clear: the next run, even
-at a gap with zero drops, produces `sent=0` with the RX counters otherwise
-identical. Only `xrt-smi reset` recovers it. That is an open bug, not a
-measurement artifact — see step8-hw/README.md.
+**Reproducing this needed a device reset between runs, and now it should not.** A
+run that saturates left the datapath in a state the soft reset did not clear: the
+next run, even at a gap with zero drops, produced `sent=0` with the RX counters
+otherwise identical, and only `xrt-smi reset` recovered it. Root-caused to the
+price ladder's quantity arrays, which were initialised by an `initial` block —
+correct at power-on, meaningless at reset, and invisible to simulation. Fixed
+with an explicit clear-on-reset sweep; see step8-hw/README.md.
+
+### 7.5.2 Composing the two probes: the bracket, measured
+
+`lat_probe` reports RX beat to TX beat; `lat_loaded` reports decoder to order.
+They are deliberately different intervals — `lat_loaded` excludes the fixed front
+end because it does not queue, which is what lets it work without a tag threaded
+through every stage. The consequence is that the two headline numbers cannot be
+compared directly, and the fix is not to rebuild the probe (supplying it an
+RX-beat stamp means threading beat-arrival time through the splitter, exactly what
+the design avoids) but to **measure the constant between them**.
+
+Both probes report from the same run, so subtracting is legitimate. Phase A, real
+5 M AAPL, gap 512, unloaded:
+
+| | |
+|---|---|
+| `lat_probe` min (RX beat → TX beat) | 206.7 ns |
+| `lat_loaded` min (decoder → order) | 107.0 ns |
+| **fixed front end + back end** | **99.7 ns** |
+
+That 99.7 ns is RX, CDC, splitter and decode on the way in, plus builder, framer
+and TX CDC on the way out — the part that does not queue. So **wire-to-order under
+load = `lat_loaded` + 99.7 ns**, which composes the two tables in this section
+rather than leaving them incommensurable. At the 40.6 M msg/s point the tail
+becomes 730.2 + 99.7 ≈ **830 ns** in-fabric, and adding the measured MAC term from
+§7.6 puts a fully loaded wire-to-wire worst case near 1.1 µs.
 
 A slot-index detail worth recording, because it is the same lesson as §4: the
 correlation table indexes on an **XOR fold** of the timestamp, not its low bits.

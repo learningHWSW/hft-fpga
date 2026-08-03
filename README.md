@@ -201,11 +201,15 @@ Honest scope, all of it stated in the step READMEs:
   Nothing has yet been done to reduce it: the CMAC's own pipeline options are
   unexplored, and the store-and-forward FIFO could plausibly become cut-through
   for frames whose length is already known.
-- **The loaded and unloaded latencies are still two different intervals.** The
-  burst tail is measured on silicon, but the probe that measures it reports
-  *decoder-to-order* while the wire figure is *first-RX-beat to first-TX-beat*,
-  so the 107 ns floor and the 515 ns figure are not comparable numbers. Making
-  both probes report the same interval is a small change and has not been made.
+- **The loaded and unloaded latencies are different intervals — now composable,
+  still not one number.** The burst tail probe reports *decoder-to-order* while
+  the wire figure is *first-RX-beat to first-TX-beat*, because excluding the
+  non-queueing front end is what lets the tail be measured without threading a tag
+  through every stage. Both probes report from the same run, so the constant
+  between them is now measured rather than assumed: **99.7 ns** of fixed front and
+  back end (`data/FINDINGS.md` §7.5.2). Wire-to-order under load is the tail plus
+  that constant. A single probe spanning the whole path under load would still be
+  better, and would cost the tag-threading this design was built to avoid.
 - **Split-sender TCP is modelled, not solved.** The host session, register
   config, login/heartbeat and ack/fill feedback are built and tested
   ([step7-host](step7-host/)), including decoding the FPGA's real OUCH bytes with
