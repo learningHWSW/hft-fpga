@@ -167,6 +167,7 @@ bandwidth.
 | **Phase B on the card, through a real 100 G MAC** | **PASS on silicon**, 70/70 frames == golden, link up, 0 MAC errors |
 | **Wire-to-wire latency measured** | **515.1 ns min / 579.1 ns mean**, 70 samples, 0 excluded |
 | Card-vs-simulation disagreement at gap 512 | RESOLVED — the card now matches at every gap from 48 to 4096 |
+| **Saturation wedge (`sent=0` until a device reset)** | **FIXED** — ladder BRAM had no clear-on-reset; verified recovering with no reset |
 
 Both phases are on the card and measured. **Phase B ran**: the `cmac_usplus`
 brought its link up in near-end PMA loopback (`aligned=1 link_up=1`), passed
@@ -376,20 +377,66 @@ messages and the order table costs ~6 core cycles each, so the design saturates 
 a byte rate far below what the 512-bit path could carry. A load sweep computed
 from beat rate will put the knee in the wrong place by a factor of three.
 
-#### A saturating run wedges the card until a device reset
+#### A saturating run wedged the card until a device reset — fixed
 
-**Open bug.** After any run that drops messages, the next run produces `sent=0`
-even at a gap that is known-good from clean — RX counters identical
-(`kept=1,122,567`, `oob=465`), zero drops, no orders. The soft reset
-(`K_CTRL_SOFT_RESET`, which does hold `core_rst_n` and does re-run the order
-table's clear sweep) does not recover it; only `xrt-smi reset` does. So the sweep
-above resets the device before every point.
+**Was:** after any run that drops messages, the next run produced `sent=0` even at
+a gap known-good from clean — RX counters identical (`kept=1,122,567`, `oob=465`),
+zero drops, no orders. `K_CTRL_SOFT_RESET`, which does hold `core_rst_n` and does
+re-run the order table's clear sweep, did not recover it; only `xrt-smi reset` did,
+so the sweep above reset the device before every point.
+
+**The counters said where it was not.** RX identical to a clean run means frames
+arrive and are kept. `oob=465` identical means the deltas reach the *price ladder*
+and are classified the same way. And `strategy: sent=0 blocked(pos=0 inflight=0
+txfull=0)` means the signal never fired **and** was never gated — which acquits the
+risk gate and points at the book itself.
+
+**Cause: an `initial` block standing in for a reset.** `price_ladder.sv` initialised
+`bidq`/`askq` with `initial`. That is correct for power-on and meaningless at reset:
+the arrays infer BRAM, whose contents the bitstream loads once, and `rst_n` clears
+the occupancy flops but cannot touch the memory. Because the update path is
+read-modify-write, stale quantities compound — an add accumulates onto a stale
+value, a later removal computes a nonzero remainder and never releases the level,
+the book fills with phantom levels, best bid and best ask cross, the spread never
+reads tight, and the strategy stops firing silently. Only a device reprogram
+recovered it because reprogramming is what reloads `initial`.
+
+**Simulation cannot see this**, which is why it survived every testbench: `initial`
+runs at time 0 there, so the array looks cleared either way. `order_table.sv`
+already carried the same lesson for URAM, which cannot be initialised at all —
+BRAM is the narrower case that comes up *correct* and only diverges once something
+asserts reset without reloading the bitstream, so the earlier fix did not
+generalise. The general rule this design now follows: **if a memory's contents
+matter after reset, sweep it; `initial` is a power-on convenience, not a reset.**
+
+**Fixed and verified on silicon.** An explicit clear-on-reset sweep over both
+arrays, `i_ready` held low while it runs. On the rebuilt bitstream, a genuinely
+saturating run (`--gap 16`, `drops(msg=1,682,346)`, `sent=0`) followed immediately
+by `--gap 512` with **no device reset**:
+
+```
+strategy: sent=70 pos=800 blocked(pos=36 inflight=0 txfull=0)
+tx      : frames=70 next_seq=10000e38 cdc_drop=0
+latency : samples=70 excluded=0  min=62 cyc (206.7 ns)  avg=78.9  max=124
+PASS: recovered from saturation with NO device reset, golden matched
+```
+
+The build closes at the same 215 MHz with all timing met (design WNS +0.003 ns,
+core +0.011 ns, 0 of 525,165 endpoints failing), and the sweep costs no latency —
+33/51/73 core cycles unchanged. The load sweep no longer needs its per-point reset.
 
 This cost real time and nearly produced a wrong conclusion: the first sweep looked
 like a dead card, because the failures were being read off `feed: gap=` (MoldUDP64
 sequence gaps, which report garbage in this state) instead of
 `drops(msg=)`, which is the counter that actually says the pipeline overran. Two
 different faults — genuine saturation and this wedge — were being seen as one.
+
+One process note worth keeping: the first attempt at the verification above ran
+the saturating pass and the recovery pass in one script, and the saturating pass
+silently did nothing because the device had not finished coming back from an
+earlier reset. The recovery pass then "passed" from a clean card — a green result
+that tested nothing. The precondition has to be *asserted*, not assumed: the run
+above is only meaningful because `drops(msg=1,682,346)` was confirmed first.
 
 ### The synthetic feed at wide gaps: an open card-versus-simulation disagreement
 

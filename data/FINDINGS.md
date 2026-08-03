@@ -522,13 +522,16 @@ Context for the rates: the design saturates above 40 M msg/s, which is **20–40
 the real NASDAQ peak** this project sized itself against. The load at which the
 tail reaches 730 ns is not a rate this feed will present.
 
-**Reproducing this needed a device reset between runs, and now it should not.** A
-run that saturates left the datapath in a state the soft reset did not clear: the
-next run, even at a gap with zero drops, produced `sent=0` with the RX counters
+**Reproducing this needed a device reset between runs, and no longer does.** A run
+that saturated left the datapath in a state the soft reset did not clear: the next
+run, even at a gap with zero drops, produced `sent=0` with the RX counters
 otherwise identical, and only `xrt-smi reset` recovered it. Root-caused to the
-price ladder's quantity arrays, which were initialised by an `initial` block —
-correct at power-on, meaningless at reset, and invisible to simulation. Fixed
-with an explicit clear-on-reset sweep; see step8-hw/README.md.
+price ladder's quantity arrays, initialised by an `initial` block — correct at
+power-on, meaningless at reset, and invisible to simulation because `initial` runs
+at time 0 there. Fixed with an explicit clear-on-reset sweep and **verified on
+silicon**: a saturating run (`drops(msg=1,682,346)`, `sent=0`) followed with no
+device reset by `--gap 512` now gives `sent=70`, golden matched. See
+step8-hw/README.md.
 
 ### 7.5.2 Composing the two probes: the bracket, measured
 
