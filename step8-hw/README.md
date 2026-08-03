@@ -164,14 +164,15 @@ bandwidth.
 | **Phase B routes with all timing met** (300 / 200 / **322.269** MHz) | DONE — 0 of 538,495 endpoints failing |
 | `cmac_usplus` bitstream licence | DONE — **granted**, `make gate-license` PASSES |
 | **Phase B bitstream** | DONE — `t2t_b.xclbin`, 53.1 MB, linked in 1 h 13 m |
-| Phase B on the card | NOT YET RUN — the bitstream exists, nothing has been loaded from it |
+| **Phase B on the card, through a real 100 G MAC** | **PASS on silicon**, 70/70 frames == golden, link up, 0 MAC errors |
+| **Wire-to-wire latency measured** | **515.1 ns min / 579.1 ns mean**, 70 samples, 0 excluded |
+| Card-vs-simulation disagreement at gap 512 | RESOLVED — the card now matches at every gap from 48 to 4096 |
 
-Phase A is on the card and measured; everything quoted from silicon below comes
-from it. Phase B now **has a bitstream** — the timing gate that refused the
-previous attempt is cleared and `t2t_b.xclbin` is written — but it has **not been
-loaded onto the card**, so there is still **no wire-to-wire latency figure
-anywhere in this repository**. Programming is gated on explicit confirmation each
-time, because a bad load costs a card reset.
+Both phases are on the card and measured. **Phase B ran**: the `cmac_usplus`
+brought its link up in near-end PMA loopback (`aligned=1 link_up=1`), passed
+1,127,130 frames with `rx_err=0 underrun=0 overflow=0`, and produced 70 order
+frames byte-identical to the golden. That is the first **wire-to-wire** figure
+this repository has ever been able to quote, and it is below.
 
 The current Phase A `.xclbin` — the one carrying the loaded probe, 215 MHz and
 the signed-position fix — links in 1 h 17 m with every constraint met:
@@ -421,11 +422,28 @@ diff holds at any injector gap. That is why the silicon latency run above is bot
 attributable *and* golden-verified, and why nothing quoted from it depends on
 resolving this.
 
-Re-running the synthetic feed at gap 512 on the card is the outstanding item. If
-it now matches, the earlier observation belonged to a bitstream predating the
-current RX path (`feed_ab_arb` was integrated in `46c95d6`); if it still differs,
-then the card and the testbench disagree about the same RTL, which is worth
-considerably more attention than a stimulus quirk.
+#### Resolved: the card agrees, and the bitstream was stale
+
+Re-run on the card across the same sweep the testbench was put through, resetting
+the device before each point:
+
+| gap (idle cycles) | 48 | 128 | 256 | 512 | 1024 | 4096 |
+|---|---|---|---|---|---|---|
+| orders sent | 4 | 4 | 4 | 4 | 4 | 4 |
+| byte-identical to golden | yes | yes | yes | yes | yes | yes |
+
+**Four at every gap, golden PASS at every gap** — including 512, where the card
+previously produced six. The card and the testbench now agree exactly, so the
+earlier observation belonged to a bitstream predating the current RX path
+(`feed_ab_arb` was integrated in `46c95d6`), which is the benign of the two
+possibilities this section was written to distinguish.
+
+The timeout-race explanation is therefore **withdrawn**, not confirmed: it
+predicted gap-dependence that neither the testbench nor the current bitstream
+shows. It is kept above rather than deleted because the reasoning was sound and
+only the premise was stale, and because a plausible cause that the testbench
+contradicts is exactly the kind of thing worth leaving visible after it turns out
+to be wrong.
 
 ### Testing the instrument, not just the datapath
 
@@ -1319,6 +1337,64 @@ at 300/200/322.269 MHz, passes the golden in simulation, is licensed, and has a
 bitstream". It does **not** yet establish "runs" — nothing has been loaded from
 `t2t_b.xclbin`. The wire-to-wire number this whole phase exists to produce is one
 `make run-card-b` away and is not quoted anywhere until that has happened.
+
+### It runs: wire-to-wire on silicon, through a real MAC
+
+The bitstream loaded, the MAC brought its link up in near-end PMA loopback with
+no optics attached, and the datapath produced the golden's frames on the far side
+of it. Real 5 M-message AAPL replay, `--gap 512`:
+
+```
+CMAC link   : aligned=1 link_up=1
+harness : injected=1127057 captured=70 overflow=0 stalls=0
+rx      : frames_in=1127130 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=465 drops(beat=0 msg=0 delta=0)
+mac     : tx=1127130 rx=1127130 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=70 dropped=1127060 cap_cdc_drop=0 hwm(feed=7 ord=3)
+latency : samples=70 excluded=0 orphans=0
+          min=166 cyc (515.1 ns)  avg=186.6 cyc (579.1 ns)  max=239 cyc (741.6 ns)
+PASS: ON CARD, THROUGH THE MAC, real 5M AAPL order frames == golden
+```
+
+1,127,130 frames through the real IP with **zero receive errors, zero underruns
+and zero overflows**, and `kept=1,122,567 / oob=465` — the same counters Phase A
+reports, which is the check that the MAC changed the path and not the answer.
+
+**The MAC costs more than twice what simulation said.** Both bitstreams were run
+back to back on the identical stimulus, so the difference is attributable:
+
+| real 5 M AAPL, gap 512 | Phase A (in fabric) | Phase B (through the MAC) | delta |
+|---|---|---|---|
+| min | 62 cy / **206.7 ns** | 166 cy / **515.1 ns** | +308.4 ns |
+| mean | 78.9 cy / 263.0 ns | 186.6 cy / 579.1 ns | +316.1 ns |
+| max | 124 cy / 413.3 ns | 239 cy / 741.6 ns | +328.3 ns |
+| samples / excluded | 70 / 0 | 70 / 0 | |
+| golden | PASS | PASS | |
+
+Phase B's core runs 15 MHz slower (200 against 215 MHz), and the loaded probe
+isolates exactly what that costs: **23 core cycles in both**, 107.0 ns against
+115.0 ns, so the clock accounts for about 8 ns of the delta on that segment and
+of order 10 ns across the whole core-domain path. **That leaves roughly 300 ns
+for MAC TX, MAC RX, the SerDes round trip, the store-and-forward fill and the
+frame filter.**
+
+Simulation predicted ~145 ns for the same delta. It was wrong by a factor of two,
+exactly as this document warned it would be — `MAC_LAT = 40` is a constant a
+testbench author chose, not a measurement of an IP. The warning is now retired
+and replaced by a number.
+
+**What this reorders.** The datapath is no longer the larger half of the problem:
+~207 ns of fabric against ~300 ns of MAC and SerDes. Shaving cycles off the price
+ladder or adding cut-through decode attacks the smaller term. Anyone optimising
+from here should start by asking what inside that 300 ns is configurable — the
+CMAC's own RX/TX pipeline options, whether the store-and-forward FIFO can become
+cut-through for frames whose length is already known, and whether near-end PMA
+loopback is overcounting the SerDes relative to a real wire.
+
+One caveat kept from the design section: loopback returns what we transmit, so
+this measures `D + T_tx + T_rx` and overcounts true wire-to-wire by the SerDes
+round trip inside the GT. It is the same three terms, not a substitute for a
+cabled two-port measurement.
 
 ### The core clock was the prerequisite
 

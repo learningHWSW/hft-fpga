@@ -564,24 +564,37 @@ behavioural stand-in chooses. The residual ~20 ns is real design cost
 not measured at all. The real IP needs GT models and tens of microseconds of link
 training to simulate.
 
-**Not yet measured on silicon, but the bitstream now exists.** Two blockers were
-cleared in turn. The `cmac_usplus` licence that made `write_bitstream` refuse the
-design is installed and `make gate-license` passes — a Design Linking entitlement
-permits synthesis and implementation but not a bitstream. That removed the licence
-blocker but did not produce one: the first run after the licence was granted
-routed and was then stopped by Vitis's zero-WNS gate, with `ap_clk` at −0.134 ns
-(78 endpoints) and the core clock at −0.022 ns, the former being congestion in the
-capture harness's byte accumulator rather than logic depth. Backing the core clock
-off 210 → 200 MHz cleared both: the rebuild linked in 1 h 13 m and wrote
-`t2t_b.xclbin` with all timing met at 300 / 200 / **322.269** MHz, 0 of 538,495
-endpoints failing. (The intended `ap_clk` 300 → 250 MHz backoff turned out to be a
-no-op — it is a scalable platform clock and `v++` discards a lower request — so
-that domain closed at its original 300 MHz, which is what makes the congestion
-diagnosis rather than a logic-depth one the confirmed explanation.)
+**Measured on silicon.** The bitstream loaded, the MAC brought its link up in
+near-end PMA loopback (`aligned=1 link_up=1`), and the real 5 M-message AAPL
+replay passed 1,127,130 frames through the IP with `rx_err=0 underrun=0
+overflow=0`, producing 70 order frames byte-identical to the golden.
 
-What is left is the one step that produces a number: **nothing has been loaded
-from that bitstream onto the card**. The figure will land here after a
-`make run-card-b`; see `step8-hw/README.md` for the full account.
+Both bitstreams were run back to back on identical stimulus (real 5 M AAPL, gap
+512), so the MAC term is attributable rather than inferred:
+
+| | Phase A (in fabric) | Phase B (through the MAC) | delta |
+|---|---|---|---|
+| min | 62 cy / **206.7 ns** | 166 cy / **515.1 ns** | +308.4 ns |
+| mean | 78.9 cy / 263.0 ns | 186.6 cy / 579.1 ns | +316.1 ns |
+| max | 124 cy / 413.3 ns | 239 cy / 741.6 ns | +328.3 ns |
+| samples / excluded | 70 / 0 | 70 / 0 | |
+| golden | PASS | PASS | |
+
+Phase B's core runs 15 MHz slower (200 against 215 MHz). The loaded probe isolates
+what that costs: 23 core cycles in both, 107.0 against 115.0 ns, so roughly 10 ns
+of the delta across the core-domain path is clock rather than MAC. **That leaves
+about 300 ns for MAC TX, MAC RX, the SerDes round trip, the store-and-forward fill
+and the frame filter.**
+
+**Simulation was wrong by a factor of two**, as the paragraph above predicted it
+would be: it put the same delta at ~145 ns, because `MAC_LAT = 40` is a constant a
+testbench author chose. This is the clearest case in the project of why a
+behavioural stand-in cannot substitute for silicon.
+
+**What it reorders.** The datapath is no longer the larger half: ~207 ns of fabric
+against ~300 ns of MAC and SerDes. Cycle-shaving in the price ladder or
+cut-through decode attacks the smaller term, and anyone optimising from here
+should start inside that 300 ns. See `step8-hw/README.md` for the full account.
 
 ## Reproduce
 

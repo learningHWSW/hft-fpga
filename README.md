@@ -17,13 +17,15 @@ NASDAQ AAPL session replayed from HBM on the card produces **70 order frames
 byte-identical to the software golden**, with zero drops anywhere in the chain, and
 the measured wire-to-order latency is **220 ns minimum, 281 ns mean** over 70
 attributable samples. The QSFP cages on this machine are empty, so that run
-replayed the feed from device memory rather than taking it off the wire. A real
-100 G MAC in GT near-end loopback is now built, simulation-verified against the
-same golden, and **has a bitstream**: it routes with all timing met at the MAC's
-own 322.269 MHz, the `cmac_usplus` licence is installed, and `t2t_b.xclbin` is
-written. That build would put MAC, PCS and SerDes inside the measurement. It has
-**not been loaded onto the card yet**, so **no wire-to-wire figure is quoted
-anywhere here** until it has.
+replayed the feed from device memory rather than taking it off the wire.
+
+**And it now runs through a real 100 G MAC.** The `cmac_usplus` build loads, its
+link comes up in GT near-end PMA loopback with no optics attached, and the same
+5 M-message replay passes **1,127,130 frames through the MAC with zero receive
+errors, underruns or overflows**, producing the same 70 order frames
+byte-identical to the golden. That puts MAC, PCS and SerDes inside the
+measurement and gives the project its first **wire-to-wire** figure:
+**515.1 ns minimum, 579.1 ns mean** over 70 attributable samples.
 
 **The burst tail is measured too, on the card, not modelled.** Sweeping offered
 load across the same 5 M-message replay, the floor never moves — 23 core cycles,
@@ -183,32 +185,27 @@ cd data && curl -O "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_IT
 
 Honest scope, all of it stated in the step READMEs:
 
-- **Not off the wire yet, but no longer MAC-less.** The 220 ns measured on silicon
-  is first-RX-beat to first-TX-beat *inside the FPGA* — it excludes MAC, PHY,
-  SerDes and wire, which a real tick-to-trade figure must include. [Step 8's
-  Phase B](step8-hw/) now builds a real `cmac_usplus` into the kernel with the GT
-  in near-end PMA loopback, which needs no optics: frames are 64b/66b encoded,
+- **Loopback is not a cable.** The wire-to-wire figure is measured with the GT in
+  near-end PMA loopback, which needs no optics: frames are 64b/66b encoded,
   serialized at 25.78125 Gb/s on four lanes, recovered, aligned and FCS-checked
   before reaching the datapath. Because the loopback returns what we transmit,
-  stamping the feed frame and resolving the returning order measures
-  `D + T_tx + T_rx` — the same three terms as true wire-to-wire. It is verified in
-  simulation against the same golden, byte for byte, and now **has a bitstream**:
-  `t2t_b.xclbin`, all timing met at 300 / 200 / **322.269** MHz including the
-  MAC's own clock, 0 of 538,495 endpoints failing. Two blockers were cleared to
-  get there — the `cmac_usplus` licence, and then Vitis's zero-slack timing gate.
-  What remains is the last step and the only one that produces a number:
-  **the bitstream has not been loaded onto the card**, so no wire-to-wire figure
-  is quoted here. Note also that simulation cannot supply one — the MAC is a
-  behavioural stand-in whose latency is a hard-coded constant, so the ~145 ns
-  Phase B adds in simulation is a testbench parameter, not a measurement of a MAC.
-- **The loaded and unloaded latencies are two different intervals, and neither is
-  the whole path.** Load is no longer the gap it was — the burst tail is now
-  measured on silicon (below) — but the probe that measures it reports
-  *decoder-to-order*, correlating the ITCH timestamp the datapath already carries
-  end to end, while the 220 ns above is *first-RX-beat to first-TX-beat*. The
-  107 ns floor and the 220 ns figure are therefore not comparable numbers, and
-  both still exclude MAC, PHY and SerDes. A single figure covering the whole path
-  under load needs Phase B on the card.
+  it measures `D + T_tx + T_rx` — the same three terms as true wire-to-wire, but
+  overcounting by the SerDes round trip inside the GT. A cabled two-port
+  measurement against a real feed source is still the honest end state, and the
+  QSFP cages on this machine are empty.
+- **The MAC is now the larger half of the latency, and it is not yet attacked.**
+  Running both bitstreams back to back on identical stimulus puts ~207 ns in the
+  fabric and **~300 ns in the MAC, SerDes, store-and-forward fill and frame
+  filter**. Simulation had predicted ~145 ns for that term and was wrong by a
+  factor of two, which is exactly what a hard-coded `MAC_LAT` constant is worth.
+  Nothing has yet been done to reduce it: the CMAC's own pipeline options are
+  unexplored, and the store-and-forward FIFO could plausibly become cut-through
+  for frames whose length is already known.
+- **The loaded and unloaded latencies are still two different intervals.** The
+  burst tail is measured on silicon, but the probe that measures it reports
+  *decoder-to-order* while the wire figure is *first-RX-beat to first-TX-beat*,
+  so the 107 ns floor and the 515 ns figure are not comparable numbers. Making
+  both probes report the same interval is a small change and has not been made.
 - **Split-sender TCP is modelled, not solved.** The host session, register
   config, login/heartbeat and ack/fill feedback are built and tested
   ([step7-host](step7-host/)), including decoding the FPGA's real OUCH bytes with
