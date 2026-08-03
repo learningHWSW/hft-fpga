@@ -9,10 +9,21 @@ diffed against a software golden model, and every design parameter is chosen
 from measurements on a real full trading day of NASDAQ data — not guesswork.
 
 **The whole chain closes timing on the real U55C part at 220.0 MHz post-route**,
-above the 195.3 MHz that a 100 Gb/s wire demands at 512-bit width. It is
-verified functionally against the golden, but has **not** run on a physical
-card — this machine has the part and toolchain but no Alveo, so measured
-MAC-to-order latency is future work.
+above the 195.3 MHz that a 100 Gb/s wire demands at 512-bit width, and it is
+verified functionally against the golden at every stage.
+
+**It now runs on a real Alveo U55C** ([step 8](step8-hw/)). A 5-million-message
+NASDAQ AAPL session replayed from HBM on the card produces **70 order frames
+byte-identical to the software golden**, with zero drops anywhere in the chain, and
+the measured wire-to-order latency is **220 ns minimum, 281 ns mean** over 70
+attributable samples. The QSFP cages on this machine are empty, so that run
+replayed the feed from device memory rather than taking it off the wire. A real
+100 G MAC in GT near-end loopback is now built, simulation-verified against the
+same golden, and routed with all timing met at the MAC's own 322.269 MHz — which
+would put MAC, PCS and SerDes inside the measurement. The `cmac_usplus` licence
+that previously blocked its bitstream is now installed, so that build is no
+longer gated; it has not yet been run on the card, and **no wire-to-wire figure
+is quoted anywhere here** until it has.
 
 Target board: **Alveo U55C** (UltraScale+ VU35P, HBM2 16 GB, QSFP28 ×2 for
 100 GbE, PCIe Gen4). The QSFP cages are on the card, so the FPGA can receive
@@ -36,6 +47,7 @@ multicast market data directly off the wire instead of going through a host NIC
 | 5  | U55C integration: Eth/IP/UDP RX, CDC to the CMAC clock, full-chain synth + P&R | ✅ [step5-board](step5-board/) |
 | 6  | Strategy (imbalance + sweep), risk gate, OUCH + SoupBinTCP + TCP transmit | ✅ [step6-strategy](step6-strategy/) |
 | 7  | Host software — SoupBinTCP session, register config, ack/fill feedback | ✅ [step7-host](step7-host/) |
+| 8  | **On real silicon** — Vitis kernel on an Alveo U55C, replay from HBM, measured latency | 🔄 [step8-hw](step8-hw/) |
 
 All steps are complete and pass on xsim and Verilator, on synthetic vectors and
 a real NASDAQ trading day. The full chain (`t2t_top`) is integrated, verified
@@ -161,8 +173,34 @@ cd data && curl -O "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_IT
 
 Honest scope, all of it stated in the step READMEs:
 
-- **No physical card.** Simulation gives exact cycle counts; nanoseconds on
-  silicon need an Alveo in a slot. No latency number here is measured hardware.
+- **Not off the wire yet, but no longer MAC-less.** The 220 ns measured on silicon
+  is first-RX-beat to first-TX-beat *inside the FPGA* — it excludes MAC, PHY,
+  SerDes and wire, which a real tick-to-trade figure must include. [Step 8's
+  Phase B](step8-hw/) now builds a real `cmac_usplus` into the kernel with the GT
+  in near-end PMA loopback, which needs no optics: frames are 64b/66b encoded,
+  serialized at 25.78125 Gb/s on four lanes, recovered, aligned and FCS-checked
+  before reaching the datapath. Because the loopback returns what we transmit,
+  stamping the feed frame and resolving the returning order measures
+  `D + T_tx + T_rx` — the same three terms as true wire-to-wire. It is verified in
+  simulation against the same golden, byte for byte, and **implements with all
+  timing met** including the MAC's own 322.269 MHz clock. The `cmac_usplus`
+  licence that previously refused it a bitstream is now installed, but that only
+  moved the blocker: the next build routed and was then stopped by Vitis's
+  zero-slack timing gate, so **there is still no Phase B bitstream and no
+  wire-to-wire number is quoted here**. Note also that simulation cannot supply
+  one — the MAC is a behavioural stand-in whose latency is a hard-coded constant,
+  so the ~145 ns Phase B adds in simulation is a testbench parameter, not a
+  measurement of a MAC.
+- **Latency under load is measured in simulation, not yet on silicon.** The 220 ns
+  figure is *unloaded*: the probe only counts a sample whose frame arrived into a
+  provably empty pipeline, and refuses the rest. The burst tail turned out **not**
+  to need a tag threaded through every stage — the datapath already carries a
+  unique per-message field end to end, the ITCH timestamp, which `t2t_top` already
+  exposes alongside each order. Correlating the two gives decoder-to-order latency
+  with no datapath change at all (`data/FINDINGS.md` §7.5). What that yields so far
+  is 33/51/73 core cycles on the synthetic feed, which is the *unloaded* shape of
+  that interval; §7.2's microsecond tail needs the real 5 M-message replay on the
+  card, and remains model output until then.
 - **Split-sender TCP is modelled, not solved.** The host session, register
   config, login/heartbeat and ack/fill feedback are built and tested
   ([step7-host](step7-host/)), including decoding the FPGA's real OUCH bytes with

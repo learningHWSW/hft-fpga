@@ -115,7 +115,17 @@ module t2t_top #(
   output logic [31:0]         st_tx_drop,
 
   // RX-side IGMP query -> drives igmp_join.i_query in the wrapper (RFC 2236)
-  output logic                o_igmp_query
+  output logic                o_igmp_query,
+
+  // ---- observation taps for the loaded-latency probe (step 8) ----
+  // Purely additive: a decoded message with its ITCH timestamp, and an order
+  // with the timestamp of the message that caused it. Correlating the two
+  // measures latency while the pipeline is busy, which the unloaded probe
+  // cannot do. Nothing here feeds back into the datapath.
+  output logic                o_dec_valid,
+  output logic [47:0]         o_dec_ts,
+  output logic                o_ord_valid,
+  output logic [47:0]         o_ord_ts
 );
   localparam int KEEP_W = DATA_W / 8;
 
@@ -229,12 +239,16 @@ module t2t_top #(
     .st_gap_total(st_gap_total), .st_dup_cnt(st_dup_cnt), .st_frame_err(st_frame_err),
     .st_ot_overflow(st_ot_overflow), .st_ot_miss(st_ot_miss), .st_pl_oob(st_pl_oob),
     .st_beat_drop(st_beat_drop), .st_msg_drop(st_msg_drop), .st_delta_drop(st_delta_drop),
-    .st_beat_level_max(), .st_msg_level_max(), .st_delta_level_max()
+    .st_beat_level_max(), .st_msg_level_max(), .st_delta_level_max(),
+    .o_dec_valid(o_dec_valid), .o_dec_ts(o_dec_ts)
   );
 
   // ---- decide ----
   logic        ord_valid, ord_is_buy, ord_ready;
   logic [47:0] ord_ts;
+  // the order and the ITCH timestamp it cites, taken straight to the taps
+  assign o_ord_valid = ord_valid;
+  assign o_ord_ts    = ord_ts;
   logic [31:0] ord_qty, ord_price;
   logic [15:0] inflight;
 

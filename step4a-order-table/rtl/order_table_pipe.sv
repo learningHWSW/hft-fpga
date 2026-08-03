@@ -160,6 +160,13 @@ module order_table_pipe
   logic [31:0] u_old_price, u_old_qty;
   logic [WAYW-1:0] u_old_way;
   logic [3:0]  u_wait;
+  // Lookup captures for the U sub-FSM. Declared here rather than next to the
+  // FSM that assigns them because the write-port always_comb below reads them,
+  // and xvlog rejects a forward reference even though synthesis tolerates it.
+  logic            u_hit0;
+  logic [WAYW-1:0] u_way0;
+  logic            u_free_ok1;
+  logic [WAYW-1:0] u_free_way1;
 
   // is any pipe stage still busy? (for U drain)
   logic pipe_busy;
@@ -251,11 +258,8 @@ module order_table_pipe
     end
   end
 
-  // U sub-FSM lookup captures (combinational lookup reused via look_ref/mode)
-  logic            u_hit0;
-  logic [WAYW-1:0] u_way0;
-  logic            u_free_ok1;
-  logic [WAYW-1:0] u_free_way1;
+  // (the U sub-FSM's lookup captures are declared with the rest of its state,
+  // above, so the write-port always_comb can read them)
 
   // free-way for the U insert, honoring the same-set removal of the old slot
   logic            have_free_u;

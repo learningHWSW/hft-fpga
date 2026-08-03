@@ -106,13 +106,41 @@ impl-axil:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 
-.PHONY: test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
+.PHONY: test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
+
+# xsim twins for the self-checking unit tests. Verilator is not installed
+# everywhere -- it is absent on the machine with the actual U55C, which made most
+# of this suite unrunnable exactly where the hardware is. These testbenches check
+# themselves, so no golden is needed and the xsim form is three lines.
+# (The claim below that a two-clock TB must be Verilator-only is not true; xsim
+# runs multiple clocks fine -- step8-hw/tb/tb_t2t_kernel.sv uses two.)
+define XSIM_UNIT
+	xvlog -sv $(2)
+	xelab -debug typical $(1) -s $(1)_xsim
+	xsim $(1)_xsim -runall
+endef
 
 # ---------- AXI4-Lite register file (host config surface) ----------
 # Self-checking, no golden file needed: writes then reads back every register.
 test-axil:
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o axilsim --top-module tb_axil_regfile rtl/axil_regfile.sv tb/tb_axil_regfile.sv
 	./obj_dir/axilsim
+
+test-axil-xsim:
+	$(call XSIM_UNIT,tb_axil_regfile,rtl/axil_regfile.sv tb/tb_axil_regfile.sv)
+
+test-cfgcdc-xsim:
+	$(call XSIM_UNIT,tb_cfg_cdc,rtl/cfg_cdc.sv tb/tb_cfg_cdc.sv)
+
+test-txarb-xsim:
+	$(call XSIM_UNIT,tb_axis_tx_arb,rtl/axis_tx_arb.sv tb/tb_axis_tx_arb.sv)
+
+test-cdc-xsim:
+	$(call XSIM_UNIT,tb_cdc_fifo,rtl/cdc_fifo.sv tb/tb_cdc_fifo.sv)
+
+# every self-checking unit test, on a machine with no Verilator
+test-units-xsim: test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim
+	@echo "PASS: all self-checking unit tests ran under xsim"
 
 # ---------- t2t_axil wrapper: AXI-Lite control plane + CDC + TX arbiter ------
 # Unit checks for the new crossing/arbiter logic, then a wrapper smoke test that

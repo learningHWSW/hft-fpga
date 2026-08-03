@@ -171,6 +171,33 @@ MOLD_PLAN = [
     ("eos",  0),
 ]
 
+# Gap-free variant: the same 21 messages, contiguous, no "lost" and no "dup".
+#
+# WHY IT EXISTS. The default plan deliberately injects a sequence gap and a
+# duplicate so the recovery paths get exercised, and that is the right default.
+# But feed_ab_arb recovers a gap on a TIMEOUT -- it holds a message waiting for
+# the missing sequence on the other line, then gives up -- so which messages
+# reach the book depends on how the injector's inter-frame spacing lines up with
+# that timer. Measured on the card: this stimulus matches the golden at gap 48
+# and produces 6 orders instead of 4 at gap 512.
+#
+# That makes the default stimulus unusable for any run whose whole point is a
+# different gap, such as a latency measurement, because the software golden
+# models no timing at all and therefore has exactly one right answer. With no gap
+# to recover, the timeout never fires and the golden holds at any spacing --
+# which is also why the real feed is immune (itch2mold.py emits contiguous
+# sequences, st_gap_total=0).
+MOLD_PLAN_CLEAN = [
+    ("data", 4),
+    ("hb",   0),
+    ("data", 6),
+    ("data", 2),
+    ("data", 7),
+    ("hb",   0),
+    ("data", 2),
+    ("eos",  0),
+]
+
 
 def mold_pack(msgs: list[bytes], plan) -> bytes:
     out = bytearray()
@@ -242,7 +269,10 @@ print(f"wrote {path}: {len(msgs)} msgs")
 
 if "--mold" in sys.argv:
     mold_path = sys.argv[sys.argv.index("--mold") + 1]
-    blob = mold_pack(msgs, MOLD_PLAN)
+    # --clean selects the contiguous plan; the default keeps the gap and
+    # duplicate that exercise recovery.
+    plan = MOLD_PLAN_CLEAN if "--clean" in sys.argv else MOLD_PLAN
+    blob = mold_pack(msgs, plan)
     got, gaps, dups = mold_selfcheck(blob, len(msgs))
     with open(mold_path, "wb") as f:
         f.write(blob)

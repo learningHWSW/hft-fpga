@@ -151,6 +151,10 @@ module tcp_tx #(
   wire [15:0] tcp_csum = fold(tcp_acc);
 
   // ---- assemble the frame ----
+  // `hold` belongs to the output state machine below, but the frame assembly
+  // reads it, and xvlog rejects a forward reference even though synthesis
+  // tolerates it -- so it is declared here, ahead of its first use.
+  logic [DATA_W-1:0]    hold;                  // payload held while it is summed
   logic [8*FRAME_B-1:0] frame;
   always_comb begin
     frame = '0;
@@ -178,8 +182,7 @@ module tcp_tx #(
   // ---- two-beat output ----
   typedef enum logic [1:0] { IDLE, CALC, BEAT1 } state_t;
   state_t state;
-  logic [8*TAIL_B-1:0] tail;
-  logic [DATA_W-1:0]   hold;                   // payload held while it is summed
+  logic [8*TAIL_B-1:0] tail;                   // (hold is declared above)
 
   assign s_tready = (state == IDLE) && (!m_tvalid || m_tready);
 

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- What XRT needs to know about t2t_kernel.
+
+     hwControlProtocol="user_managed" is the important choice. The default
+     (ap_ctrl_hs) makes XRT own a start/done handshake and reserves the first
+     registers for it, which fits a compute kernel that is launched and awaited.
+     This design is not that: it is a always-resident datapath with a register
+     control plane, and the host needs to read and write those registers
+     directly -- exactly what step7-host/host/regmap.py already models. A
+     user-managed kernel lets the host use xrt::ip and poke the map itself, and
+     it is why t2t_kernel.sv keeps its own registers at 0x40 and above, clear of
+     the range XRT reserves.
+
+     The two args exist so `--connectivity.sp` can bind each AXI master to an
+     HBM bank, and they sit at the SAME offsets the RTL decodes for the replay
+     and capture base addresses (0x048 and 0x058) -- so whether the host writes
+     them as kernel arguments or as plain registers, the same bytes land in the
+     same place. -->
+<root versionMajor="1" versionMinor="6">
+  <kernel name="t2t_kernel"
+          language="ip_c"
+          vlnv="xilinx.com:RTLKernel:t2t_kernel:1.0"
+          attributes=""
+          preferredWorkGroupSizeMultiple="0"
+          workGroupSize="1"
+          interrupt="false"
+          hwControlProtocol="user_managed">
+    <ports>
+      <port name="s_axi_control" mode="slave"  range="0x2000"
+            dataWidth="32"  portType="addressable" base="0x0"/>
+      <port name="m_axi_gmem0"   mode="master" range="0xFFFFFFFFFFFFFFFF"
+            dataWidth="512" portType="addressable" base="0x0"/>
+      <port name="m_axi_gmem1"   mode="master" range="0xFFFFFFFFFFFFFFFF"
+            dataWidth="512" portType="addressable" base="0x0"/>
+    </ports>
+    <args>
+      <arg name="replay_buf"  addressQualifier="1" id="0" port="m_axi_gmem0"
+           size="0x8" offset="0x048" hostOffset="0x0" hostSize="0x8" type="int*"/>
+      <arg name="capture_buf" addressQualifier="1" id="1" port="m_axi_gmem1"
+           size="0x8" offset="0x058" hostOffset="0x0" hostSize="0x8" type="int*"/>
+    </args>
+  </kernel>
+</root>

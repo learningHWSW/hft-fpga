@@ -107,6 +107,29 @@ Two things this does *not* prove, stated plainly:
 * `o_ready` is tied high, so the drop-on-backpressure path is exercised only in
   the sense that its counter is asserted to be zero.
 
+### A race that made this testbench lie, and only under one simulator
+
+Worth recording because it is the kind of bug a passing test hides. `drive_bbo`
+originally set the DUT's inputs with blocking assignments immediately after
+`@(posedge clk)` — the same edge the DUT samples on. That is a race, and the two
+simulators resolved it in opposite directions:
+
+| | orders | result |
+|---|---|---|
+| Verilator | 4 | PASS |
+| xsim | 3 | FAIL — every order shifted to the *following* record's timestamp and price, and the last order vanished entirely because there was no further record to shift onto |
+
+Nothing was wrong with `strategy.sv`. The DUT was sampling each BBO one record
+late, so the log looked like a design that fired on the wrong book — and under
+Verilator it looked like nothing at all. The fix is to drive stimulus on the
+**negedge**, which is what every other testbench in this repo already does
+(`tb_t2t.sv`, `tb_t2t_axil_full.sv`); `tb_strategy.sv` was the outlier. Both
+simulators now agree.
+
+The lesson is not "use negedge" but that a golden-diff regression is only as
+trustworthy as the stimulus timing beneath it: this test passed for as long as it
+was only ever run under Verilator.
+
 ## The OUCH builder
 
 Turns an order intent into the bytes that go on the wire. Per PLAN §6 the

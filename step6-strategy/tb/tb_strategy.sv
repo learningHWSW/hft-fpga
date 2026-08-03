@@ -184,19 +184,27 @@ module tb_strategy;
 
   // drive one BBO event: process its acks, pulse i_valid, schedule this event's
   // ack if it fired an order (sent_cnt is the DUT's own count)
+  // Stimulus is driven on the NEGEDGE, like every other testbench in this repo
+  // (tb_t2t.sv, tb_t2t_axil_full.sv). Driving it with blocking assignments just
+  // after @(posedge clk) -- the same edge the DUT samples on -- is a race, and
+  // not a harmless one: xsim resolved it the other way from Verilator, so the
+  // DUT saw each BBO one record late. The log then showed every order shifted to
+  // the following record's timestamp and price, and the last order vanished
+  // because there was no further record to shift onto. Verilator passed, xsim
+  // failed, and neither was reporting a design bug.
   task automatic drive_bbo;
     rec++;
     while (acks_due[rec] > 0) begin
-      @(posedge clk); i_ack = 1'b1;
-      @(posedge clk); i_ack = 1'b0;
+      @(negedge clk); i_ack = 1'b1;
+      @(negedge clk); i_ack = 1'b0;
       acks_due[rec]--;
     end
     sent_before = sent_cnt;
-    @(posedge clk);
+    @(negedge clk);
     i_valid = 1'b1; i_ts = bbo_ts[47:0];
     i_has_bid = (bp != 0); i_bid_price = bp; i_bid_qty = bq;
     i_has_ask = (ap != 0); i_ask_price = ap; i_ask_qty = aq;
-    @(posedge clk);
+    @(negedge clk);
     i_valid = 1'b0;
     repeat (4) @(posedge clk);
     if (sent_cnt != sent_before && (rec + ACK_GAP) < MAXREC)
@@ -207,9 +215,9 @@ module tb_strategy;
   // but schedule this order's ack at the current record like any other
   task automatic drive_sweep;
     sent_before = sent_cnt;
-    @(posedge clk);
+    @(negedge clk);
     i_sweep = 1'b1; i_sweep_is_buy = sw_is_buy;
-    @(posedge clk);
+    @(negedge clk);
     i_sweep = 1'b0;
     repeat (4) @(posedge clk);
     if (sent_cnt != sent_before && (rec + ACK_GAP) < MAXREC)
@@ -228,13 +236,13 @@ module tb_strategy;
     ffrm = $fopen(frm_path, "w");
     if (fin == 0)  begin $display("FAIL: cannot open %s", bbo_path); $finish; end
 
-    repeat (5) @(posedge clk);
+    repeat (5) @(negedge clk);
     rst_n = 1;
-    @(posedge clk);
+    @(negedge clk);
     cfg_load = 1;                    // software hands over the established connection
-    @(posedge clk);
+    @(negedge clk);
     cfg_load = 0;
-    repeat (5) @(posedge clk);
+    repeat (5) @(negedge clk);
 
     // stable two-way merge: BBO before sweep at an equal timestamp
     read_bbo();

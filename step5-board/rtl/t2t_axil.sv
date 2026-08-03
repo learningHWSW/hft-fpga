@@ -62,7 +62,15 @@ module t2t_axil #(
   output logic [31:0]         s_axil_rdata,
   output logic [1:0]          s_axil_rresp,
   output logic                s_axil_rvalid,
-  input  logic                s_axil_rready
+  input  logic                s_axil_rready,
+
+  // ---- observation taps for the loaded-latency probe (step 8), core domain ----
+  // Additive outputs only; see t2t_top for what they are and why correlating
+  // them measures latency under load without a tag threaded through the chain.
+  output logic                o_dec_valid,
+  output logic [47:0]         o_dec_ts,
+  output logic                o_ord_valid,
+  output logic [47:0]         o_ord_ts
 );
   localparam int CFGW = 927;      // sum of all cfg_* widths (checked at elab)
   localparam int STW  = 577;      // sum of all st_* widths
@@ -196,7 +204,9 @@ module t2t_axil #(
     .st_blk_txfull(st_bus_core[159:128]), .st_position(st_bus_core[127:96]),
     .st_seq_num(st_bus_core[95:64]), .st_frame_cnt(st_bus_core[63:32]),
     .st_tx_drop(st_bus_core[31:0]),
-    .o_igmp_query(igmp_query_core)
+    .o_igmp_query(igmp_query_core),
+    .o_dec_valid(o_dec_valid), .o_dec_ts(o_dec_ts),
+    .o_ord_valid(o_ord_valid), .o_ord_ts(o_ord_ts)
   );
 
   // ================= status crossing (core -> axil) =================

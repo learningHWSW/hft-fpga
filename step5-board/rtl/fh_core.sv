@@ -82,7 +82,17 @@ module fh_core
   output logic [31:0]         st_delta_drop,
   output logic [$clog2(BEAT_FIFO):0]  st_beat_level_max,
   output logic [$clog2(MSG_FIFO):0]   st_msg_level_max,
-  output logic [$clog2(DELTA_FIFO):0] st_delta_level_max
+  output logic [$clog2(DELTA_FIFO):0] st_delta_level_max,
+
+  // ---- observation tap: a decoded message, and its ITCH timestamp ----
+  // Read-only, drives nothing inside this module. It exists so a latency probe
+  // can note WHEN a message entered the queueing part of the machine; the
+  // message's identity is already carried to the far end as strategy.o_ts, so
+  // the pair is enough to measure latency under load without threading a tag
+  // through every stage. Adding an output cannot change behaviour, which is the
+  // point -- this module is verified and stays that way.
+  output logic                        o_dec_valid,
+  output logic [47:0]                 o_dec_ts
 );
   localparam int KEEP_W = DATA_W/8;
 
@@ -126,6 +136,11 @@ module fh_core
     .s_tready(dec_ready_unused),
     .m_msg(dec_msg), .m_valid(dec_valid), .m_len_err(dec_len_err)
   );
+
+  // observation tap (see the port declaration): the decoder's output is where
+  // queueing begins -- the message FIFO is immediately downstream.
+  assign o_dec_valid = dec_valid;
+  assign o_dec_ts    = dec_msg.timestamp;
 
   // ---------------- message FIFO -> order table ----------------
   localparam int MSGW = $bits(itch_msg_t);

@@ -422,6 +422,115 @@ Unloaded (A) + burst tail (B):
   stalls ignored). So 10.6× is an upper-ish estimate of the benefit. (3) The core
   220 MHz model (post-route 216.5).
 
+### 7.4 Measured on silicon (step 8) — the unloaded half, no longer summed
+
+§7.1 above is a **sum of per-stage FSM state counts**. Step 8 measures the same
+path on a real U55C with a hardware probe (`step8-hw/rtl/lat_probe.sv`), replaying
+this same 5 M-message AAPL session out of HBM:
+
+| | source | wire-to-order |
+|---|---|---|
+| §7.1 estimate | summed stage depth, ±1 cy/stage | ~135 ns |
+| **step 8, measured on silicon** | 70 attributable samples, 0 excluded | **220 ns min, 281 ns mean, 443 ns max** |
+
+**These are not the same measurement, and the difference is mostly definitional
+rather than error.** The probe stamps the frame's *first RX beat*; §7.1 starts
+after the RX clock crossing and counts core cycles only. Frame reception, the beat
+FIFO and both CDC crossings are inside the measured number and outside the summed
+one. The measured core also runs at 200 MHz here, not the 216.5 MHz §7.1 assumes
+(step 8 traded 20 MHz for timing margin inside the shell's pblock). Adding those
+back accounts for the bulk of the gap.
+
+What the measurement adds that the sum could not:
+
+- a **distribution** rather than a point — 69 of 70 samples in one power-of-two
+  bucket, i.e. genuinely tight when the pipeline is empty;
+- a **guard**: samples whose frame did not arrive into a provably empty pipeline
+  are excluded and counted, so the number cannot quietly be an under-estimate.
+  This run excluded none;
+- **corroboration of two other numbers in this file** from the same silicon run:
+  the RX filter kept exactly the 1,122,567 good frames `mold2eth.py` produced, and
+  the price ladder reported exactly the 465 out-of-band cases §4/step 4b measured.
+
+### 7.5 The burst tail: a second probe, and no threaded tag after all
+
+§7.4's probe requires an empty pipeline to attribute an order to its frame, which
+is by definition not the case during a burst — so it cannot answer §7.2, and every
+sample taken under load would be excluded rather than wrong. The obvious remedy is
+a timestamp threaded through splitter, decoder, order table, ladder, strategy,
+builder and framer: seven verified modules whose interfaces would all have to
+widen and whose goldens would all have to be re-confirmed.
+
+That work turned out to be unnecessary. **The datapath already threads a unique
+per-message field end to end** — the ITCH timestamp. `itch_msg_t.timestamp`
+survives into `order_table.o_ts`, into `price_ladder.o_ts`, into `strategy.o_ts`,
+and `t2t_top` exposes it as `ord_ts`, meaning "the exchange timestamp of the
+message that caused this order". The message's identity is therefore already at
+both ends of the path; the only thing missing was *when it arrived*. `lat_loaded`
+records that, keyed by timestamp, and subtracts when the order fires. Two
+observation taps, no datapath change.
+
+It measures decoder-output to order-emit, which contains the message FIFO, the
+order table, the delta FIFO, the ladder and the strategy — every queue on the
+path, which is where §7.2's tail lives. It excludes the fixed front end, which
+does not queue and is already inside §7.4's figure, so the two probes bracket the
+whole.
+
+In simulation (synthetic feed, 215 MHz core): **min 33, mean 51, max 73 core
+cycles** — 153/237/340 ns — with 0 misses. That is the unloaded shape of this
+interval, not the burst tail; the offered load in that run is one frame at a time.
+**The number that would test §7.2 needs the real 5 M-message replay on the card,
+which has not been run.** The 10.04 µs / 0.95 µs figures above remain model
+output until it is.
+
+A slot-index detail worth recording, because it is the same lesson as §4: the
+correlation table indexes on an **XOR fold** of the timestamp, not its low bits.
+ITCH timestamps are nanoseconds since midnight and consecutive messages are
+hundreds to thousands of nanoseconds apart, so raw low bits cluster exactly the
+way raw `order_ref`s clustered in the order table (24,142 overflows raw vs 132
+mixed). One XOR, same fix.
+
+### 7.6 Wire-to-wire, through a real MAC (step 8 Phase B)
+
+§7.4 measures from the first RX beat *inside the fabric*. A frame on a real
+network has also crossed the MAC's receive path to get there, and the order has
+to cross its transmit path to leave — neither of which any number in this file
+has ever included.
+
+Phase B puts a `cmac_usplus` in the design with the GT in near-end PMA loopback,
+and that geometry makes the full measurement available from a single observation
+point. Writing `T_rx` and `T_tx` for the MAC's two halves and `D` for the design,
+stamping the *feed* frame as it leaves MAC RX and resolving when the *order*
+returns through MAC RX gives `D + T_tx + T_rx`; wire-to-wire on a real network is
+`T_rx + D + T_tx`. The same three terms, so the loopback measures the real thing,
+overcounting only the SerDes round trip inside the GT.
+
+Verified in simulation against the same golden as every other run — the order
+frames are byte-identical after a round trip through the MAC, at both stimulus
+gaps (48 and 512). The design also **implements with all timing met**, including
+the MAC's own 322.269 MHz clock (0 of 538,539 endpoints failing).
+
+**Simulation cannot supply the number, by construction.** Phase B adds ~145 ns to
+the unloaded interval in simulation (403.4 ns against Phase A's 256.7 ns at the
+minimum), and that delta is nearly constant across min, mean and max — because
+124.1 ns of it is `cmac_wrap.sv`'s `MAC_LAT = 40` cycles, a constant the
+behavioural stand-in chooses. The residual ~20 ns is real design cost
+(store-and-forward fill plus the frame filter); the MAC, PCS and SerDes term is
+not measured at all. The real IP needs GT models and tens of microseconds of link
+training to simulate.
+
+**Not yet measured on silicon.** The `cmac_usplus` licence that previously made
+`write_bitstream` refuse the design is now installed — a Design Linking
+entitlement permits synthesis and implementation but not a bitstream — and
+`make gate-license` passes. That removed the licence blocker but did not produce
+a bitstream: the first run after it was granted routed and was then stopped by
+Vitis's zero-WNS gate, with `ap_clk` at −0.134 ns (78 endpoints) and the core
+clock at −0.022 ns, the former being congestion in the capture harness's byte
+accumulator rather than logic depth. Both clocks have been backed off — `ap_clk`
+300 → 250 MHz, core 210 → 200 MHz, both still above what the design requires — and
+the rebuild is in progress. The number will land here once a Phase B bitstream
+exists and has run on the card; see `step8-hw/README.md` for the full account.
+
 ## Reproduce
 
 ```sh
