@@ -490,12 +490,12 @@ samples, 0 misses at every non-saturated point; core 215 MHz, 4.651 ns/cycle:
 
 | offered | msg drops | golden | min | mean | max |
 |---|---|---|---|---|---|
-| 25.1 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 34.2 cy / **159.2 ns** | 71 cy / 330.2 ns |
-| 29.6 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 37.1 cy / **172.7 ns** | 77 cy / 358.1 ns |
-| 32.6 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 39.7 cy / **184.5 ns** | 93 cy / 432.6 ns |
-| 36.1 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 44.3 cy / **206.1 ns** | 122 cy / 567.4 ns |
-| 40.6 M msg/s | 0 | ✅ | 23 cy / 107.0 ns | 51.1 cy / **237.9 ns** | 157 cy / **730.2 ns** |
-| 46.3 M msg/s | 389,994 | ❌ | — saturated — | | |
+| 25.1 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 34.2 cy / **159.2 ns** | 71 cy / 330.2 ns |
+| 29.6 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 37.1 cy / **172.7 ns** | 77 cy / 358.1 ns |
+| 32.6 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 39.7 cy / **184.5 ns** | 93 cy / 432.6 ns |
+| 36.1 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 44.3 cy / **206.1 ns** | 122 cy / 567.4 ns |
+| 40.6 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 51.1 cy / **237.9 ns** | 157 cy / **730.2 ns** |
+| 46.3 M msg/s | 389,994 | DIFF | — saturated — | | |
 
 Four things this says that the model could not:
 
@@ -553,7 +553,7 @@ overcounting only the SerDes round trip inside the GT.
 Verified in simulation against the same golden as every other run — the order
 frames are byte-identical after a round trip through the MAC, at both stimulus
 gaps (48 and 512). The design also **implements with all timing met**, including
-the MAC's own 322.269 MHz clock (0 of 538,539 endpoints failing).
+the MAC's own 322.269 MHz clock (see below for the shipped build's numbers).
 
 **Simulation cannot supply the number, by construction.** Phase B adds ~145 ns to
 the unloaded interval in simulation (403.4 ns against Phase A's 256.7 ns at the
@@ -564,17 +564,24 @@ behavioural stand-in chooses. The residual ~20 ns is real design cost
 not measured at all. The real IP needs GT models and tens of microseconds of link
 training to simulate.
 
-**Not yet measured on silicon.** The `cmac_usplus` licence that previously made
-`write_bitstream` refuse the design is now installed — a Design Linking
-entitlement permits synthesis and implementation but not a bitstream — and
-`make gate-license` passes. That removed the licence blocker but did not produce
-a bitstream: the first run after it was granted routed and was then stopped by
-Vitis's zero-WNS gate, with `ap_clk` at −0.134 ns (78 endpoints) and the core
-clock at −0.022 ns, the former being congestion in the capture harness's byte
-accumulator rather than logic depth. Both clocks have been backed off — `ap_clk`
-300 → 250 MHz, core 210 → 200 MHz, both still above what the design requires — and
-the rebuild is in progress. The number will land here once a Phase B bitstream
-exists and has run on the card; see `step8-hw/README.md` for the full account.
+**Not yet measured on silicon, but the bitstream now exists.** Two blockers were
+cleared in turn. The `cmac_usplus` licence that made `write_bitstream` refuse the
+design is installed and `make gate-license` passes — a Design Linking entitlement
+permits synthesis and implementation but not a bitstream. That removed the licence
+blocker but did not produce one: the first run after the licence was granted
+routed and was then stopped by Vitis's zero-WNS gate, with `ap_clk` at −0.134 ns
+(78 endpoints) and the core clock at −0.022 ns, the former being congestion in the
+capture harness's byte accumulator rather than logic depth. Backing the core clock
+off 210 → 200 MHz cleared both: the rebuild linked in 1 h 13 m and wrote
+`t2t_b.xclbin` with all timing met at 300 / 200 / **322.269** MHz, 0 of 538,495
+endpoints failing. (The intended `ap_clk` 300 → 250 MHz backoff turned out to be a
+no-op — it is a scalable platform clock and `v++` discards a lower request — so
+that domain closed at its original 300 MHz, which is what makes the congestion
+diagnosis rather than a logic-depth one the confirmed explanation.)
+
+What is left is the one step that produces a number: **nothing has been loaded
+from that bitstream onto the card**. The figure will land here after a
+`make run-card-b`; see `step8-hw/README.md` for the full account.
 
 ## Reproduce
 

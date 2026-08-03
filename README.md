@@ -19,11 +19,21 @@ the measured wire-to-order latency is **220 ns minimum, 281 ns mean** over 70
 attributable samples. The QSFP cages on this machine are empty, so that run
 replayed the feed from device memory rather than taking it off the wire. A real
 100 G MAC in GT near-end loopback is now built, simulation-verified against the
-same golden, and routed with all timing met at the MAC's own 322.269 MHz — which
-would put MAC, PCS and SerDes inside the measurement. The `cmac_usplus` licence
-that previously blocked its bitstream is now installed, so that build is no
-longer gated; it has not yet been run on the card, and **no wire-to-wire figure
-is quoted anywhere here** until it has.
+same golden, and **has a bitstream**: it routes with all timing met at the MAC's
+own 322.269 MHz, the `cmac_usplus` licence is installed, and `t2t_b.xclbin` is
+written. That build would put MAC, PCS and SerDes inside the measurement. It has
+**not been loaded onto the card yet**, so **no wire-to-wire figure is quoted
+anywhere here** until it has.
+
+**The burst tail is measured too, on the card, not modelled.** Sweeping offered
+load across the same 5 M-message replay, the floor never moves — 23 core cycles,
+107 ns, at every point — but from 25.1 to 40.6 M msg/s the mean grows 1.49× while
+the **max grows 2.21×, to 730 ns**, and that divergence is the tail: quoting a
+mean for this design would be misleading. Saturation is a knee rather than a
+shoulder, between 40.6 and 46.3 M msg/s, which is 20–40× the real NASDAQ peak the
+design was sized against. Every non-saturated point is byte-identical to the
+golden, so the pipeline degrades by dropping and counting and has no regime in
+which it emits a wrong order (`data/FINDINGS.md` §7.5).
 
 Target board: **Alveo U55C** (UltraScale+ VU35P, HBM2 16 GB, QSFP28 ×2 for
 100 GbE, PCIe Gen4). The QSFP cages are on the card, so the FPGA can receive
@@ -38,16 +48,16 @@ multicast market data directly off the wire instead of going through a host NIC
 
 | Step | Content | Status |
 |---|---|---|
-| 1  | ITCH 5.0 software reference parser (golden model) | ✅ [step1-sw-parser](step1-sw-parser/) |
-| 2  | SystemVerilog ITCH decoder + self-checking TB | ✅ [step2-rtl-decoder](step2-rtl-decoder/) |
-| 3a | MoldUDP64 stripper + message splitter (64-bit, sequence-gap detect) | ✅ [step3a-mold-stripper](step3a-mold-stripper/) |
-| 3b | 512-bit (CMAC width) realignment — multiple message boundaries per beat | ✅ [step3b-splitter](step3b-splitter/) |
-| 4a | Order table — order_ref hash (URAM), size/ways from real data | ✅ [step4a-order-table](step4a-order-table/) |
-| 4b | Top-of-book engine — price ladder (L2), BBO | ✅ [step4b-book](step4b-book/) |
-| 5  | U55C integration: Eth/IP/UDP RX, CDC to the CMAC clock, full-chain synth + P&R | ✅ [step5-board](step5-board/) |
-| 6  | Strategy (imbalance + sweep), risk gate, OUCH + SoupBinTCP + TCP transmit | ✅ [step6-strategy](step6-strategy/) |
-| 7  | Host software — SoupBinTCP session, register config, ack/fill feedback | ✅ [step7-host](step7-host/) |
-| 8  | **On real silicon** — Vitis kernel on an Alveo U55C, replay from HBM, measured latency | 🔄 [step8-hw](step8-hw/) |
+| 1  | ITCH 5.0 software reference parser (golden model) | Done — [step1-sw-parser](step1-sw-parser/) |
+| 2  | SystemVerilog ITCH decoder + self-checking TB | Done — [step2-rtl-decoder](step2-rtl-decoder/) |
+| 3a | MoldUDP64 stripper + message splitter (64-bit, sequence-gap detect) | Done — [step3a-mold-stripper](step3a-mold-stripper/) |
+| 3b | 512-bit (CMAC width) realignment — multiple message boundaries per beat | Done — [step3b-splitter](step3b-splitter/) |
+| 4a | Order table — order_ref hash (URAM), size/ways from real data | Done — [step4a-order-table](step4a-order-table/) |
+| 4b | Top-of-book engine — price ladder (L2), BBO | Done — [step4b-book](step4b-book/) |
+| 5  | U55C integration: Eth/IP/UDP RX, CDC to the CMAC clock, full-chain synth + P&R | Done — [step5-board](step5-board/) |
+| 6  | Strategy (imbalance + sweep), risk gate, OUCH + SoupBinTCP + TCP transmit | Done — [step6-strategy](step6-strategy/) |
+| 7  | Host software — SoupBinTCP session, register config, ack/fill feedback | Done — [step7-host](step7-host/) |
+| 8  | **On real silicon** — Vitis kernel on an Alveo U55C, replay from HBM, measured latency | In progress — [step8-hw](step8-hw/) |
 
 All steps are complete and pass on xsim and Verilator, on synthetic vectors and
 a real NASDAQ trading day. The full chain (`t2t_top`) is integrated, verified
@@ -182,25 +192,23 @@ Honest scope, all of it stated in the step READMEs:
   before reaching the datapath. Because the loopback returns what we transmit,
   stamping the feed frame and resolving the returning order measures
   `D + T_tx + T_rx` — the same three terms as true wire-to-wire. It is verified in
-  simulation against the same golden, byte for byte, and **implements with all
-  timing met** including the MAC's own 322.269 MHz clock. The `cmac_usplus`
-  licence that previously refused it a bitstream is now installed, but that only
-  moved the blocker: the next build routed and was then stopped by Vitis's
-  zero-slack timing gate, so **there is still no Phase B bitstream and no
-  wire-to-wire number is quoted here**. Note also that simulation cannot supply
-  one — the MAC is a behavioural stand-in whose latency is a hard-coded constant,
-  so the ~145 ns Phase B adds in simulation is a testbench parameter, not a
-  measurement of a MAC.
-- **Latency under load is measured in simulation, not yet on silicon.** The 220 ns
-  figure is *unloaded*: the probe only counts a sample whose frame arrived into a
-  provably empty pipeline, and refuses the rest. The burst tail turned out **not**
-  to need a tag threaded through every stage — the datapath already carries a
-  unique per-message field end to end, the ITCH timestamp, which `t2t_top` already
-  exposes alongside each order. Correlating the two gives decoder-to-order latency
-  with no datapath change at all (`data/FINDINGS.md` §7.5). What that yields so far
-  is 33/51/73 core cycles on the synthetic feed, which is the *unloaded* shape of
-  that interval; §7.2's microsecond tail needs the real 5 M-message replay on the
-  card, and remains model output until then.
+  simulation against the same golden, byte for byte, and now **has a bitstream**:
+  `t2t_b.xclbin`, all timing met at 300 / 200 / **322.269** MHz including the
+  MAC's own clock, 0 of 538,495 endpoints failing. Two blockers were cleared to
+  get there — the `cmac_usplus` licence, and then Vitis's zero-slack timing gate.
+  What remains is the last step and the only one that produces a number:
+  **the bitstream has not been loaded onto the card**, so no wire-to-wire figure
+  is quoted here. Note also that simulation cannot supply one — the MAC is a
+  behavioural stand-in whose latency is a hard-coded constant, so the ~145 ns
+  Phase B adds in simulation is a testbench parameter, not a measurement of a MAC.
+- **The loaded and unloaded latencies are two different intervals, and neither is
+  the whole path.** Load is no longer the gap it was — the burst tail is now
+  measured on silicon (below) — but the probe that measures it reports
+  *decoder-to-order*, correlating the ITCH timestamp the datapath already carries
+  end to end, while the 220 ns above is *first-RX-beat to first-TX-beat*. The
+  107 ns floor and the 220 ns figure are therefore not comparable numbers, and
+  both still exclude MAC, PHY and SerDes. A single figure covering the whole path
+  under load needs Phase B on the card.
 - **Split-sender TCP is modelled, not solved.** The host session, register
   config, login/heartbeat and ack/fill feedback are built and tested
   ([step7-host](step7-host/)), including decoding the FPGA's real OUCH bytes with

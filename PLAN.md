@@ -48,7 +48,7 @@ QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stri
   beat-boundary-straddling cases).
 - **DoD**: golden diff PASS with gap/heartbeat/boundary cases (xsim + Verilator).
 
-### Step 3b — 512-bit width extension + realignment (technical core 1) ✅
+### Step 3b — 512-bit width extension + realignment (technical core 1) — done
 - Generalise the splitter to 512-bit: realign where a message ends and another
   starts within one beat, up to 3 boundaries per beat. -> [step3b-splitter/rtl/mold_splitter.sv](step3b-splitter/rtl/mold_splitter.sv).
   A 2-beat (128 B) window + barrel shift does fill/emit concurrently to hold
@@ -65,7 +65,7 @@ QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stri
   data is a BinaryFILE, so [itch2mold.py](step1-sw-parser/itch2mold.py) repacks
   it into multi-message MoldUDP64 to stimulate realignment.
 
-### Step 4a — order table (technical core 2) ✅
+### Step 4a — order table (technical core 2) — done
 - `hash(order_ref) -> {locate, side, price, qty}`, d-way set-associative, URAM.
   -> [step4a-order-table/rtl/order_table.sv](step4a-order-table/rtl/order_table.sv).
   Emits a book delta (rem/add level) per message.
@@ -87,7 +87,7 @@ QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stri
   (insert/erase/modify + result).
 - **DoD**: table-state diff PASS on real-data replay, collision/occupancy report.
 
-### Step 4b — top-of-book / price ladder ✅
+### Step 4b — top-of-book / price ladder — done
 - A price ladder (aggregate qty per level, L2), BBO by a priority scan over an
   occupancy bitmap. -> [step4b-book/rtl/price_ladder.sv](step4b-book/rtl/price_ladder.sv).
   `cfg_base` sets the band's start price (a re-centring hook); out-of-band is

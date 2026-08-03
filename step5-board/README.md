@@ -12,16 +12,16 @@ Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 
 | Task | Status |
 |---|---|
-| 512-bit end-to-end integration + functional verification | ✅ done |
-| Ethernet/IPv4/UDP receive front end — the wire path closes | ✅ done |
-| Synthesis and place & route for the real U55C part | ✅ done (see below) |
-| OpenNIC shell buildable for U55C on this toolchain | ✅ verified (see below) |
-| Clock crossing to the CMAC's 322 MHz (`cdc_fifo`) | ✅ verified, meets 322 MHz |
-| Full tick-to-trade chain integrated and simulated | ✅ done (`t2t_top`) |
-| Line rate, **feed path alone** (≥195.3 MHz) | ✅ met — 216.5 MHz |
-| Line rate, **full chain** | ✅ **met — 224.3 MHz post-route, timing closed** |
-| Order table at its verified size in hardware | ✅ 2^13 × 16 as URAM (66 of 960) |
-| Hardware replay / measured MAC-to-BBO latency | ⛔ needs a card |
+| 512-bit end-to-end integration + functional verification | done |
+| Ethernet/IPv4/UDP receive front end — the wire path closes | done |
+| Synthesis and place & route for the real U55C part | done (see below) |
+| OpenNIC shell buildable for U55C on this toolchain | verified (see below) |
+| Clock crossing to the CMAC's 322 MHz (`cdc_fifo`) | verified, meets 322 MHz |
+| Full tick-to-trade chain integrated and simulated | done (`t2t_top`) |
+| Line rate, **feed path alone** (≥195.3 MHz) | met — 216.5 MHz |
+| Line rate, **full chain** | **met — 224.3 MHz post-route, timing closed** |
+| Order table at its verified size in hardware | done — 2^13 × 16 as URAM (66 of 960) |
+| Hardware replay / measured MAC-to-BBO latency | NOT DONE — needs a card |
 
 ### OpenNIC is a viable host — and it removes two blockers
 
@@ -551,7 +551,7 @@ is, and I did not weigh it. The routed evidence says the memory's geometry
 matters more here than the comparator width, so the next experiment is
 2^13 × 16 rather than another register stage.
 
-### ⚠ (Superseded) These numbers are for a 4,096-entry order table
+### (Superseded) These numbers are for a 4,096-entry order table
 
 `fh_core` defaults to `OT_SETS_BITS = 16` (65,536 sets × 8 ways = 524,288
 entries) and **every simulation in this project runs at that size**. Synthesis

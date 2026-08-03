@@ -139,39 +139,39 @@ bandwidth.
 
 | Task | Status |
 |---|---|
-| Kernel RTL (`eth_replay`, `eth_capture`, `t2t_kernel`) | ✅ written |
-| Elaborates under Vivado 2025.2.1 (and 2022.2) | ✅ 0 errors, 0 critical warnings |
-| **Harness verified in simulation, diffed against the golden** | ✅ **PASS** |
-| Packaged as a Vitis `.xo` (CDC constraints included) | ✅ |
-| Toolchain→runtime→card path proven with a probe `.xclbin` | ✅ **loads, card HEALTHY** |
-| Kernel meets timing out of context (`ap_clk` +0.553 / `ap_clk_2` +0.503 at 200 MHz) | ✅ |
-| CDC crossings cut out of context (`report_clock_interaction`) | ✅ Asynchronous Groups |
-| Two real kernel clocks generated (300 MHz + 200 MHz) | ✅ verified in the clock summary |
-| CDC groups applied at **top-level implementation** (TCL hook) | ✅ "groups APPLIED" in the impl log |
-| `.xclbin` linked, **all timing constraints met**, 0 violated paths | ✅ |
-| Latency probe unit-tested (attribution, exclusion, orphans, buckets) | ✅ `make test-latprobe` |
-| Real NASDAQ capture downloaded and sliced (5 M msgs, AAPL) | ✅ 1.13 M frames, 327 MB packed |
-| **Programmed onto the card, synthetic replay == golden** | ✅ **PASS on silicon** |
-| **Real 5 M-message AAPL replay == golden** | ✅ **PASS on silicon, 70/70 frames** |
-| **Tick-to-trade latency measured on silicon** | ✅ **220 ns min / 281 ns mean, 70 samples, 0 excluded** |
-| Loaded (burst) latency, without threading a tag | ✅ measured in simulation; needs a card run |
-| Core clock settled at 215 MHz, 0 failing endpoints | ✅ `ap_clk` +0.153 / `ap_clk_2` +0.015 |
-| Phase B RTL (`cmac_wrap`, `axis_sf_fifo`, `axis_frame_filter`, `t2t_kernel_b`) | ✅ written |
-| **Phase B verified in simulation against the same golden** | ✅ **PASS through the MAC**, at gap 48 and gap 512 |
-| Phase B packaged as a `.xo` with the CMAC IP inside | ✅ |
-| GT connects to `io_gt_qsfp0_00` on the real kernel | ✅ "SERIAL PORT CONNECTED" |
-| Three clock domains found and cut at implementation | ✅ "three asynchronous groups APPLIED" |
-| **Phase B routes with all timing met** (300 / 215 / **322.269** MHz) | ✅ 0 of 538,539 endpoints failing |
-| `cmac_usplus` bitstream licence | ✅ **granted** — `make gate-license` PASSES |
-| Phase B bitstream | ⛔ licence no longer the blocker; **timing is** (see below) |
-| Phase B on the card | ⛔ blocked by the above |
+| Kernel RTL (`eth_replay`, `eth_capture`, `t2t_kernel`) | written |
+| Elaborates under Vivado 2025.2.1 (and 2022.2) | 0 errors, 0 critical warnings |
+| **Harness verified in simulation, diffed against the golden** | **PASS** |
+| Packaged as a Vitis `.xo` (CDC constraints included) | DONE |
+| Toolchain→runtime→card path proven with a probe `.xclbin` | **loads, card HEALTHY** |
+| Kernel meets timing out of context (`ap_clk` +0.553 / `ap_clk_2` +0.503 at 200 MHz) | DONE |
+| CDC crossings cut out of context (`report_clock_interaction`) | Asynchronous Groups |
+| Two real kernel clocks generated (300 MHz + 200 MHz) | verified in the clock summary |
+| CDC groups applied at **top-level implementation** (TCL hook) | "groups APPLIED" in the impl log |
+| `.xclbin` linked, **all timing constraints met**, 0 violated paths | DONE |
+| Latency probe unit-tested (attribution, exclusion, orphans, buckets) | `make test-latprobe` |
+| Real NASDAQ capture downloaded and sliced (5 M msgs, AAPL) | 1.13 M frames, 327 MB packed |
+| **Programmed onto the card, synthetic replay == golden** | **PASS on silicon** |
+| **Real 5 M-message AAPL replay == golden** | **PASS on silicon, 70/70 frames** |
+| **Tick-to-trade latency measured on silicon** | **220 ns min / 281 ns mean, 70 samples, 0 excluded** |
+| **Loaded (burst) latency, without threading a tag** | **measured on silicon**, load swept to saturation |
+| Core clock settled at 215 MHz, 0 failing endpoints | `ap_clk` +0.153 / `ap_clk_2` +0.015 |
+| Phase B RTL (`cmac_wrap`, `axis_sf_fifo`, `axis_frame_filter`, `t2t_kernel_b`) | written |
+| **Phase B verified in simulation against the same golden** | **PASS through the MAC**, at gap 48 and gap 512 |
+| Phase B packaged as a `.xo` with the CMAC IP inside | DONE |
+| GT connects to `io_gt_qsfp0_00` on the real kernel | "SERIAL PORT CONNECTED" |
+| Three clock domains found and cut at implementation | "three asynchronous groups APPLIED" |
+| **Phase B routes with all timing met** (300 / 200 / **322.269** MHz) | DONE — 0 of 538,495 endpoints failing |
+| `cmac_usplus` bitstream licence | DONE — **granted**, `make gate-license` PASSES |
+| **Phase B bitstream** | DONE — `t2t_b.xclbin`, 53.1 MB, linked in 1 h 13 m |
+| Phase B on the card | NOT YET RUN — the bitstream exists, nothing has been loaded from it |
 
-The 215 MHz Phase A build is linked but **not yet loaded onto the card** —
-programming is gated on explicit confirmation each time, because a bad load costs
-a card reset. Phase B is no longer licence-blocked (see
-[the licence block](#the-build-routes-and-then-is-refused-a-bitstream)); its
-bitstream build is the next thing to run, and until it has, there is **no
-wire-to-wire latency figure anywhere in this repository**.
+Phase A is on the card and measured; everything quoted from silicon below comes
+from it. Phase B now **has a bitstream** — the timing gate that refused the
+previous attempt is cleared and `t2t_b.xclbin` is written — but it has **not been
+loaded onto the card**, so there is still **no wire-to-wire latency figure
+anywhere in this repository**. Programming is gated on explicit confirmation each
+time, because a bad load costs a card reset.
 
 The current Phase A `.xclbin` — the one carrying the loaded probe, 215 MHz and
 the signed-position fix — links in 1 h 17 m with every constraint met:
@@ -356,12 +356,12 @@ orders and 70 samples with 0 misses at every non-saturated point:
 
 | offered | msg drops | golden | min | mean | max |
 |---|---|---|---|---|---|
-| 25.1 M msg/s | 0 | ✅ | 107.0 ns | **159.2 ns** | 330.2 ns |
-| 29.6 M msg/s | 0 | ✅ | 107.0 ns | **172.7 ns** | 358.1 ns |
-| 32.6 M msg/s | 0 | ✅ | 107.0 ns | **184.5 ns** | 432.6 ns |
-| 36.1 M msg/s | 0 | ✅ | 107.0 ns | **206.1 ns** | 567.4 ns |
-| 40.6 M msg/s | 0 | ✅ | 107.0 ns | **237.9 ns** | **730.2 ns** |
-| 46.3 M msg/s | 389,994 | ❌ | — saturated — | | |
+| 25.1 M msg/s | 0 | PASS | 107.0 ns | **159.2 ns** | 330.2 ns |
+| 29.6 M msg/s | 0 | PASS | 107.0 ns | **172.7 ns** | 358.1 ns |
+| 32.6 M msg/s | 0 | PASS | 107.0 ns | **184.5 ns** | 432.6 ns |
+| 36.1 M msg/s | 0 | PASS | 107.0 ns | **206.1 ns** | 567.4 ns |
+| 40.6 M msg/s | 0 | PASS | 107.0 ns | **237.9 ns** | **730.2 ns** |
+| 46.3 M msg/s | 389,994 | DIFF | — saturated — | | |
 
 The floor never moves (23 cycles at every load), the mean grows 1.49× while the
 max grows 2.21× over the same range — the tail is the thing that degrades — and
@@ -408,7 +408,7 @@ across two orders of magnitude, on the current RTL:
 | gap (idle cycles) | 48 | 128 | 256 | 512 | 1024 | 4096 |
 |---|---|---|---|---|---|---|
 | orders sent | 4 | 4 | 4 | 4 | 4 | 4 |
-| byte-identical to golden | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| byte-identical to golden | yes | yes | yes | yes | yes | yes |
 
 Phase B agrees at 48, 512 and 4096 as well. So the timing-dependence the
 explanation predicts is not visible anywhere in simulation, and the explanation
@@ -522,8 +522,8 @@ whole number of bursts to make that safe.
 
 | | WNS `ap_clk` | WNS `ap_clk_2` |
 |---|---|---|
-| combinational credit, variable burst | **−0.196 ns** ❌ | +0.079 ns |
-| registered credit, fixed burst | **+0.553 ns** ✅ | +0.079 ns |
+| combinational credit, variable burst | **−0.196 ns** (fails) | +0.079 ns |
+| registered credit, fixed burst | **+0.553 ns** (meets) | +0.079 ns |
 
 0.749 ns for slightly *fewer* LUTs (55,125 → 54,977), and the replay is
 bit-identical — same four orders, same 98/158/120-cycle latency, same golden
@@ -1049,7 +1049,7 @@ Run at four clock ratios, because the failure modes are not symmetric:
 |---|---|---|---|---|
 | high-water mark | 26 / 64 | **64 / 64** | 24 / 64 | 26 / 64 |
 | early releases | 0 | 0 | 0 | 0 |
-| result | ✅ | ✅ | ✅ | ✅ |
+| result | pass | pass | pass | pass |
 
 The slow-reader column is the one worth having: the array goes completely full,
 `s_tready` deasserts and the writer has to honour it, and still no frame is
@@ -1229,17 +1229,20 @@ demands at 512-bit width, and `ap_clk` at 250 MHz still moves 16 GB/s of replay
 against a 12.5 GB/s line rate. Neither number is a compromise of a claim; they
 are headroom that was being spent for nothing.
 
-**No Phase B bitstream exists yet.** Until one does, the Phase B claims in this
-document are "implements and meets timing at 300/215/322 MHz", "passes the golden
-in simulation" and "is licensed to build" — not "runs".
+That was the reasoning. Only half of it turned out to be operative — `ap_clk` is a
+scalable platform clock and ignored the request entirely, staying at 300 MHz and
+closing there anyway. See the next section, because the way it closed says
+something about the path that the original diagnosis only predicted.
 
-One thing to change on that rebuild, which is why `CORE_CLK_B` defaults to
-210 MHz: `ap_clk_2` closed at 215 MHz with **+0.004 ns**, against +0.048 ns for
-the same clock in Phase A at the time. The core logic is identical — what changed
-is the placement pressure from a CMAC and its GT in the same reconfigurable
-partition. 0.004 ns is about 0.1 % of the period, which is not margin. 210 MHz is
-still well above the 195.3 MHz that 100 Gb/s demands at 512-bit width, which is
-the only number that actually constrains this clock.
+The core clock had already been dropped once before that, 215 → 210 MHz, for a
+separate reason: `ap_clk_2` closed at 215 MHz with **+0.004 ns**, against
++0.048 ns for the same clock in Phase A at the time. The core logic is identical
+— what changed is the placement pressure from a CMAC and its GT in the same
+reconfigurable partition. 0.004 ns is about 0.1 % of the period, which is not
+margin. The timing failure above then took it the rest of the way, which is why
+`CORE_CLK_B` now defaults to **200 MHz** — still well above the 195.3 MHz that
+100 Gb/s demands at 512-bit width, which is the only number that actually
+constrains this clock.
 
 Phase A has since tightened too, for a reason worth separating from the above:
 adding the loaded-latency probe took `ap_clk_2` from +0.048 ns to **+0.015 ns** at
@@ -1247,6 +1250,75 @@ the same 215 MHz. That is the cost of the probe's hash table and its comparator,
 not a placement effect, and it is the clearest evidence available that 215 MHz is
 the ceiling for this design on this platform rather than a round number someone
 liked.
+
+### The rebuild produced a bitstream — and only one of the two backoffs did anything
+
+`make xclbin-b` linked in **1 h 13 m** and wrote `t2t_b.xclbin` (53.1 MB) with
+`t2t_b.ltx` beside it. This is the first Phase B bitstream that exists. Every
+timing constraint is met:
+
+| clock | frequency | WNS | failing endpoints |
+|---|---|---|---|
+| `clk_kernel_00_unbuffered_net` (`ap_clk`) | 300.000 MHz | +0.022 ns | 0 of 35,242 |
+| `clk_out1_ulp_clk_wiz_0` (`ap_clk_2`, the core) | **200.000 MHz** | +0.108 ns | 0 of 53,249 |
+| `txoutclk_out[0]` (`wire_clk`, the MAC) | **322.269 MHz** | +0.052 ns | 0 of 13,895 |
+| `init_clk` (BUFGCE_DIV ÷3) | 100.000 MHz | +8.436 ns | 0 of 392 |
+
+Design-wide WNS +0.003 ns, hold +0.009 ns, 0 of 538,495 endpoints failing, "All
+user specified timing constraints are met". As in Phase A, the design-wide figure
+belongs to the platform's own `dma_ip_axi_aclk_1` and not to anything this kernel
+owns — the kernel's tightest domain is `ap_clk` at +0.022 ns.
+
+**The `ap_clk` backoff never happened.** The Makefile asks for it and `cfgen`
+receives it — `-clock.freqHz 250000000:t2t_kernel_b_1.ap_clk` is there in the log
+— and `v++` then discards it:
+
+```
+ADVISORY: [AUTO-FREQ-SCALING-08] For clock clk_kernel_00_unbuffered_net, the auto
+scaled frequency 302.0 MHz exceeds the original specified frequency. The compiler
+will select the original specified frequency of 300.0 MHz.
+...
+Kernel (DATA) clock: ulp_ucs/aclk_kernel_00 = 300
+```
+
+The routed report confirms it: 3.333 ns, 300.000 MHz. `ap_clk` is the platform's
+*scalable* DATA clock, and auto frequency scaling treats the platform's 300 MHz as
+"the original specified frequency" and a `--freqhz` below it as a floor to scale
+*up* from, not a ceiling to obey. Requesting a lower frequency on a scalable clock
+is a no-op here.
+
+So the design that passed is 300 / 200 / 322.269 MHz, and **the only change that
+took effect was the core clock, 210 → 200 MHz**. That is worth stating plainly
+because the reasoning behind the two-clock backoff was right for the wrong
+mechanism: `ap_clk` did not close because it was given a longer period, it closed
+because relieving 10 MHz of pressure on `ap_clk_2` freed enough routing for
+`u_capture`'s byte accumulator to make its original 300 MHz period. It went from
+−0.134 ns to +0.022 ns without its constraint moving at all. The path was diagnosed
+as 71 % routing and congestion-bound rather than logic-bound, and this is that
+diagnosis confirmed the hard way: a congested path was fixed by decongesting a
+*different* clock domain.
+
+`AP_CLK_B` is left at 250 MHz in the Makefile with this comment attached rather
+than deleted, because the request is harmless and its removal would delete the
+evidence of what it does.
+
+Resources, against the Phase A kernel built from the same datapath:
+
+| | LUT | LUTAsMem | REG | BRAM | URAM | DSP |
+|---|---|---|---|---|---|---|
+| Phase A (`t2t_kernel`) | 50,685 | 0 | 29,111 | 75 | 66 | 2 |
+| Phase B (`t2t_kernel_b`) | **52,387** | 338 | **34,871** | **101** | 66 | 2 |
+
+The whole cost of putting a real 100 G MAC, a store-and-forward FIFO and a frame
+filter in the path is +1,702 LUT, +5,760 registers and +26 BRAM — 4.4 % of the
+part's LUTs in total. URAM and DSP do not move, because the order table and the
+ladder are unchanged.
+
+**What this does and does not establish.** Phase B now "implements, meets timing
+at 300/200/322.269 MHz, passes the golden in simulation, is licensed, and has a
+bitstream". It does **not** yet establish "runs" — nothing has been loaded from
+`t2t_b.xclbin`. The wire-to-wire number this whole phase exists to produce is one
+`make run-card-b` away and is not quoted anywhere until that has happened.
 
 ### The core clock was the prerequisite
 
