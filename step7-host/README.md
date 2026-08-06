@@ -70,6 +70,52 @@ and the host are two senders on **one** TCP connection, so their sequence
 numbers must be coordinated and inbound segments forwarded from the FPGA to the
 host. Here the host owns the socket and can also send the FPGA's OUCH payloads
 itself, which proves the protocol round-trip but not that split-sender
-coordination. And the OUCH enum codes (display, capacity, cross, customer type)
-remain placeholders to confirm against the current NASDAQ specification before
-this talks to a real venue.
+coordination.
+
+The OUCH enum codes are no longer placeholders — every offset and value is now
+checked against O*U*C*H 4.2 (updated October 2025); see
+[step6-strategy](../step6-strategy/) for what that found.
+
+### The protocol says not to solve split-sender at all
+
+Reading the spec for the enum check turned up the answer to the harder problem
+above. Two sentences decide it:
+
+> Each physical OUCH host port is bound to a NASDAQ-assigned logical OUCH
+> Account. On a given day, every order entered on OUCH is uniquely identified by
+> the combination of the logical OUCH Account and the participant-created Token
+> field.
+
+Order identity is scoped **per account**, and an account is bound to a *physical
+port*. So giving the FPGA its own port and account makes the coordination problem
+disappear rather than be managed: two sockets, two sequence spaces, and tokens
+that only have to be unique within their own account. Nothing has to be forwarded
+between the FPGA and the host, and neither has to know the other's sequence
+numbers.
+
+What remains is commercial rather than technical — accounts are "NASDAQ-assigned",
+so a second port has to be provisioned. That is worth confirming before any
+engineering effort goes into coordinating two senders on one connection, because
+if the second port is available then that engineering is wasted.
+
+### Retransmission is idempotent by construction
+
+The same reading settles the shape of a retransmit buffer, which the transmit
+path does not yet have. The spec is explicit that client-to-host messages are
+non-guaranteed and designed for benign resend:
+
+> Therefore, all host-bound messages are designed so that they can be benignly
+> resent for robust recovery from connection and application failures.
+
+and, for Enter Order specifically:
+
+> If you send an Enter Order Message with a previously used Order Token, the new
+> order will be ignored.
+
+So resending an order carrying its original token cannot double-fill: the venue
+discards the duplicate. A replay buffer therefore needs no dedup protocol, no
+negotiation and no state machine beyond "keep the last N frames and re-send on
+request" — and N is already bounded by the risk gate's `cfg_max_inflight`. This
+makes the feature considerably smaller than it looks, provided the token is
+preserved on resend rather than regenerated, which is the one thing that would
+break it.

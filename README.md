@@ -215,14 +215,23 @@ Honest scope, all of it stated in the step READMEs:
   back end (`data/FINDINGS.md` §7.5.2). Wire-to-order under load is the tail plus
   that constant. A single probe spanning the whole path under load would still be
   better, and would cost the tag-threading this design was built to avoid.
-- **Split-sender TCP is modelled, not solved.** The host session, register
-  config, login/heartbeat and ack/fill feedback are built and tested
-  ([step7-host](step7-host/)), including decoding the FPGA's real OUCH bytes with
-  an independent implementation. What still needs a card: on hardware the FPGA
-  and host are two senders on one TCP connection, so their sequence numbers must
-  be coordinated and inbound segments forwarded — the host owns the socket in the
-  test instead.
-- **No retransmission** in the transmit path (fire-and-forget).
+- **Split-sender TCP is modelled, not solved — and probably should not be
+  solved.** The host session, register config, login/heartbeat and ack/fill
+  feedback are built and tested ([step7-host](step7-host/)), including decoding
+  the FPGA's real OUCH bytes with an independent implementation. What still needs
+  a card: on hardware the FPGA and host are two senders on one TCP connection, so
+  their sequence numbers must be coordinated and inbound segments forwarded — the
+  host owns the socket in the test instead. But OUCH 4.2 binds each physical port
+  to its own logical account and scopes order identity to *(account, token)*, so
+  giving the FPGA its own port deletes the problem rather than managing it. That
+  turns an engineering question into a provisioning one, and it should be settled
+  before any effort goes into coordinating two senders.
+- **No retransmission** in the transmit path (fire-and-forget). The spec makes
+  this cheaper to add than it looks: client-to-host messages are explicitly
+  designed to be "benignly resent", and an Enter Order carrying a previously used
+  token is *ignored* by the venue, so a replay buffer cannot double-fill and needs
+  no dedup protocol — only that the original token is preserved on resend. Its
+  depth is already bounded by the risk gate's in-flight limit.
 - **One OUCH field is legal but possibly not what was meant.** Every offset and
   enum is now checked against O*U*C*H 4.2 (updated October 2025): the layout is
   exact and every code we emit is valid, so the "placeholder" caveat is retired
