@@ -176,18 +176,54 @@ module order_table
   logic [WAYW-1:0] free_way;
   logic            have_free_u;        // U: honor same-set removal of old slot
   logic [WAYW-1:0] free_way_u;
+  logic [WAYS-1:0] match_oh;           // one per way, one-hot by construction
   always_comb begin
     hit = 1'b0; hit_way = '0;
     have_free = 1'b0; free_way = '0;
     have_free_u = 1'b0; free_way_u = '0;
+    match_oh = '0;
     for (int w = WAYS-1; w >= 0; w--) begin
       if (!rdq[w].valid) begin have_free = 1'b1; free_way = w[WAYW-1:0]; end
-      if (rdq[w].valid && rdq[w].oref == m.order_ref) begin hit = 1'b1; hit_way = w[WAYW-1:0]; end
+      if (rdq[w].valid && rdq[w].oref == m.order_ref) begin
+        hit = 1'b1; hit_way = w[WAYW-1:0]; match_oh[w] = 1'b1;
+      end
       if (!rdq[w].valid || (u_same && w[WAYW-1:0] == old_way)) begin
         have_free_u = 1'b1; free_way_u = w[WAYW-1:0];
       end
     end
   end
+
+  // ---- entry select: one-hot OR, not priority-encode then binary mux ----
+  // THE DESIGN'S CRITICAL PATH, measured rather than guessed. On the routed
+  // 215 MHz build, 92 of the 200 worst core-clock endpoints were this register,
+  // the worst at +0.011 ns with 10 logic levels and 2.011 ns of logic against
+  // 2.209 ns of routing -- i.e. half the delay is depth, which no amount of
+  // floorplanning can move.
+  //
+  // The depth came from doing the selection twice. The comparators above already
+  // produce a one-hot vector; collapsing it to a binary `hit_way` and then using
+  // that to drive a 16:1 mux over ~152-bit entries inserts a priority encoder
+  // between the compare and the mux, purely to re-derive what the compare knew.
+  // Selecting straight off the one-hot removes that encoder from the path.
+  //
+  // Safe because order_ref is unique, which is the whole premise of keying the
+  // table on it -- at most one way can match, so OR-combining is exactly the mux.
+  // The assertion below states that rather than trusting it. `hit_way` is still
+  // produced for the write address, but that is consumed in EXEC a cycle later
+  // and is not on this path.
+  logic [EW-1:0] sel_ent_oh;          // EW is declared with the flat storage above
+  always_comb begin
+    sel_ent_oh = '0;
+    for (int w = 0; w < WAYS; w++)
+      sel_ent_oh |= {EW{match_oh[w]}} & EW'(rdq[w]);
+  end
+
+`ifndef SYNTHESIS
+  always @(posedge clk) if (rst_n && state == LOOK)
+    if ($countones(match_oh) > 1)
+      $fatal(1, "order_table: %0d ways matched oref %0h -- one-hot select is invalid",
+             $countones(match_oh), m.order_ref);
+`endif
 
   // ---- write port: what this cycle stores, if anything ----
   // Every case writes a whole entry (an invalidation writes all-zero) so each
@@ -317,7 +353,7 @@ module order_table
               else begin
           sel_hit      <= hit;
           sel_way      <= hit_way;
-          sel_ent      <= rdq[hit_way];
+          sel_ent      <= oentry_t'(sel_ent_oh);   // one-hot select, see above
           sel_free_ok  <= have_free;
           sel_free_way <= free_way;
           state        <= EXEC;

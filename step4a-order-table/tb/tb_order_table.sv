@@ -37,6 +37,7 @@ module tb_order_table;
   logic        o_has_rem, o_has_add;
   logic [31:0] o_rem_price, o_rem_qty, o_add_price, o_add_qty;
   logic [31:0] overflow_cnt, miss_cnt;
+  logic        init_done;
 
   itch_decoder #(.DATA_W(DATA_W)) dec (
     .clk(clk), .rst_n(rst_n),
@@ -51,6 +52,7 @@ module tb_order_table;
     .o_valid(o_valid), .o_type(o_type), .o_ts(), .o_locate(o_locate), .o_side(o_side),
     .o_has_rem(o_has_rem), .o_rem_price(o_rem_price), .o_rem_qty(o_rem_qty),
     .o_has_add(o_has_add), .o_add_price(o_add_price), .o_add_qty(o_add_qty),
+    .init_done(init_done),
     .overflow_cnt(overflow_cnt), .miss_cnt(miss_cnt)
   );
 
@@ -109,6 +111,18 @@ module tb_order_table;
     rst_n = 1'b1;
     repeat (2) @(negedge clk);
 
+    // Wait out the clear sweep before feeding anything. The table holds s_ready
+    // low for SETS cycles after reset while it zeroes every way, and this
+    // testbench used to drive straight through that window: the inserts still
+    // emitted their add-deltas (an A needs no lookup), every write was
+    // overwritten by the sweep's zeros, and so every later E/X/U/D/C missed. The
+    // log came out with the five inserts and none of the five lookups, which
+    // reads like a broken order table and is really a testbench that started too
+    // early. The full chain never had the bug because fh_core exports init_done
+    // and the kernel gates the feed on it.
+    @(posedge init_done);
+    repeat (2) @(negedge clk);
+
     forever begin
       c1 = $fgetc(fd);
       if (c1 == -1) break;
@@ -118,7 +132,17 @@ module tb_order_table;
       payload = new[len];
       for (int x = 0; x < len; x++) payload[x] = byte'($fgetc(fd));
       send_msg(len);
-      repeat ($urandom_range(0, 2)) @(negedge clk);
+      // Space the messages far enough apart that the table is always idle when
+      // the decoder presents the next one. The table is a correctness-first FSM
+      // (2 cycles per message, 3 for U) and applies real backpressure on
+      // s_ready; the full chain absorbs that with the message FIFO in fh_core,
+      // but this testbench feeds the decoder directly and has no such buffer. A
+      // 0-2 cycle gap let the decoder finish a short message while the table was
+      // still busy with the previous one, and those messages were silently
+      // dropped -- three of them, which is why the F insert and its matching D
+      // were missing from the log. Four cycles clears the worst case (U); the
+      // random part on top keeps the phase relationship from being fixed.
+      repeat (4 + $urandom_range(0, 2)) @(negedge clk);
     end
     $fclose(fd);
 
