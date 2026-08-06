@@ -226,12 +226,17 @@ Honest scope, all of it stated in the step READMEs:
   giving the FPGA its own port deletes the problem rather than managing it. That
   turns an engineering question into a provisioning one, and it should be settled
   before any effort goes into coordinating two senders.
-- **No retransmission** in the transmit path (fire-and-forget). The spec makes
-  this cheaper to add than it looks: client-to-host messages are explicitly
-  designed to be "benignly resent", and an Enter Order carrying a previously used
-  token is *ignored* by the venue, so a replay buffer cannot double-fill and needs
-  no dedup protocol — only that the original token is preserved on resend. Its
-  depth is already bounded by the risk gate's in-flight limit.
+- **Retransmission is built and proven, but not wired in.** The transmit path is
+  still fire-and-forget end to end. The spec made this far cheaper than expected:
+  client-to-host messages are explicitly designed to be "benignly resent", and an
+  Enter Order carrying a previously used token is *ignored* by the venue, so a
+  replay buffer cannot double-fill and needs no dedup protocol — only that the
+  original token is preserved. `tx_replay_buf.sv` does that by storing the
+  assembled frame rather than the order intent (re-deriving one would mint a new
+  token and a new TCP sequence number), adds no latency to the live path, and is
+  bounded by the risk gate's in-flight limit. `make test-replay` checks those
+  properties directly. What is missing is the integration into `t2t_top` and its
+  control register.
 - **One OUCH field is legal but possibly not what was meant.** Every offset and
   enum is now checked against O*U*C*H 4.2 (updated October 2025): the layout is
   exact and every code we emit is valid, so the "placeholder" caveat is retired

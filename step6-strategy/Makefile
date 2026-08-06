@@ -18,7 +18,7 @@ VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv tb/tb_strategy.sv
 VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0
 
-.PHONY: test test-combined test-xsim check-frames test-sweep clean
+.PHONY: test test-combined test-xsim check-frames test-sweep test-replay clean
 
 # bbo_in.log is the shared stimulus: the golden reads it, and so does the RTL
 bbo_in.log:
@@ -82,3 +82,11 @@ test-sweep:
 
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb
+
+# Self-checking, no golden needed: the replay buffer's contract is that a resent
+# frame is byte-identical to the original and that a resend never delays a live
+# order. Both are checked directly.
+test-replay:
+	xvlog -sv rtl/tx_replay_buf.sv tb/tb_tx_replay_buf.sv
+	xelab -debug typical tb_tx_replay_buf -s tb_tx_replay_buf_sim
+	xsim tb_tx_replay_buf_sim -runall

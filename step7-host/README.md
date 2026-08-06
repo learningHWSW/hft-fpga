@@ -119,3 +119,19 @@ request" — and N is already bounded by the risk gate's `cfg_max_inflight`. Thi
 makes the feature considerably smaller than it looks, provided the token is
 preserved on resend rather than regenerated, which is the one thing that would
 break it.
+
+**Built:** [`tx_replay_buf.sv`](../step6-strategy/rtl/tx_replay_buf.sv), with
+`make test-replay` in step 6. It stores the **assembled frame** rather than the
+order intent, which is what makes the resend a resend: `ouch_builder` mints the
+Order Token from a counter and `tcp_tx` assigns a TCP sequence number per frame,
+so re-deriving a frame from the original intent would produce a new token and a
+new sequence number — a genuinely different order, and a TCP stream with a hole in
+it. The hot path is untouched: the live frame passes straight through while the
+ring is written in parallel, and a replay is only ever emitted when the live path
+is idle, so a retransmission can never delay a new order. Requests that arrive
+mid-frame, or for a slot holding nothing, are refused and counted rather than
+queued. The testbench checks those three properties directly rather than
+inferring them from a golden diff.
+
+Not yet wired into `t2t_top` or given its control register — the module and its
+contract are proven, the integration is not.
