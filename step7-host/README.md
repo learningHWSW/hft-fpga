@@ -41,10 +41,13 @@ The flow the host runs:
 ```
 PASS: register image is 110 bytes
 PASS: cfg_stock decodes to 'AAPL    '
-PASS: cfg_load pulsed once after login
+PASS: host's own session does not pulse cfg_load
 PASS: 2 orders accepted / 2 fills / in-flight released to 0 / position 0
-PASS: exchange decoded all 67 FPGA orders
+PASS: exchange decoded all 4 FPGA orders
 PASS: exchange decode of FPGA order matches its OUCH bytes
+PASS: card's session pulses cfg_load once
+PASS: refuses to send orders on the card's session
+PASS: same token accepted on both accounts (2)
 ```
 
 The last two are the ones that matter most. The mock exchange **parses** OUCH;
@@ -65,12 +68,13 @@ TCP socket against an independent decoder.
 order and fills it at its limit price. It tests the protocol and the host's
 bookkeeping, not execution quality.
 
-**Genuinely needs a card, so modelled rather than solved:** on hardware the FPGA
-and the host are two senders on **one** TCP connection, so their sequence
-numbers must be coordinated and inbound segments forwarded from the FPGA to the
-host. Here the host owns the socket and can also send the FPGA's OUCH payloads
-itself, which proves the protocol round-trip but not that split-sender
-coordination.
+**No longer split-sender.** This used to model the FPGA and the host as two
+senders on **one** TCP connection. That is now replaced by two independent
+sessions — see below for why the spec makes it the right answer, and
+`make test` for the proof. What still genuinely needs a card is the *inbound*
+path on the card's own connection: acks and fills for its orders arrive at the
+card's MAC, and the FPGA does not parse TCP, so getting them to the host is
+unsolved here.
 
 The OUCH enum codes are no longer placeholders — every offset and value is now
 checked against O*U*C*H 4.2 (updated October 2025); see
@@ -94,9 +98,30 @@ between the FPGA and the host, and neither has to know the other's sequence
 numbers.
 
 What remains is commercial rather than technical — accounts are "NASDAQ-assigned",
-so a second port has to be provisioned. That is worth confirming before any
-engineering effort goes into coordinating two senders on one connection, because
-if the second port is available then that engineering is wasted.
+so a second port has to be provisioned.
+
+**Built.** `HostSession` takes a `role`:
+
+| role | meaning |
+|---|---|
+| `fpga` | established and logged in by the host, then handed over with `cfg_load`. **Refuses to send orders** — writing into the stream the card is sending on is the exact problem the second account deletes. |
+| `host` | the host's own account. Sends its own orders, never pulses `cfg_load`. |
+
+The mock exchange now serves one logical account per connection, so the tests can
+tell the two apart. `make test` proves the arrangement end to end, including the
+property that makes token coordination unnecessary:
+
+```
+PASS: card's session pulses cfg_load once
+PASS: two distinct OUCH accounts (SESS01 vs SESS02)
+PASS: host's session did not hand the card a second connection
+PASS: refuses to send orders on the card's session
+PASS: same token accepted on both accounts (2)
+PASS: the two arrived on different accounts
+```
+
+That last pair is the spec property made executable: identity is *(account,
+token)*, so the card and the host need no shared token space and no negotiation.
 
 ### Retransmission is idempotent by construction
 

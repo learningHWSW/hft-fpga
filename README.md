@@ -215,17 +215,17 @@ Honest scope, all of it stated in the step READMEs:
   back end (`data/FINDINGS.md` §7.5.2). Wire-to-order under load is the tail plus
   that constant. A single probe spanning the whole path under load would still be
   better, and would cost the tag-threading this design was built to avoid.
-- **Split-sender TCP is modelled, not solved — and probably should not be
-  solved.** The host session, register config, login/heartbeat and ack/fill
-  feedback are built and tested ([step7-host](step7-host/)), including decoding
-  the FPGA's real OUCH bytes with an independent implementation. What still needs
-  a card: on hardware the FPGA and host are two senders on one TCP connection, so
-  their sequence numbers must be coordinated and inbound segments forwarded — the
-  host owns the socket in the test instead. But OUCH 4.2 binds each physical port
-  to its own logical account and scopes order identity to *(account, token)*, so
-  giving the FPGA its own port deletes the problem rather than managing it. That
-  turns an engineering question into a provisioning one, and it should be settled
-  before any effort goes into coordinating two senders.
+- **Split-sender TCP is gone rather than solved; the inbound path replaces it as
+  the open item.** OUCH 4.2 binds each physical port to its own logical account
+  and scopes order identity to *(account, token)*, so the card gets its own port
+  and is the only sender on that byte stream. No sequence coordination, no
+  forwarding, and no shared token space — the tests prove the last of those by
+  sending the same token on two accounts and getting two distinct orders
+  ([step7-host](step7-host/)). The cost is provisioning: a second account has to
+  be obtained, since NASDAQ assigns them. **What still needs a card** is the
+  *inbound* direction on the card's own connection — acks and fills arrive at the
+  card's MAC and the FPGA does not parse TCP, so reaching the host with them is
+  unsolved.
 - **Retransmission is built and proven, but not wired in.** The transmit path is
   still fire-and-forget end to end. The spec made this far cheaper than expected:
   client-to-host messages are explicitly designed to be "benignly resent", and an

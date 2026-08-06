@@ -9,15 +9,38 @@ Responsibilities, all of which the FPGA deliberately does NOT do:
     position and pulsing cfg_order_ack to release the in-flight limiter;
   * send Client Heartbeats and answer Server Heartbeats.
 
+TWO SESSIONS, NOT ONE SHARED CONNECTION. This used to model the FPGA and the
+host as two senders on ONE TCP connection, which needs their sequence numbers
+coordinated and inbound segments forwarded -- hard, and a rich source of silent
+stream corruption. The spec removes the need:
+
+    "Each physical OUCH host port is bound to a NASDAQ-assigned logical OUCH
+     Account. On a given day, every order entered on OUCH is uniquely identified
+     by the combination of the logical OUCH Account and the participant-created
+     Token field."
+
+Order identity is scoped per account and an account binds to a port, so the card
+gets its own port and account and is the only sender on that byte stream, and the
+host gets its own. Nothing is forwarded and neither side needs the other's
+sequence numbers. Token spaces need no coordination either: the same token on two
+accounts is two different orders.
+
+`role` selects which of the two a HostSession is. role="fpga" is established and
+logged in by the host and then handed over with cfg_load; it REFUSES to send
+orders, because writing into the stream the card is sending on is precisely the
+problem the second account exists to delete. role="host" is the host's own
+account and never touches the card.
+
+The remaining requirement is commercial rather than technical: a second port has
+to be provisioned, since accounts are NASDAQ-assigned.
+
 WHAT IS AND IS NOT REAL HERE. The SoupBinTCP framing, login, heartbeat and the
-OUCH decode are real and run over a real TCP socket against the mock exchange.
-The register configuration is real host code writing a Device (a card would
-change only the transport). What a card is genuinely needed for -- and what is
-therefore modelled, not solved -- is that on hardware the FPGA and the host are
-two senders on ONE TCP connection, so their sequence numbers must be
-coordinated and inbound segments forwarded from the FPGA to the host. Here the
-host owns the socket and can also send the FPGA's OUCH payloads itself, which
-proves the protocol round-trip but not that split-sender coordination.
+OUCH decode are real and run over real TCP sockets against the mock exchange,
+which now serves one account per connection. The register configuration is real
+host code writing a Device (a card would change only the transport). What still
+needs a card is the inbound path on the card's own connection: acks and fills for
+its orders arrive at the card's MAC, and the FPGA does not parse TCP, so getting
+them to the host is unsolved here.
 """
 import socket
 import time
@@ -27,7 +50,16 @@ from . import soupbin, ouch, regmap
 
 class HostSession:
     def __init__(self, dev: regmap.Device, stock: str = "AAPL",
-                 firm: str = "HFT1", token_prefix: str = "FPGA01"):
+                 firm: str = "HFT1", token_prefix: str = "FPGA01",
+                 role: str = "fpga"):
+        # role="fpga": this session's orders are sent BY THE CARD. The host
+        #   establishes it, logs in, and hands the connection over with
+        #   cfg_load; it must not then write orders into the same byte stream.
+        # role="host": the host's own session on its own OUCH account, for
+        #   manual or supervisory orders. It never touches the card.
+        if role not in ("fpga", "host"):
+            raise ValueError("role must be 'fpga' or 'host'")
+        self.role = role
         self.dev = dev
         self.stock = stock
         self.firm = firm
@@ -98,13 +130,26 @@ class HostSession:
         if ptype != soupbin.LOGIN_ACCEPTED:
             raise RuntimeError(f"login rejected: {ptype!r}")
         self.session, self.next_seq = soupbin.parse_login_accepted(payload)
-        # the login succeeded, so hand the connection to the FPGA
-        self.dev.pulse_load()
+        # Only the card's session is handed over. The host's own session is a
+        # separate TCP connection on a separate OUCH account, and pulsing load
+        # for it would point the card at the wrong stream.
+        if self.role == "fpga" and self.dev is not None:
+            self.dev.pulse_load()
         return self.session
 
     def send_order(self, is_buy: bool, shares: int, price: int):
-        """Assemble and send one OUCH Enter Order (what the FPGA does on the
-        hot path; here in software so the round-trip can be exercised)."""
+        """Assemble and send one OUCH Enter Order on THIS session.
+
+        Refused on the card's session. With two independent sessions there is
+        no reason for the host to write into the stream the card is sending on,
+        and every reason not to: two senders on one TCP connection is exactly
+        the coordination problem the second account exists to delete. The card
+        sends its own orders; this is for the host's own account.
+        """
+        if self.role == "fpga":
+            raise RuntimeError(
+                "refusing to send on the card's session -- the card owns this "
+                "byte stream. Use a role='host' session on its own account.")
         token = (self.token_prefix[:6].ljust(6) + f"{self.token_seq:08X}").encode()
         body = ouch.enter_order(token, is_buy, shares, self.stock, price,
                                 firm=self.firm)
@@ -115,7 +160,16 @@ class HostSession:
         return token
 
     def send_ouch_payload(self, body: bytes):
-        """Inject an OUCH body the FPGA produced verbatim (interop proof)."""
+        """Inject an OUCH body the card produced verbatim.
+
+        This is an INTEROP PROOF, not the deployed path: it shows the host and
+        the card agree byte for byte on the OUCH encoding. On hardware the card
+        sends these itself, on its own session. Allowed only on a role='host'
+        session so it can never be mistaken for the real arrangement.
+        """
+        if self.role == "fpga":
+            raise RuntimeError(
+                "refusing to inject on the card's session -- see send_order")
         info = ouch.parse_enter_order(body)
         self.sock.sendall(soupbin.unsequenced(body))
         self.pending[info["token"]] = info

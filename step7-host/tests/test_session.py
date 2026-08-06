@@ -62,10 +62,13 @@ def test_session_roundtrip():
     ex = MockExchange(fill=True).start()
     try:
         dev = regmap.Device()
-        s = HostSession(dev)
+        # role="host": this is the host's OWN account, so it may send orders and
+        # must NOT hand the connection to the card.
+        s = HostSession(dev, role="host")
         s.configure(**CFG)
         s.connect("127.0.0.1", ex.port)
-        check(dev.load_pulsed == 1, "cfg_load pulsed once after login")
+        check(dev.load_pulsed == 0,
+              "host's own session does not pulse cfg_load")
 
         s.send_order(is_buy=True, shares=100, price=2896000)
         s.send_order(is_buy=False, shares=100, price=2890300)
@@ -99,7 +102,7 @@ def test_fpga_interop():
 
     ex = MockExchange(fill=False).start()
     try:
-        s = HostSession(regmap.Device())
+        s = HostSession(regmap.Device(), role="host")
         s.configure(**CFG)
         s.connect("127.0.0.1", ex.port)
         for b in bodies:
@@ -122,9 +125,71 @@ def test_fpga_interop():
         ex.stop()
 
 
+def test_two_independent_sessions():
+    """The arrangement that replaces split-sender TCP.
+
+    OUCH 4.2: "Each physical OUCH host port is bound to a NASDAQ-assigned
+    logical OUCH Account. On a given day, every order entered on OUCH is
+    uniquely identified by the combination of the logical OUCH Account and the
+    participant-created Token field."
+
+    So the card gets its own port and account and is the ONLY sender on that
+    byte stream, and the host gets its own. Nothing has to be forwarded and
+    neither side needs the other's TCP sequence numbers.
+    """
+    ex = MockExchange(fill=False).start()
+    try:
+        dev = regmap.Device()
+
+        # 1. the card's session: the host establishes it and hands it over
+        fpga = HostSession(dev, role="fpga")
+        fpga.configure(**CFG)
+        acct_fpga = fpga.connect("127.0.0.1", ex.port)
+        check(dev.load_pulsed == 1, "card's session pulses cfg_load once")
+
+        # 2. the host's own session: separate connection, separate account
+        host = HostSession(dev, role="host")
+        host.connect("127.0.0.1", ex.port)
+        acct_host = host.session
+        check(acct_fpga != acct_host,
+              f"two distinct OUCH accounts ({acct_fpga} vs {acct_host})")
+        check(dev.load_pulsed == 1,
+              "host's session did not hand the card a second connection")
+
+        # 3. the host must refuse to write into the card's byte stream
+        refused = False
+        try:
+            fpga.send_order(is_buy=True, shares=100, price=2896000)
+        except RuntimeError:
+            refused = True
+        check(refused, "refuses to send orders on the card's session")
+
+        # 4. identity is (account, token): the SAME token on two accounts is two
+        #    different orders, which is what removes any need to coordinate
+        #    token spaces between the card and the host.
+        host2 = HostSession(regmap.Device(), role="host")
+        host2.connect("127.0.0.1", ex.port)
+        token = b"SAMETOKEN00001"
+        body = ouch.enter_order(token, True, 100, "AAPL", 2896000, firm="HFT1")
+        host.send_ouch_payload(body)
+        host2.send_ouch_payload(body)
+        host.poll(0.5); host2.poll(0.5)
+
+        same_tok = [o for o in ex.received if o["token"] == token]
+        check(len(same_tok) == 2,
+              f"same token accepted on both accounts ({len(same_tok)})")
+        check(len({o["account"] for o in same_tok}) == 2,
+              "the two arrived on different accounts")
+
+        fpga.logout(); host.logout(); host2.logout()
+    finally:
+        ex.stop()
+
+
 if __name__ == "__main__":
     test_configuration()
     test_session_roundtrip()
     test_fpga_interop()
+    test_two_independent_sessions()
     print(f"\n{'ALL PASS' if fails == 0 else str(fails) + ' FAILED'}")
     sys.exit(1 if fails else 0)
