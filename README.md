@@ -198,9 +198,14 @@ Honest scope, all of it stated in the step READMEs:
   fabric and **~300 ns in the MAC, SerDes, store-and-forward fill and frame
   filter**. Simulation had predicted ~145 ns for that term and was wrong by a
   factor of two, which is exactly what a hard-coded `MAC_LAT` constant is worth.
-  Nothing has yet been done to reduce it: the CMAC's own pipeline options are
-  unexplored, and the store-and-forward FIFO could plausibly become cut-through
-  for frames whose length is already known.
+  It is also close to irreducible: **~285 ns of it is inside `cmac_usplus` and
+  the GT**, which are already generated with the low-latency options (RS-FEC off,
+  flow control off, statistics off) and whose RX path is cut-through by design.
+  Our own contribution is ~9–12 ns, about 2 % of the path, and recovering the
+  largest piece of it would mean reintroducing the MAC underrun the
+  store-and-forward FIFO exists to prevent (`data/FINDINGS.md` §7.6.1). The only
+  real lever is a thin custom PCS/MAC in place of the vendor one — a project, not
+  an optimisation pass.
 - **The loaded and unloaded latencies are different intervals — now composable,
   still not one number.** The burst tail probe reports *decoder-to-order* while
   the wire figure is *first-RX-beat to first-TX-beat*, because excluding the

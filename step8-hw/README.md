@@ -1432,11 +1432,35 @@ and replaced by a number.
 
 **What this reorders.** The datapath is no longer the larger half of the problem:
 ~207 ns of fabric against ~300 ns of MAC and SerDes. Shaving cycles off the price
-ladder or adding cut-through decode attacks the smaller term. Anyone optimising
-from here should start by asking what inside that 300 ns is configurable — the
-CMAC's own RX/TX pipeline options, whether the store-and-forward FIFO can become
-cut-through for frames whose length is already known, and whether near-end PMA
-loopback is overcounting the SerDes relative to a real wire.
+ladder or adding cut-through decode attacks the smaller term.
+
+**And almost none of the 300 ns is ours.** Breaking it down before optimising it:
+
+| term | ns | ours? |
+|---|---|---|
+| core clock, 215 → 200 MHz across the core-domain path | ~10 | yes, and deliberate |
+| `axis_sf_fifo` store-and-forward fill, 2-beat order frame | ~6 | yes |
+| `axis_frame_filter`, decided on the first beat | ~3–6 | yes |
+| **CMAC TX + GT SerDes round trip + CMAC RX** | **~285** | **no — vendor IP** |
+
+The CMAC is already generated with the low-latency options: `INCLUDE_RS_FEC 0`
+(the biggest single latency knob, off), both flow-control blocks off, statistics
+counters off, AXIS rather than the AXI control interface. PG203 adds that the RX
+path buffers nothing beyond the pipelining its operations need and is cut-through,
+so there is no buffer in there to delete either.
+
+That leaves ~9–12 ns of a 515 ns path that we could touch, about 2 %. Making
+`axis_sf_fifo` cut-through would recover ~6 ns of it and reintroduce precisely the
+underrun the module exists to prevent — once `tx_axis_tvalid` rises the MAC wants
+a beat every cycle to `tlast`, and a source fed from HBM through an arbiter cannot
+promise that. The earlier suggestion in this document that the FIFO was worth
+attacking does not survive the arithmetic.
+
+**So the term is close to irreducible with this IP.** The only real lever is not
+using the vendor MAC — a thin custom PCS/MAC skipping the standards-compliant
+pipeline, which is what the ultra-low-latency industry does and is a project in
+its own right, with correctness risk to match. Worth entering deliberately, not as
+an optimisation pass.
 
 One caveat kept from the design section: loopback returns what we transmit, so
 this measures `D + T_tx + T_rx` and overcounts true wire-to-wire by the SerDes

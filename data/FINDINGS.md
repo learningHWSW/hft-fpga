@@ -624,8 +624,40 @@ behavioural stand-in cannot substitute for silicon.
 
 **What it reorders.** The datapath is no longer the larger half: ~207 ns of fabric
 against ~300 ns of MAC and SerDes. Cycle-shaving in the price ladder or
-cut-through decode attacks the smaller term, and anyone optimising from here
-should start inside that 300 ns. See `step8-hw/README.md` for the full account.
+cut-through decode attacks the smaller term. See `step8-hw/README.md` for the
+full account.
+
+### 7.6.1 Where the 300 ns goes, and why almost none of it is ours
+
+The obvious follow-up is to attack that term. Breaking it down first says not to
+bother with the parts we own:
+
+| term | ns | ours? |
+|---|---|---|
+| core clock, 215 → 200 MHz across the core-domain path | ~10 | yes, and deliberate |
+| `axis_sf_fifo` store-and-forward fill, 2-beat order frame | ~6 | yes |
+| `axis_frame_filter`, decided on the first beat | ~3–6 | yes |
+| **CMAC TX + GT SerDes round trip + CMAC RX** | **~285** | **no — vendor IP** |
+
+So roughly **95 % of the term is inside `cmac_usplus` and the GT**, and the
+configuration is already the low-latency one: `INCLUDE_RS_FEC 0` (the single
+biggest latency option, and it is off), `RX_FLOW_CONTROL 0`, `TX_FLOW_CONTROL 0`,
+`INCLUDE_STATISTICS_COUNTERS 0`, AXIS rather than the AXI control interface. PG203
+further states the RX path does no buffering beyond the pipelining its operations
+require and passes data through cut-through, so there is no buffer sitting there
+to remove.
+
+The two pieces we could change are worth ~9–12 ns of a 515 ns path, about 2 %.
+Making `axis_sf_fifo` cut-through would recover ~6 ns of that and reintroduce
+exactly the MAC underrun it was written to prevent — `tx_axis_tvalid` must be
+followed by a beat every cycle until `tlast`, and a source fed from HBM through an
+arbiter cannot promise that. Not a trade worth taking.
+
+**The honest conclusion is that this term is close to irreducible with this IP.**
+The only real lever is to stop using the vendor MAC — a thin custom PCS/MAC that
+skips the standards-compliant pipeline, which is what the ultra-low-latency
+industry actually does and is a substantial project with real correctness risk. It
+should be entered deliberately, not as an optimisation pass.
 
 ## Reproduce
 
