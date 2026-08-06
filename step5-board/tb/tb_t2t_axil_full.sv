@@ -89,7 +89,7 @@ module tb_t2t_axil_full;
     axi_write('h4C, 32'h3154_4648);      // cfg_firm  "1TFH"
     axi_write('h50, 32'h0000_0000);      // cfg_tif
     axi_write('h54, 32'h0000_0000);      // cfg_ouch_min_qty
-    axi_write('h58, 32'h0000_0059);      // cfg_display "Y"
+    axi_write('h58, 32'h0000_0041);      // cfg_display "A" (0x41)
     axi_write('h5C, 32'h0000_0050);      // cfg_capacity "P"
     axi_write('h60, 32'h0000_004E);      // cfg_sweep "N"
     axi_write('h64, 32'h0000_004E);      // cfg_cross "N"

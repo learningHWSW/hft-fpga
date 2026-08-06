@@ -171,9 +171,9 @@ single-character *enum values* — display, capacity, sweep eligibility, cross
 type, customer type — are the part of the spec most easily gotten wrong from
 memory, and a wrong capacity code is a compliance problem rather than a bug.
 Every one of them is a configuration input rather than a constant, so the host
-can correct them without a rebuild, and the defaults here are **placeholders to
-be confirmed against the current NASDAQ specification** before this reaches an
-exchange.
+can correct them without a rebuild. They are **no longer placeholders**: all five
+are now checked field by field against the published spec, and one of them turned
+out to be wrong in exactly the way this paragraph warned about (see below).
 
 ### Verified two ways
 
@@ -184,7 +184,7 @@ is right. So a generated packet is also decoded field by field:
 total bytes: 52     soup len: 50    soup type: U    msg type: O
 token: FPGA0100000000    side: S    shares: 100
 stock: 'AAPL    '        price: 2890300 => $289.0300    tif: 0
-firm: 'HFT1'   disp/cap/sw: Y P N   min qty: 0   cross/cust: N N
+firm: 'HFT1'   disp/cap/sw: A P N   min qty: 0   cross/cust: N N
 ```
 
 which matches the first order log line, `... SELL qty=100 px=2890300`. All 52
@@ -219,13 +219,23 @@ stood here is therefore retired: nothing we send would be rejected as malformed.
 
 Two things the check found that the golden diff structurally could not:
 
-- **`Display = "Y"` is a legal code that does not mean what it looks like.** In
-  OUCH 4.2, `Y` is *Anonymous-Price to Comply* — not "yes, display this". An
-  attributable displayed order is `A` = *Attributable-Price to Display*. Both are
-  accepted by the exchange, so this is precisely the failure mode a self-agreeing
-  golden cannot see: the order would be *live and anonymous* when the intent may
-  have been attributable. The value is a config register, so it costs nothing to
-  change — but somebody has to decide which was meant.
+- **`Display` was `"Y"`, a legal code that does not mean what it looks like — now
+  `"A"`.** In OUCH 4.2, `Y` is *Anonymous-Price to Comply*, not "yes, display
+  this"; the attributable displayed order is `A` = *Attributable-Price to
+  Display*. Both are accepted by the exchange, so this is precisely the failure
+  mode a self-agreeing golden cannot see — the RTL and the Python emitted the
+  same byte and the diff passed while both carried the same wrong assumption.
+
+  Note the codes bundle **two** attributes, so the change moves both at once:
+  attribution (anonymous → attributable) and re-pricing handling (Price to Comply
+  → Price to Display). The OUCH spec lists the codes without defining those two
+  behaviours; they are NASDAQ equity rules.
+
+  **Resolved to `"A"`.** The value lives in five places that must agree or the
+  golden diff breaks — `dump_ouch.py`, the host's `session.py` and `ouch.py`, the
+  card runner, and four testbenches that write the register directly — and all of
+  them now carry `A` (0x41). Verified on the emitted bytes rather than the config:
+  decoding a golden frame gives `display 'A' capacity 'P' sweep 'N'`.
 - **The Shares range is not enforced in hardware.** The spec requires shares
   "greater than zero and less than 1,000,000". We emit
   `min(resting_qty, cfg_order_qty)` with no clamp, so the upper bound holds only

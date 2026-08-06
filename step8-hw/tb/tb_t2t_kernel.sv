@@ -359,7 +359,7 @@ module tb_t2t_kernel;
     axil_write(T2T + 13'h4C, 32'h3154_4648);    // cfg_firm "1TFH"
     axil_write(T2T + 13'h50, 32'h0000_0000);    // cfg_tif
     axil_write(T2T + 13'h54, 32'h0000_0000);    // cfg_ouch_min_qty
-    axil_write(T2T + 13'h58, 32'h0000_0059);    // cfg_display "Y"
+    axil_write(T2T + 13'h58, 32'h0000_0041);    // cfg_display "A" (0x41)
     axil_write(T2T + 13'h5C, 32'h0000_0050);    // cfg_capacity "P"
     axil_write(T2T + 13'h60, 32'h0000_004E);    // cfg_sweep "N"
     axil_write(T2T + 13'h64, 32'h0000_004E);    // cfg_cross "N"

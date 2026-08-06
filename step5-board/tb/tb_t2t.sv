@@ -95,7 +95,7 @@ module tb_t2t;
     .cfg_stock({" "," "," "," ","L","P","A","A"}),
     .cfg_firm({"1","T","F","H"}),
     .cfg_tif(32'd0), .cfg_ouch_min_qty(32'd0),
-    .cfg_display("Y"), .cfg_capacity("P"), .cfg_sweep("N"),
+    .cfg_display("A"), .cfg_capacity("P"), .cfg_sweep("N"),
     .cfg_cross("N"), .cfg_cust("N"),
 
     .cfg_dst_mac(48'hAABBCCDDEEFF), .cfg_src_mac(48'h001122334455),

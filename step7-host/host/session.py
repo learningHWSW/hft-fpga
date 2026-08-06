@@ -72,7 +72,7 @@ class HostSession:
         d.write("cfg_firm", regmap.ascii_le(self.firm, 4))
         d.write("cfg_tif", 0)
         d.write("cfg_ouch_min_qty", 0)
-        for name, ch in [("cfg_display", "Y"), ("cfg_capacity", "P"),
+        for name, ch in [("cfg_display", "A"), ("cfg_capacity", "P"),
                          ("cfg_sweep", "N"), ("cfg_cross", "N"), ("cfg_cust", "N")]:
             d.write(name, ord(ch))
         d.write("cfg_dst_mac", regmap.mac2int(dst_mac))

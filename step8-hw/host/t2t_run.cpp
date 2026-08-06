@@ -170,7 +170,7 @@ void configure(Device& d, const Options& o) {
   d.wr_t2t(CFG_FIRM,             0x31544648u);   // "HFT1"
   d.wr_t2t(CFG_TIF,              0);
   d.wr_t2t(CFG_OUCH_MIN_QTY,     0);
-  d.wr_t2t(CFG_DISPLAY,          'Y');
+  d.wr_t2t(CFG_DISPLAY,          'A');   // Attributable-Price to Display
   d.wr_t2t(CFG_CAPACITY,         'P');
   d.wr_t2t(CFG_SWEEP,            'N');
   d.wr_t2t(CFG_CROSS,            'N');

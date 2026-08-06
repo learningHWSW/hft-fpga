@@ -237,13 +237,13 @@ Honest scope, all of it stated in the step READMEs:
   bounded by the risk gate's in-flight limit. `make test-replay` checks those
   properties directly. What is missing is the integration into `t2t_top` and its
   control register.
-- **One OUCH field is legal but possibly not what was meant.** Every offset and
-  enum is now checked against O*U*C*H 4.2 (updated October 2025): the layout is
-  exact and every code we emit is valid, so the "placeholder" caveat is retired
-  ([step6-strategy](step6-strategy/)). The check did surface that `Display = "Y"`
-  means *Anonymous-Price to Comply*, not "yes, display" — a legal code with
-  different semantics, which a golden that agrees with itself can never catch.
-  It is a config register, but somebody has to decide which was intended. The
-  spec's `0 < shares < 1,000,000` range is also not enforced in hardware.
+- **The OUCH codes are checked against the spec, and one was changed.** Every
+  offset and enum is verified against O*U*C*H 4.2 (updated October 2025): the
+  layout is exact and every code is legal, so the "placeholder" caveat is retired
+  ([step6-strategy](step6-strategy/)). The check surfaced that `Display = "Y"`
+  means *Anonymous-Price to Comply* rather than "yes, display" — a legal code
+  with different semantics, which a golden that agrees with itself can never
+  catch. It is now **`"A"`, Attributable-Price to Display**. Still open: the
+  spec's `0 < shares < 1,000,000` range is not enforced in hardware.
 
 Per-step READMEs (Korean) carry the detailed design notes for each block.

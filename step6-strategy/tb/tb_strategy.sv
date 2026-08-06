@@ -87,7 +87,7 @@ module tb_strategy;
     .cfg_firm({"1", "T", "F", "H"}),                      // "HFT1"
     .cfg_tif(32'd0),                                      // IOC
     .cfg_min_qty(32'd0),
-    .cfg_display("Y"), .cfg_capacity("P"), .cfg_sweep("N"),
+    .cfg_display("A"), .cfg_capacity("P"), .cfg_sweep("N"),
     .cfg_cross("N"), .cfg_cust("N"),
     .i_valid(o_valid), .i_is_buy(o_is_buy), .i_qty(o_qty), .i_price(o_price),
     .i_ready(o_ready),

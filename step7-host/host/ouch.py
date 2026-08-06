@@ -23,7 +23,7 @@ REJECTED       = b"J"
 
 def enter_order(token: bytes, is_buy: bool, shares: int, stock: str,
                 price: int, tif: int = 0, firm: str = "HFT1",
-                display: bytes = b"Y", capacity: bytes = b"P",
+                display: bytes = b"A", capacity: bytes = b"P",
                 sweep: bytes = b"N", min_qty: int = 0,
                 cross: bytes = b"N", cust: bytes = b"N") -> bytes:
     """49-byte OUCH Enter Order — the body ouch_builder assembles."""
