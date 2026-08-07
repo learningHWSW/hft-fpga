@@ -1,8 +1,13 @@
 # Revised plan — ITCH tick-to-trade (U55C, SystemVerilog RTL)
 
 A rewrite of the original plan (an HLS-based draft) to match the current state of
-the repo. Step 1 (C golden parser) and step 2 (64-bit SV decoder, golden diff
-PASS) are done.
+the repo.
+
+**Status: every step is done.** The chain runs on a real Alveo U55C, through a
+real 100 G MAC, producing order frames byte-identical to the software golden. The
+plan is kept as written — including the predictions that turned out wrong — and
+each step carries what it actually cost. See [ARCHITECTURE.md](ARCHITECTURE.md)
+for the design and [data/FINDINGS.md](data/FINDINGS.md) for the measurements.
 
 ## 0. What changed from the original (the improvements)
 
@@ -29,7 +34,7 @@ QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stri
                                         (per-locate ladder)   (ref hash, URAM)  (step 2 extended)
                                             │
                                             ▼ trigger
-                                      OUCH builder ──► TX (stretch, session in SW)
+                                      OUCH builder ──► TX (session in SW)
 ```
 
 - The market-data path has **no backpressure** anywhere (tready=1). Absorption is
@@ -37,9 +42,22 @@ QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stri
 - The symbol filter is a locate-based bitmap (SW sets it from the R message,
   shadow/commit registers).
 
+Two ways the built design differs from this target, kept here rather than
+retrofitted because the divergence is the interesting part
+([ARCHITECTURE.md](ARCHITECTURE.md) describes what exists):
+
+- **The symbol filter is a single `track_locate` register, not a bitmap.** One
+  tracked symbol is what fits URAM at the measured geometry, and a bitmap would
+  have implied multi-symbol capacity the table does not have. Multi-symbol needs
+  the HBM path this plan defers in §0 item 6, and the filter widens with it.
+- **The trigger is two signals, not one comparator.** Imbalance takes the BBO from
+  the ladder as drawn; sweep detection taps the order-table delta *before* the
+  ladder and skips it entirely, which is why it runs 19 core cycles against 28.
+  That second path does not exist in this diagram.
+
 ## 2. Stage-by-stage plan
 
-### Step 3a — MoldUDP64 stripper + message splitter (64-bit first)
+### Step 3a — MoldUDP64 stripper + message splitter (64-bit first) — done
 - Strip the MoldUDP64 header (20 B), MsgCount loop, heartbeat handling,
   **seq gap detection** (counter + SW interrupt/flag).
 - Split message boundaries by the length prefix -> emit on the step-2 decoder
@@ -103,22 +121,71 @@ QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stri
   best-level search + moving qty to BRAM is the follow-on. Measured latency and
   L3 (fixed slots per level) come later.
 
-### Step 5 — U55C real board
-- Receive UDP/IP with CMAC + verilog-ethernet (or a vendor IP), IGMP join. Check
-  U55C example-design compatibility up front.
-- Host reporting: stream BBO changes / gap events over QDMA; control registers
-  (symbol bitmap, parameters) are shadow/commit.
-- **DoD**: replay gear (or tcpreplay 100G) -> wire receive -> BBO matches
-  simulation. Measure MAC-receive-to-BBO-update latency (a cycle counter,
-  converted to ns).
+### Step 5 — U55C integration — done
+- Eth/IPv4/UDP receive front end, MoldUDP64 strip, IGMP join and query response,
+  ARP responder, A/B redundant-feed arbitration with gap recovery.
+- Two clock domains joined by `cdc_fifo` on both sides — gray pointers,
+  `ASYNC_REG`, drop-rather-than-stall on the market-data side.
+- Control plane behind AXI-Lite (`t2t_axil`), shadow/commit for the config that
+  must change coherently.
+- **DoD met**: full chain `t2t_top` simulated end to end with wire frames in and
+  order frames out, and taken through synthesis and place & route for
+  `xcu55c-fsvh2892-2L-e` — **220.0 MHz post-route**, above the 195.3 MHz floor,
+  all constraints met.
+- **What it cost**: closing timing meant a cluster of ~160 MHz paths in the book
+  engine. The decisive fix was splitting the price ladder's read-modify-write
+  (+65 MHz, where earlier register stages bought single digits). Two predictions
+  in this plan were wrong and are documented as such in `step5-board/README.md`.
 
-### Step 6 (stretch) — OUCH fire
-- The session (SoupBinTCP establishment / retransmit / heartbeat) is SW; **the
-  FPGA takes the established session's seq/ack in shadow registers and only
-  assembles + fires the hot-path packet**.
-- Trigger: a step-4b BBO event -> comparator -> a pre-staged order template.
-- Keep it as a design document even if it does not get built (holding the
-  original's §8 policy).
+### Step 6 — strategy, risk gate, OUCH fire — done
+Listed as a stretch goal that might stay a design document. It was built.
+
+- The session (SoupBinTCP establishment / retransmit / heartbeat) is SW; the FPGA
+  takes the established session's seq/ack in shadow registers and only assembles
+  and fires the hot-path packet — the split held exactly as planned.
+- **Two** triggers, not one: order-book imbalance off the BBO, and sweep /
+  momentum ignition tapping the order-table delta directly, which skips the
+  ladder and runs 19 core cycles against imbalance's 28.
+- Both signals were **measured on real data before any RTL** (`FINDINGS §5`):
+  ≥3-level sweeps continue in their direction ~75 % of the time over the next
+  millisecond. Sample size flipped that conclusion once — the first 5 M slice
+  said 39 %, i.e. reversion, on 23 events.
+- Risk gate is not deferred: kill switch, position limit, in-flight limit, each
+  rejection counted separately.
+- **DoD met**: orders and the OUCH/SoupBinTCP/TCP bytes diff clean against the
+  golden, and are re-derived a third time by scapy and by an independent Python
+  decoder so a shared mistake cannot agree with itself.
+
+### Step 7 — host software — done
+- SoupBinTCP session, login/heartbeat, register configuration, ack/fill feedback
+  driving `cfg_order_ack` and the true position.
+- **Two independent OUCH sessions** rather than two senders on one TCP
+  connection: the spec scopes order identity to *(account, token)* and binds each
+  account to a physical port, so a second port deletes the coordination problem
+  instead of managing it.
+- **DoD met**: the whole round trip over a real loopback socket against a mock
+  exchange that parses OUCH independently, including feeding it the bytes the RTL
+  actually emitted.
+
+### Step 8 — on real silicon — done
+Not in the original plan at all; the plan stopped at "measure latency on the
+board". This is that, done properly.
+
+- A Vitis RTL kernel wrapping `t2t_axil`, replaying a real NASDAQ session from
+  HBM and capturing order frames back to HBM, so the datapath is checked and
+  timed on the part rather than in xsim.
+- **Phase A**: the datapath on silicon, MAC-less. 70/70 order frames
+  byte-identical to the golden, **206.7 ns** in-fabric minimum.
+- **Phase B**: a real `cmac_usplus` with the GT in near-end PMA loopback, so MAC,
+  PCS and SerDes are inside the measurement. 1,127,130 frames through the IP with
+  zero receive errors, and the project's first **wire-to-wire** figure:
+  **518.2 ns** minimum, 579.4 ns mean.
+- **Load swept on the card**, not modelled: the floor never moves, the max grows
+  2.21× to 730 ns, and saturation is a knee between 40.6 and 46.3 M msg/s — 20–40×
+  the real NASDAQ peak. Every non-saturated point is byte-identical to the golden.
+- **DoD met**, and it replaced the original one: the plan asked for
+  MAC-receive-to-BBO latency; what exists is wire-to-order through a real MAC,
+  golden-verified, with the load curve behind it.
 
 ## 3. Measurement checklist (common to every stage)
 
@@ -134,9 +201,41 @@ QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stri
   1 cycle, 4.65 ns, 2.2 % of the in-fabric path — in exchange for a full
   combinational decode on the core clock. See `data/FINDINGS.md` §7.1.1.
 
-## 4. Priority
+## 4. Priority — as planned, and as it went
 
-1. **3a -> 3b -> 4a -> 4b** in fixed order. 4a (order table) is the technical
-   core of this project — up to here is a complete portfolio.
-2. Step 5 when board access is available.
-3. Step 6 when time allows. It has value as a document alone.
+The original order held: **3a -> 3b -> 4a -> 4b**, then the board, then the
+stretch goal. Step 4a was correctly identified as the technical core, and it is
+where the two most useful measurements came from (§0 items 2 and 3).
+
+Two things the plan got wrong about its own ordering, both worth keeping:
+
+- **"Step 6 when time allows. It has value as a document alone."** It was built,
+  and building it is what produced the OUCH/TCP byte-exactness check that later
+  caught a legal-but-wrong `Display` code. A design document would not have.
+- **The plan stopped at the board.** It had no step 8, and treated "measure
+  latency on hardware" as the last line of step 5. Getting a real number turned
+  out to be its own project — a Vitis kernel, an HBM replay harness, two latency
+  probes, a licence gate, and two bitstreams — and it is where most of the
+  surprises lived, because simulation cannot see a BRAM that a reset does not
+  clear, or a MAC whose real latency is twice the testbench's constant.
+
+### What is worth doing next
+
+Ordered by value, with the measurement that justifies each:
+
+1. **Nothing in the datapath, first.** The MAC is ~300 ns of a ~518 ns path and
+   the fabric is ~207 ns, so cycle-shaving attacks the smaller term. Know that
+   before spending time on it.
+2. **Integrate `fast_bbo`** (91 % of real book updates answered in one cycle
+   instead of ten). The module and its safety property are proven; the work is
+   the rejoin ordering, which must not change the BBO sequence.
+3. **Integrate `tx_replay_buf`** — proven, and small because the spec makes a
+   resend idempotent.
+4. **Solve inbound on the card's own TCP connection.** Acks and fills arrive at
+   the card's MAC and the FPGA does not parse TCP. This is the last structural
+   gap in the tick-to-trade loop.
+5. **A cabled two-port measurement** against a live feed, replacing near-end
+   loopback. Needs optics and a feed source.
+6. **Re-derive the strategy parameters from a full trading day.** The current
+   ones are tuned on a thin reconstructed book and test the mechanism, not an
+   edge.
