@@ -1562,6 +1562,11 @@ chosen.
 
 ## Running the flows
 
+`make help` lists every target, grouped, with what each costs. It reads the
+`## Group|description` tags on the rules themselves, so it cannot drift out of
+step with the Makefile the way a hand-written list does. Bare `make` shows it
+rather than starting a build.
+
 No `source settings64.sh` needed — every recipe that uses a Xilinx tool sources it
 itself:
 

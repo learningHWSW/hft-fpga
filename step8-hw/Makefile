@@ -91,14 +91,14 @@ XSETUP = { if [ -n "$(XILINX_SETTINGS)" ]; then \
 PART ?= xcu55c-fsvh2892-2L-e
 XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
 
-.PHONY: test-latprobe test test-xsim test-latency test-gap-independent test-real test-real-latency \
+.PHONY: help which-tools test-latprobe test test-xsim test-latency test-gap-independent test-real test-real-latency \
         test-b test-b-latency test-b-real test-sffifo cmac gate-license xo-b xclbin-b run-card-b run-card-b-latency \
         golden clean clean-build distclean real-image run-card-real run-card-b-real elab synth xo xclbin host run-card run-card-latency card-info
 
 # ---------- harness in simulation: HBM in -> HBM out, diffed against golden ----
 # The capture image is parsed by the SAME script the host uses on the card, so a
 # pass here means the record format and the parser agree before any build.
-test: golden replay.bin
+test: golden replay.bin ## Simulate|full chain in Verilator (HBM->HBM, diffed against golden)
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
 	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 \
 	  -o ksim --top-module $(TOP) $(SRC) $(TB)
@@ -106,7 +106,7 @@ test: golden replay.bin
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > k_rtl.log
 	diff k_gold.log k_rtl.log && echo "PASS: kernel HBM->HBM order frames == golden"
 
-test-xsim: golden replay.bin
+test-xsim: golden replay.bin ## Simulate|same, in xsim -- the flow that works where the card is
 	@$(XSETUP) xvlog -sv $(SRC) $(TB)
 	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
 	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=replay.bin -testplusarg cap=capture.bin \
@@ -124,13 +124,13 @@ test-xsim: golden replay.bin
 # stimulus matches the golden at gap 48 and yields 6 orders instead of 4 at gap
 # 512. A latency run exists precisely to change the gap, so it must not use a
 # stimulus whose correct answer moves with it.
-test-latency: $(STEP1)/test_clean.eth
+test-latency: $(STEP1)/test_clean.eth ## Simulate|unloaded latency probe, gap 512, gap-free stimulus
 	$(MAKE) test-xsim GAP=512 QUIET=$(QUIET) \
 	  ITCH=$(STEP1)/test_clean.itch ETH=$(STEP1)/test_clean.eth
 
 # The proof that it worked: the same stimulus must give the same golden-identical
 # frames at two very different gaps.
-test-gap-independent: $(STEP1)/test_clean.eth
+test-gap-independent: $(STEP1)/test_clean.eth ## Simulate|golden must hold at gap 48 AND 512
 	$(MAKE) test-xsim GAP=48  QUIET=$(QUIET) ITCH=$(STEP1)/test_clean.itch ETH=$(STEP1)/test_clean.eth
 	$(MAKE) test-xsim GAP=512 QUIET=$(QUIET) ITCH=$(STEP1)/test_clean.itch ETH=$(STEP1)/test_clean.eth
 	@echo "PASS: golden holds at gap 48 AND gap 512 (stimulus is gap-independent)"
@@ -144,7 +144,7 @@ $(STEP1)/test_clean.itch $(STEP1)/test_clean.eth:
 # FIFOs and a protocol filter leaves the order frames BYTE-IDENTICAL. So this
 # diffs against exactly the same golden as `test-xsim`, which is what makes the
 # comparison worth running -- a Phase B golden of its own would prove nothing.
-test-b: golden replay.bin
+test-b: golden replay.bin ## Simulate|Phase B: the same golden, through the MAC model
 	@$(XSETUP) xvlog -sv $(DEFS_B) $(SRC_B) $(TB)
 	@$(XSETUP) xelab -debug typical -L xpm $(TOP_B) -s $(TOP_B)_sim
 	@$(XSETUP) xsim $(TOP_B)_sim -runall -testplusarg eth=replay.bin -testplusarg cap=capture.bin \
@@ -152,10 +152,10 @@ test-b: golden replay.bin
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > kb_rtl.log
 	diff k_gold.log kb_rtl.log && echo "PASS: Phase B (through the MAC) order frames == golden"
 
-test-b-latency:
+test-b-latency: ## Simulate|Phase B at gap 512
 	$(MAKE) test-b GAP=512 QUIET=$(QUIET)
 
-test-b-real:
+test-b-real: ## Simulate|Phase B on the real slice
 	$(MAKE) -C $(STEP5) real.eth
 	$(MAKE) test-b ITCH=$(STEP5)/real.itch ETH=$(STEP5)/real.eth \
 	  LOC=13 BASE=2800000 RECS=8192 GAP=512
@@ -164,7 +164,7 @@ test-b-real:
 # xsim, not Verilator -- Verilator is not installed on the machine with the card,
 # and a target that silently needs it is a target that does not run where it
 # matters.
-test-real:
+test-real: ## Simulate|real 5M AAPL slice through the chain
 	$(MAKE) -C $(STEP5) real.eth
 	$(MAKE) test-xsim ITCH=$(STEP5)/real.itch ETH=$(STEP5)/real.eth \
 	  LOC=13 BASE=2800000 RECS=8192
@@ -204,7 +204,7 @@ real_gold.log: $(STEP5)/real.eth
 # injector wide enough for lat_probe to attribute samples; lower it to sweep
 # offered load (the knee is between GAP=24 and GAP=16).
 RGAP ?= 512
-run-card-real: host/t2t_run real_replay.bin real_gold.log
+run-card-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase A, real 5M AAPL   [RGAP=512]
 	./host/t2t_run --xclbin t2t.xclbin --replay real_replay.bin \
 	  --capture real_capture.bin --device $(BDF) --gap $(RGAP) \
 	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
@@ -215,7 +215,7 @@ run-card-real: host/t2t_run real_replay.bin real_gold.log
 
 # Phase B: the same replay through the real MAC. Wire cycles are counted at the
 # CMAC's clock, not ap_clk, so the host has to be told which one the probe used.
-run-card-b-real: host/t2t_run real_replay.bin real_gold.log
+run-card-b-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase B, real 5M AAPL, through the MAC  [RGAP=512]
 	./host/t2t_run --xclbin t2t_b.xclbin --replay real_replay.bin \
 	  --capture real_capture.bin --device $(BDF) --gap $(RGAP) \
 	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
@@ -227,13 +227,13 @@ run-card-b-real: host/t2t_run real_replay.bin real_gold.log
 
 # Real-data latency: many more orders than the synthetic feed's four, so the
 # histogram and the min/mean/max actually mean something.
-test-real-latency:
+test-real-latency: ## Simulate|real slice, spaced for attributable latency samples
 	$(MAKE) -C $(STEP5) real.eth
 	$(MAKE) test-xsim ITCH=$(STEP5)/real.itch ETH=$(STEP5)/real.eth \
 	  LOC=13 BASE=2800000 RECS=8192 GAP=512
 
 # ---------- golden: the step 4b/6 chain, unchanged ----------
-golden: $(ITCH)
+golden: $(ITCH) ## Data|regenerate the software golden logs
 	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > k_bbo.log
 	python3 $(STEP6)/scripts/dump_orders.py k_bbo.log $(ORDARGS) > k_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py k_orders.log > k_ouch.log
@@ -248,9 +248,9 @@ replay.bin: $(ETH) scripts/pack_eth.py
 	python3 scripts/pack_eth.py pack $(ETH) replay.bin
 
 # ---------- Vivado: elaboration and out-of-context synthesis ----------
-elab:
+elab: ## Build|elaborate the kernel in Vivado (fast syntax/wiring check)
 	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/elab_kernel.tcl
-synth:
+synth: ## Build|out-of-context synthesis of the kernel
 	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/elab_kernel.tcl -tclargs synth
 
 # ---------- Vitis: package the kernel and link an .xclbin for the card --------
@@ -292,8 +292,7 @@ REF_CLK_ID ?= 2
 t2t_kernel.xo: $(SRC) syn/kernel.xml syn/package_kernel.tcl syn/t2t_kernel_cdc.xdc
 	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/package_kernel.tcl
 
-xo: t2t_kernel.xo
-
+xo: t2t_kernel.xo ## Build|package Phase A as a Vitis .xo
 # --freqhz, NOT --clock.freqHz. The latter is deprecated in 2025.2 and, far worse,
 # is accepted with only a warning and then ignored: the build ran the ENTIRE
 # datapath -- order table URAMs included -- at the platform's default 300 MHz
@@ -302,7 +301,7 @@ xo: t2t_kernel.xo
 # is the expensive kind, so the frequency is verified in the routed report rather
 # than assumed from the command line (see README, "Two clocks means asking for
 # two clocks").
-xclbin: t2t_kernel.xo
+xclbin: t2t_kernel.xo ## Build|link Phase A bitstream -> t2t.xclbin       (~1h10m)
 	./syn/gen_vitis_ini.sh > syn/vitis.ini
 	v++ -l -t hw --platform $(XPFM) \
 	  --config syn/vitis.ini \
@@ -346,7 +345,7 @@ CU_B = t2t_kernel_b_1
 AP_CLK_B   ?= 250000000
 CORE_CLK_B ?= 200000000
 
-cmac:
+cmac: ## Build|generate the cmac_usplus IP (needed once, for Phase B)
 	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/gen_cmac.tcl
 
 # Gate 4: may the IP be turned into a BITSTREAM? A different question from "is
@@ -354,7 +353,7 @@ cmac:
 # seconds; not asking it cost a 68-minute implementation run that met every
 # timing constraint and was then refused by write_bitstream. See
 # syn/gate_license.tcl. xclbin-b depends on this deliberately.
-gate-license:
+gate-license: ## Build|prove FlexLM grants cmac_usplus BEFORE an hour of build
 	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/gate_license.tcl \
 	  | tee license_gate.log
 	@grep -q "LICENCE GATE: PASS" license_gate.log || \
@@ -369,8 +368,7 @@ SRC_B_FILES = $(SRC_B) syn/kernel_b.xml syn/package_kernel_b.tcl syn/t2t_kernel_
 t2t_kernel_b.xo: $(SRC_B_FILES)
 	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/package_kernel_b.tcl
 
-xo-b: t2t_kernel_b.xo
-
+xo-b: t2t_kernel_b.xo ## Build|package Phase B (CMAC inside) as a .xo
 # The GT connection is made by a post-sys-link hook rather than a connectivity
 # directive, because v++ has no --connectivity.gt and declaring the interface is
 # not enough on its own (measured -- see syn/gt_connect.tcl).
@@ -378,7 +376,7 @@ ifndef SKIP_LICENSE_GATE
 XCLBIN_B_DEPS = gate-license
 endif
 
-xclbin-b: t2t_kernel_b.xo $(XCLBIN_B_DEPS)
+xclbin-b: t2t_kernel_b.xo $(XCLBIN_B_DEPS) ## Build|link Phase B bitstream -> t2t_b.xclbin     (~1h13m)
 	./syn/gen_vitis_ini_b.sh > syn/vitis_b.ini
 	v++ -l -t hw --platform $(XPFM) \
 	  --config syn/vitis_b.ini \
@@ -392,7 +390,7 @@ xclbin-b: t2t_kernel_b.xo $(XCLBIN_B_DEPS)
 
 # On the card, Phase B measures wire cycles at the CMAC's 322.265625 MHz rather
 # than ap_clk's 300, so the host has to be told which clock the probe counted.
-run-card-b: host/t2t_run golden replay.bin
+run-card-b: host/t2t_run golden replay.bin ## Card|Phase B, synthetic feed, through the MAC
 	./host/t2t_run --xclbin t2t_b.xclbin --replay replay.bin --capture capture.bin \
 	  --device $(BDF) --gap $(GAP) --loc $(LOC) --base $(BASE) --records $(RECS) \
 	  --quiet $(QUIET) --clk-mhz 322.265625 \
@@ -400,7 +398,7 @@ run-card-b: host/t2t_run golden replay.bin
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > kb_hw.log
 	diff k_gold.log kb_hw.log && echo "PASS: ON CARD, THROUGH THE MAC, order frames == golden"
 
-run-card-b-latency:
+run-card-b-latency: ## Card|Phase B, synthetic feed at gap 512
 	$(MAKE) run-card-b GAP=512
 
 # ---------- host: build, then run on the real card ----------
@@ -416,11 +414,10 @@ host/t2t_run: host/t2t_run.cpp host/t2t_regs.h
 	g++ -std=c++17 -O2 -Wall -I$(XRT)/include -Ihost host/t2t_run.cpp \
 	  -o $@ -L$(XRT)/lib -lxrt_coreutil -pthread
 
-host: host/t2t_run
-
+host: host/t2t_run ## Card|build the host runner
 # THE POINT OF THIS DIRECTORY: replay on real silicon, then diff the frames the
 # card emitted against the same golden the simulations use.
-run-card: host/t2t_run golden replay.bin
+run-card: host/t2t_run golden replay.bin ## Card|Phase A, synthetic feed
 	./host/t2t_run --xclbin t2t.xclbin --replay replay.bin --capture capture.bin \
 	  --device $(BDF) --gap $(GAP) --loc $(LOC) --base $(BASE) --records $(RECS) \
 	  --quiet $(QUIET) --clk-mhz $(shell echo $(AP_CLK) | awk '{print $$1/1000000}') \
@@ -430,11 +427,11 @@ run-card: host/t2t_run golden replay.bin
 
 # Latency on silicon: the gap must exceed the quiet window for samples to be
 # attributable, so this runs the same replay with the injector spaced out.
-run-card-latency:
+run-card-latency: ## Card|Phase A, synthetic feed at gap 512
 	$(MAKE) run-card GAP=512
 
 # what the card currently thinks it is
-card-info:
+card-info: ## Card|what the card currently thinks it is
 	$(XRT)/bin/xrt-smi examine -d $(BDF)
 
 # ---------- cleaning, in three tiers ----------
@@ -455,7 +452,7 @@ card-info:
 #
 # Nothing in any tier removes a tracked file. host/t2t_regs.h is regenerated by
 # its own rule when it is out of date, so there is no reason to delete it.
-clean:
+clean: ## Clean|logs, sim scratch, small captures        (seconds)
 	rm -rf obj_dir xsim.dir .Xil xsim*.jou xsim*.log
 	rm -f  *.log *.jou *.pb *.wdb *.wcfg
 	# small, regenerated by the next `make test`/`make run-card`
@@ -469,7 +466,7 @@ clean:
 
 # Everything v++ and Vivado regenerate from the RTL and the Tcl. Minutes, not
 # hours -- the .xo is repackaged in well under a minute and _x_* is pure scratch.
-clean-build: clean
+clean-build: clean ## Clean|+ packaged kernels, .xo, v++ temp dirs   (minutes)
 	rm -rf packaged_kernel packaged_kernel_b tmp_kernel_pack tmp_kernel_b_pack \
 	       tmp_cmac syn/out_kernel _x _x_a _x_b _xbgate _xg .ipcache \
 	       reports_b_fail analyzer_input \
@@ -484,7 +481,7 @@ clean-build: clean
 #   ip/             `make cmac`, a Vivado IP generation
 #   real_replay.bin `make -C ../step5-board real.eth` then pack_eth, over the
 #                   full-day capture
-distclean: clean-build
+distclean: clean-build ## Clean|+ bitstreams, ip/, real_replay.bin       (HOURS, asks)
 	@echo "distclean removes work measured in HOURS:"
 	@echo "  *.xclbin        ~1 h 10 m each to relink"
 	@echo "  ip/             requires 'make cmac'"
@@ -499,7 +496,7 @@ distclean: clean-build
 # orphans, bucket placement) is driven directly rather than tested by implication
 # through the full chain. The expected latency is re-derived by the testbench
 # from the same interface events, independently of the DUT.
-test-latprobe:
+test-latprobe: ## Simulate|unit-test the latency instrument itself
 	@$(XSETUP) xvlog -sv rtl/lat_probe.sv tb/tb_lat_probe.sv
 	@$(XSETUP) xelab -debug typical tb_lat_probe -s tb_lat_probe_sim
 	@$(XSETUP) xsim tb_lat_probe_sim -runall
@@ -515,7 +512,7 @@ test-latprobe:
 # Run at four clock ratios, because the failure modes are not symmetric: a reader
 # faster than the writer is the feed path, a slower one fills the array and
 # exercises s_tready, and equal clocks are the order path.
-test-sffifo:
+test-sffifo: ## Simulate|store-and-forward FIFO at four clock ratios
 	@$(XSETUP) xvlog -sv rtl/axis_sf_fifo.sv tb/tb_axis_sf_fifo.sv
 	@$(XSETUP) xelab -debug typical tb_axis_sf_fifo -s tb_sf_sim
 	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=1.5515
@@ -524,11 +521,32 @@ test-sffifo:
 	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.5515 -testplusarg rper=1.5515
 
 # Convenience alias: build the replay image and nothing else.
-real-image: real_replay.bin
+real-image: real_replay.bin ## Data|build real_replay.bin from the full-day capture
 	@ls -la real_replay.bin
 
 # Diagnostic: which Xilinx tools will the recipes actually use?
-which-tools:
+which-tools: ## Info|which Xilinx tools the recipes will actually use
 	@$(XSETUP) echo "vivado : $$(command -v vivado)"; \
 	  echo "v++    : $$(command -v v++)"; \
 	  echo "xvlog  : $$(command -v xvlog)"
+
+# ---------- help ----------
+# Reads the `## Group|description` tags on the rules themselves, so it cannot
+# drift out of step with the targets the way a hand-written list does.
+.DEFAULT_GOAL := help
+help: ## Info|this list
+	@echo "step8-hw -- tick-to-trade on the Alveo U55C"
+	@echo
+	@echo "No 'source settings64.sh' needed; recipes source it themselves."
+	@echo "Override with XILINX_SETTINGS=<path>, or set it empty to use PATH."
+	@echo
+	@awk 'BEGIN{FS="## "; split("Simulate Build Card Data Clean Info",ord," "); \
+	          for(i in ord) rank[ord[i]]=i } \
+	     /^[a-zA-Z_][a-zA-Z0-9_.-]*:.*## / { \
+	          split($$2,a,"|"); t=$$1; sub(/:.*/,"",t); \
+	          printf "%d\t%s\t%s\t%s\n", rank[a[1]], a[1], t, a[2] }' $(MAKEFILE_LIST) \
+	  | sort -k1,1n -s \
+	  | awk -F'\t' '{ if ($$2!=g) { g=$$2; printf "\n%s\n", toupper(g) } \
+	                   printf "  %-22s %s\n", $$3, $$4 }' 
+	@echo
+	@echo "Typical: make xclbin-b && make run-card-b-real"
