@@ -51,17 +51,47 @@ by **dropping and counting**, never by emitting a wrong order.
 
 ### Data path
 
+**RX — market data in.** The feed arrives on two lines and is filtered, stripped
+and re-joined before a single message stream reaches the decoder.
+
 ```
-        CMAC RX 322 MHz            core clock 215 MHz                          CMAC TX
-QSFP28 ─► CMAC ─► cdc_fifo ─► eth/ip/udp ─► MoldUDP64 ─► ITCH ─► order ─► price ─► BBO
-          100G   (clock       filter+strip   splitter    decode   table    ladder    │
-                  crossing)    (step 5)       (step 3b)   (step 2) (step 4a)(step 4b) │
-                                                              │                       ▼
-                                        sweep_detect ◄────────┤              strategy (imbalance
-                                        (momentum, step 6)    │               + sweep, risk gate)
-                                                              ▼                       │
-                          CMAC ◄─ cdc_fifo ◄─ tcp_tx ◄─ ouch_builder ◄────────────────┘
-                          TX              (TCP/IP/Eth)  (OUCH 4.2 / SoupBinTCP)
+                           ┌─► eth/ip/udp A ─► drop_fifo ─┐
+QSFP28 ─► CMAC ─► cdc_fifo ─┤   filter + strip             ├─► feed_ab_arb ─► mold_splitter
+  RX      100G    322→215   │                              │   redundant-feed   realign to
+          322MHz    MHz     └─► eth/ip/udp B ─► drop_fifo ─┘   gap recovery      messages
+                            │                                                        │
+                            └─► igmp_query_detect                                    ▼
+                                (arms a report on TX)                          itch_decoder
+                                                                               field extract
+                                                                                     │
+                                                              ┌──────────────────────┤ book delta
+                                                              ▼                      ▼
+                                                        sweep_detect            order_table
+                                                        momentum, skips         ref→{px,qty}
+                                                        the ladder                   │
+                                                                                     ▼
+                                                                               price_ladder
+                                                                                L2 → BBO
+```
+
+**TX — order out.** The order frame crosses back to the CMAC clock and wins
+arbitration against the control traffic, so a membership report can never delay a
+trade.
+
+```
+     sweep ─┐
+            ├─► strategy ─► ouch_builder ─► tcp_tx ─► cdc_fifo ─┐
+     BBO ───┘   + risk gate  OUCH 4.2 /     TCP/IPv4   215→322  │
+                             SoupBinTCP      /Eth       MHz     │
+                                                                ▼
+    QSFP28 ◄─ CMAC ◄─ axis_tx_arb ◄─────────────────────────────┘ orders take the
+       ▲       TX          ▲                                      priority port
+       │                   │
+       │                   └─ axis_tx_arb ◄─ igmp_join      control traffic,
+       │                                  ◄─ arp_responder  yields to orders
+       │
+       └─ Phase B puts the GT in near-end loopback, so everything transmitted
+          returns on RX and the measurement spans MAC, PCS and SerDes
 ```
 
 - **No backpressure to the wire.** Bursts are absorbed by FIFOs sized from

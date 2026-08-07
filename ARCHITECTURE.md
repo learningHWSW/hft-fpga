@@ -12,17 +12,48 @@ details see each step's README; for the roadmap and per-step DoD see
 The pipeline is a full **tick-to-trade** path: a 100 GbE stream of NASDAQ
 MoldUDP64/ITCH in, an OUCH order frame out, wire to wire on the FPGA.
 
+**RX — market data in.** Two feed lines, filtered and stripped independently, then
+re-joined into one message stream. `feed_ab_arb` recovers a sequence gap on one
+line from the other; the two `drop_fifo`s absorb bursts and count what they cannot.
+
 ```
-        CMAC RX                     core clock domain (215 MHz)                            CMAC TX
-QSFP28 ─► CMAC ─► cdc_fifo ─► eth/ip/udp ─► mold_splitter ─► itch_decoder ─► order_table ─► price_ladder ─► BBO
-          100G   clock cross   (step 5)      (step 3b)         (step 2)       (step 4a)      (step 4b)      │
-          322MHz                filter+strip realign to msgs   field extract  ref→{px,qty}  L2 aggregate    │
-                                                                   │                                        ▼
-                                              sweep_detect ◄────────┤  delta stream               strategy (imbalance
-                                              (step 6, momentum)    │                              + sweep, risk gate)
-                                                                    ▼                                       │
-                             CMAC ◄─ cdc_fifo ◄─ tcp_tx ◄─ ouch_builder ◄──────────────────────────────────┘
-                             TX     clock cross  TCP/IP/Eth  OUCH 4.2 / SoupBinTCP                       (step 6)
+                           ┌─► eth_ip_udp_rx A ─► drop_fifo ─┐
+QSFP28 ─► CMAC ─► cdc_fifo ─┤   MAC/IP/UDP filter            ├─► feed_ab_arb ─► mold_splitter
+  RX      100G    322→215   │   + header strip               │   A/B redundant   realign to
+         322 MHz   MHz      └─► eth_ip_udp_rx B ─► drop_fifo ─┘   gap recovery    message
+                            │                                                     boundaries
+                            └─► igmp_query_detect                                      │
+                                arms a membership report                               ▼
+                                on the TX side                                   itch_decoder
+                                                                                 field extract
+                                                                                       │
+                                                            ┌──────────────────────────┤ book
+                                                            ▼                          ▼ delta
+                                                      sweep_detect               order_table
+                                                      momentum; bypasses         ref→{px,qty}
+                                                      the ladder entirely              │
+                                                                                       ▼
+                                                                                 price_ladder
+                                                                                  L2 → BBO
+```
+
+**TX — order out.** The assembled frame crosses back to the CMAC clock, then two
+chained arbiters merge it with control traffic. Orders sit on the priority port of
+the outer arbiter, so an IGMP report or an ARP reply can never delay a trade.
+
+```
+     sweep ─┐
+            ├─► strategy ─► ouch_builder ─► tcp_tx ─► cdc_fifo ─┐
+     BBO ───┘   imbalance +  OUCH 4.2 /     TCP/IPv4   215→322  │
+                risk gate    SoupBinTCP      /Eth       MHz     │
+                                                                ▼
+    QSFP28 ◄─ CMAC ◄─ u_tx_arb ◄───────────────────────────────┘ s0, priority
+       ▲       TX        ▲
+       │                 └─ u_ctrl_arb ◄─ igmp_join       s1, yields to orders
+       │                                ◄─ arp_responder
+       │
+       └─ Phase B puts the GT in near-end PMA loopback, so everything transmitted
+          returns on RX; the measured interval therefore spans MAC, PCS and SerDes
 ```
 
 Everything from the UDP strip to the OUCH builder runs in one core clock domain,
