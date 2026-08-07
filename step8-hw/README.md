@@ -1361,6 +1361,47 @@ move — it just was not, while a deeper path existed somewhere else. The lesson
 narrower than "measure first": a stale conclusion about a critical path is
 especially misleading, because fixing the real one *restores* it.
 
+### The Pblock advice is wrong for a third reason: the failing paths are already local
+
+Having moved the critical path back to the ladder, the obvious next step was the
+Pblock that `step5-board/README.md` has recommended since step 5, now apparently
+vindicated: `askocc_reg[3125]` at **4 logic levels and 3.683 ns of route**, 86 %
+routing, is the textbook signature of cells placed too far apart.
+
+Measuring where they actually are says otherwise (`syn/pblock_probe.tcl`):
+
+| path | slack | route | from | to |
+|---|---|---|---|---|
+| `r_fwd_reg` | +0.099 ns | 2.391 ns | `SLICE_X33Y131` | `SLICE_X37Y134` |
+| `q_bai_reg[2]` | +0.150 ns | 2.943 ns | `SLICE_X30Y162` | `SLICE_X32Y164` |
+
+**Four columns and three rows apart, and two columns and two rows apart.** These
+endpoints are neighbours. There is no distance for a floorplan to remove, and
+pulling the ladder into a tighter region cannot shorten a net whose endpoints are
+already touching.
+
+So the route delay is not span, it is **congestion and fanout**: the occupancy
+bitmaps are 4,096 flops per side feeding a grouped reduction, so those nets are
+enormously loaded and take slow paths through busy switchboxes even over three
+slices. The lever for that is restructuring or further pipelining the group scan
+— reducing the fanout itself — not moving it.
+
+That is the third distinct reason the Pblock recommendation has failed to survive
+measurement, and the three are worth keeping together because they are different:
+
+1. it was written when the ladder was the critical path, and the ladder stopped
+   being the critical path (the read-modify-write split fixed it);
+2. when checked, the binding path was the order table's entry mux at 10 logic
+   levels — half logic delay, which no floorplan moves;
+3. now that the path is back in the ladder and *is* routing-dominated, the
+   endpoints turn out to be adjacent, so there is no span to compact.
+
+A pblock was written and then deleted rather than committed: at the
+`OPT_DESIGN.TCL.PRE` hook where it would have to run, nothing is placed yet, so
+the guard that checks where the ladder sits could never fire — it would have been
+dead code that looked like a floorplan. The probe that produced the table above is
+committed instead, because the measurement is the useful part.
+
 ### The rebuild produced a bitstream — and only one of the two backoffs did anything
 
 `make xclbin-b` linked in **1 h 13 m** and wrote `t2t_b.xclbin` (53.1 MB) with

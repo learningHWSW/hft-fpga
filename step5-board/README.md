@@ -473,9 +473,13 @@ next move is a Pblock for the ladder, not more pipelining.
 > which a Pblock cannot help. Removing that (a one-hot entry select in place of
 > priority-encode-then-mux, `step4a`) took the core from +0.011 ns to +0.099 ns —
 > and moved the critical path *back* to the ladder, where it is now 86 % routing
-> at 4 logic levels. So the Pblock advice is right again, for the original reason,
-> just not while a deeper path existed elsewhere. See
-> [step8-hw/README.md](../step8-hw/README.md).
+> at 4 logic levels. That looked like the Pblock advice being right again — and it
+> is not. Measuring where the failing endpoints actually sit shows them **four
+> columns and three rows apart**, already adjacent, so there is no span for a
+> floorplan to remove; the route delay is congestion and fanout from the 4,096-flop
+> occupancy scan, not distance. The lever is restructuring that scan. See
+> [step8-hw/README.md](../step8-hw/README.md), which keeps all three reasons this
+> recommendation failed to survive measurement.
 
 ### The order table at its real size: 163.5 MHz
 
