@@ -262,17 +262,22 @@ Honest scope, all of it stated in the per-step READMEs:
 
 ## License
 
-**No licence is currently declared, which means all rights are reserved by
-default** — others may read the code on GitHub but have no permission to use,
-modify or redistribute it. If that is not the intent, add a `LICENSE` file;
-permissive (MIT, Apache-2.0) or copyleft (GPL-3.0) are the usual choices for a
-portfolio project, and Apache-2.0 additionally grants patent rights.
+Copyright (c) 2026 jinsuklee. All rights reserved.
 
-Third-party components keep their own terms:
+No licence is granted for this repository. It is published as a portfolio and
+reference work: you are welcome to read it, and to cite or link to it, but use,
+modification, redistribution and derivative works are not permitted without
+written permission from the author.
 
-- **NASDAQ TotalView-ITCH data** is NASDAQ's, downloaded directly from them and
-  **not redistributed here** — `data/*.gz` is deliberately not committed.
-- The **ITCH 5.0** and **OUCH 4.2 / SoupBinTCP 3.00** specifications are NASDAQ's.
-  This repository implements them; it does not reproduce them.
-- **`cmac_usplus`** is AMD/Xilinx IP, used under the licence AMD issues for it and
-  not included in this repository.
+Third-party components are not covered by the above and keep their own terms:
+
+| Component | Terms |
+|---|---|
+| NASDAQ TotalView-ITCH data | NASDAQ's. Downloaded directly from them and **not redistributed here** — `data/*.gz` is deliberately not committed |
+| ITCH 5.0, OUCH 4.2, SoupBinTCP 3.00 specifications | NASDAQ's. This repository implements them; it does not reproduce them |
+| `cmac_usplus` | AMD/Xilinx IP, used under the licence AMD issues for it and not included here |
+| AMD Vitis / Vivado, XRT, the U55C platform | AMD's, under their own licence terms |
+
+If you want this code under an open-source licence, open an issue — the intent is
+to keep it readable rather than to restrict it, and a permissive licence can be
+added on request.
