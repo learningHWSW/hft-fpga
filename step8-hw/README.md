@@ -1,9 +1,9 @@
 # Step 8 — on real silicon (Alveo U55C)
 
 Every earlier step was verified in simulation and taken through synthesis and
-place & route, but never executed on a card — the top-level README says so
-plainly, and "no physical card" is the first item under *What is not done*. This
-step removes that caveat. There is a real U55C in this machine, and this
+place & route, but never executed on a card. This step removes that caveat: the
+chain now runs on real silicon, and the numbers the top-level README quotes come
+from here. There is a real U55C in this machine, and this
 directory is what puts the tick-to-trade datapath on it and checks the result
 against the same golden the testbenches use.
 

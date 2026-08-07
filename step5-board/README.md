@@ -21,7 +21,7 @@ Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
 | Line rate, **feed path alone** (≥195.3 MHz) | met — 216.5 MHz |
 | Line rate, **full chain** | **met — 224.3 MHz post-route, timing closed** |
 | Order table at its verified size in hardware | done — 2^13 × 16 as URAM (66 of 960) |
-| Hardware replay / measured MAC-to-BBO latency | NOT DONE — needs a card |
+| Hardware replay / measured latency on silicon | done — see [step8-hw](../step8-hw/) |
 
 ### OpenNIC is a viable host — and it removes two blockers
 
@@ -598,6 +598,24 @@ line-rate timing (216.5 MHz ≥ 195.3 MHz), and the CMAC clock crossing.
 3. Only once there is a reason to exceed 216 MHz is more timing work justified;
    the next step there is splitting the ladder's read-modify-write.
 
-**A limit worth stating plainly: measured MAC-to-BBO latency needs a card.**
-Simulation gives exact cycle counts, and cycle counts are not nanoseconds on
-silicon. Until an Alveo is in a slot, no latency claim here is measured.
+Item 3 was done, and it is what closed the full chain: splitting the ladder's
+read-modify-write bought **+65 MHz** where earlier register stages had bought
+single digits.
+
+**The limit this section used to end on — "measured latency needs a card" — has
+been removed.** There is an Alveo in a slot, and [step 8](../step8-hw/) replays a
+real 5 M-message session on it: **206.7 ns** minimum in fabric, and **518.2 ns**
+wire-to-wire through a real 100 G MAC, with 70 of 70 order frames byte-identical
+to the golden. Cycle counts are still not nanoseconds, which is precisely why that
+step exists.
+
+Two things measured there reflect back on the reasoning above:
+
+- **The core clock does not run at 216 MHz in the kernel; it runs at 215.** The
+  out-of-context number is an upper bound, not a promise — inside the Vitis shell
+  the kernel shares routing with the platform's own logic.
+- **The critical path was not where this document said it was.** By the time it
+  was checked against a routed build, the binding path had moved to the order
+  table's entry mux (10 logic levels, half logic delay), and the Pblock this
+  README recommends could not have helped it. See the annotation at the end of the
+  timing section.

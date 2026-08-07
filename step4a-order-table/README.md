@@ -19,6 +19,29 @@ The golden is `scripts/dump_book.py` (exact map). An empty diff against the RTL'
 book-delta log is PASS. The TB additionally checks **0 drops** (the table is
 always ready in time) and **0 overflow** (sized to the symbol).
 
+### The testbench was wrong twice, and it looked like an RTL bug
+
+`make test` failed on unmodified sources with the five inserts present and every
+lookup (E, X, U, D, C) missing — which reads exactly like a broken order table. It
+was a broken testbench, in two independent ways:
+
+- **It never waited for `init_done`**, which was not even connected. The table
+  holds `s_ready` low for `SETS` cycles while it sweeps clear, and the testbench
+  drove straight through that window: inserts still emitted their add-deltas (an
+  `A` needs no lookup) while every write was overwritten by the sweep's zeros, so
+  every later lookup missed.
+- **It fed faster than `s_ready` allowed**, dropping three messages. This module
+  is a correctness-first FSM, 2 cycles per message and 3 for `U`, and applies real
+  backpressure. The full chain absorbs that with the message FIFO in `fh_core`;
+  this testbench feeds the decoder directly with no such buffer, so a 0–2 cycle
+  inter-message gap let a short message finish decoding while the table was still
+  busy.
+
+The full chain never had either problem, because `fh_core` exports `init_done` and
+the kernel gates the feed on it. So the integrated tests passed and only the unit
+test was wrong — which is the more dangerous way round, and worth remembering when
+a unit test disagrees with a system that works.
+
 ## Design (measurement-based, data/FINDINGS.md §4)
 
 - **d-way set-associative, mixing hash**: for the all-symbols aggregate, monotonic
@@ -52,9 +75,49 @@ always ready in time) and **0 overflow** (sized to the symbol).
   the same-set hazard between messages disappear without forwarding. On the 64-bit
   input a message spans several beats, so the decoder does not emit faster than
   this and there are no drops.
-- **Next (performance)**: II=1 pipelining (read/modify/write + forwarding, U uses
-  dual-port to access two sets at once). Now that the correctness baseline is set,
-  as a separate commit comparing throughput before/after on the same replay.
+- **II=1 pipelining is built**, not pending: `rtl/order_table_pipe.sv` is a
+  verified drop-in with identical ports and byte-identical output, selected with
+  `+define+OT_PIPE`. Unloaded latency is the same either way — 5 cycles — so it
+  buys throughput, not latency, which is worth knowing before reaching for it.
+
+## The entry select was the whole design's critical path
+
+Measured on the routed 215 MHz kernel, **92 of the 200 worst core-clock endpoints
+were this module's `sel_ent` register** — against 11 in the price ladder, which is
+where the project's notes had been pointing for a long time. The worst path ran
+10 logic levels at +0.011 ns, roughly half logic delay and half routing, so no
+amount of floorplanning could have moved it.
+
+The depth came from doing the selection twice. The way comparators already produce
+a **one-hot** vector, because `order_ref` is unique — the premise of keying the
+table on it. Collapsing that to a binary `hit_way` and using it to drive a 16:1
+mux over 130-bit entries inserts a priority encoder between the compare and the
+mux purely to re-derive what the compare already knew.
+
+Selecting straight off the one-hot removes the encoder:
+
+| | before | after |
+|---|---|---|
+| core clock margin at 215 MHz | +0.011 ns | **+0.099 ns** |
+| worst endpoint | `sel_ent_reg`, 10 levels | moved to the ladder |
+| latency | — | unchanged |
+
+Nine times the margin for no cycles. A simulation-only assertion states the
+uniqueness assumption rather than trusting it, and `hit_way` is still produced for
+the write address, which is consumed a cycle later and off this path.
+
+## URAM cannot be initialised
+
+`initial mem[s] = '0` works in simulation and in BRAM and is a lie on the device:
+URAM comes up indeterminate, every `valid` bit is whatever the silicon felt like,
+and the first lookup hits garbage that looks like live orders. The table therefore
+sweeps itself clear after reset and holds `init_done` low until it finishes. The
+feed must not be enabled before that rises — `s_ready` is low throughout, and the
+no-backpressure market-data path ignores `s_ready` by design, so anything started
+early silently loses its first `SETS` messages.
+
+That is not hypothetical. It is exactly what made this step's own testbench fail
+(below).
 
 ## Structure
 

@@ -47,7 +47,10 @@ Two deliberate choices worth naming:
 **Position moves optimistically**, as though every order fills in full. This is
 wrong, but wrong in the safe direction: an unfilled order still consumes
 position budget, so the error can only ever suppress trading, never permit more
-of it. Wiring real fills back from the host is future work.
+of it. The host now closes that loop — [step 7](../step7-host/) decodes Order
+Accepted / Executed / Rejected, pulses `cfg_order_ack` to release the in-flight
+limiter, and keeps the true position against which this optimistic one is the
+safe approximation.
 
 **A blocked transmit path drops the order and counts it, never queues it.** A
 queued order here is a stale order — by the time the path drains, the book that
@@ -402,10 +405,20 @@ tb/tb_sweep.sv           self-checking TB for the sweep detector
 
 The chain now runs wire → book → decision → order bytes. What it does not have:
 
-1. **Retransmission.** The transmit path fires and forgets. A lost segment is
-   a lost order until software notices, and software has not been written.
-2. **The handshake itself.** Software must establish the connection and load
-   the shadow registers; none of that host code exists yet.
-3. **Real fills.** Position is optimistic; the host does not yet report back.
-4. **Measured latency.** Cycle counts are exact in simulation and are not
-   nanoseconds on silicon. That needs a card.
+1. **Retransmission.** The hot path still fires and forgets, but the buffer that
+   makes recovery possible is built and proven:
+   [`tx_replay_buf.sv`](rtl/tx_replay_buf.sv), `make test-replay`. The spec makes
+   it far smaller than it looks — an Enter Order carrying a previously used token
+   is *ignored*, so a resend cannot double-fill and needs no dedup protocol. It is
+   **not wired into `t2t_top`**.
+2. **The handshake itself.** Written — [step 7](../step7-host/) establishes the
+   connection over SoupBinTCP, logs in, loads the shadow registers and pulses
+   `cfg_load`. What still has no answer is the *inbound* direction on hardware:
+   acks arrive at the card's MAC and the FPGA does not parse TCP.
+3. **Real fills.** The host reports back (item above); the FPGA's own position
+   stays deliberately optimistic, which errs only toward suppressing trades.
+4. **Measured latency.** Measured. [Step 8](../step8-hw/) puts the chain on an
+   Alveo U55C: **206.7 ns** in fabric and **518.2 ns** wire-to-wire through a real
+   100 G MAC, 70 of 70 order frames byte-identical to the golden. The sweep and
+   imbalance paths were 19 and 28 core cycles in this document's budget; on
+   silicon the whole in-fabric path measures 62 cycles at the probe's clock.

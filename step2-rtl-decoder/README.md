@@ -53,11 +53,22 @@ scripts/dump_itch.py — a golden log in the same format from the same file
 - For regressions, `-runall` (batch) is faster. It can also be combined with
   xelab via the `-R` option.
 
-## Next (step 3+)
+## Where this went
 
-1. Generalise the decoder to 512-bit (100G CMAC) width — the core challenge: the
-   realignment where several messages end and start within one beat. The current
-   64-bit version stays as the reference.
-2. Combine a MoldUDP64 stripper (with sequence-gap detection) + a
-   UDP/IP/Ethernet parser.
-3. The order table + top-of-book engine (the step-1 C model is the golden).
+All three are built; kept as the plan they came from.
+
+1. **512-bit generalisation.** The decoder itself needed only a width parameter —
+   `itch_decoder #(.DATA_W(512))` is unchanged. The realignment, several messages
+   ending and starting inside one beat, is a separate module:
+   [step3b-splitter](../step3b-splitter/).
+2. **MoldUDP64 stripper with sequence-gap detection**
+   ([step3a](../step3a-mold-stripper/)) and the UDP/IP/Ethernet front end
+   ([step5-board](../step5-board/)).
+3. **Order table and top-of-book engine** ([step4a](../step4a-order-table/),
+   [step4b](../step4b-book/)), with the step-1 C model as the golden throughout.
+
+One consequence of the width change is worth noting here, because this module's
+header used to promise the opposite: at 512 bits every ITCH message (max 50 B)
+arrives inside one 64-byte beat, so the cut-through variant that fires per-field
+before `tlast` has no partial-message window left to exploit. It was evaluated and
+dropped — see the design-choices note above and `data/FINDINGS.md` §7.1.1.

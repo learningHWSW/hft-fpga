@@ -73,11 +73,18 @@ it becomes the baseline against the FPGA.
    sequence-number gap detection (packet loss -> snapshot/re-request) happens
    there too.
 
-## Next (step 2)
+## Where this went
 
-In a cocotb + Verilator environment:
-1. `itch5.h` -> `itch5_pkg.sv` (type/size/offset constants)
-2. An ITCH decoder module taking an AXI-Stream input (64-bit @ ~322 MHz, or
-   512-bit for the U55C's 100G path) — extract per-type fields in parallel and
-   emit them on an internal struct bus
-3. Diff this parser's output (BBO log) against the RTL simulation output
+All three items below were done; this section is kept as the plan they came from.
+
+1. `itch5.h` -> `itch5_pkg.sv` (type/size/offset constants) —
+   [step2-rtl-decoder](../step2-rtl-decoder/)
+2. An ITCH decoder on AXI-Stream, per-type fields extracted in parallel onto a
+   struct bus. Built at 64-bit, then generalised to 512-bit for the U55C's 100 G
+   path — [step3b-splitter](../step3b-splitter/) is where the realignment lives.
+3. Diffing this parser's BBO log against the RTL — that became the project's
+   whole verification method, applied at every stage rather than just this one.
+
+This model is still the golden the RTL is measured against, and still the tool
+that produced the sizing measurements in [data/FINDINGS.md](../data/FINDINGS.md):
+`otable_sim.c`, `sym_conc.c`, `itch_hist.c`.
