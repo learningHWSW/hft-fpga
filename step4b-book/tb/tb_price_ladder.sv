@@ -124,6 +124,72 @@ module tb_price_ladder;
     .oob_cnt(oob_cnt)
   );
 
+  // ---------- fast_bbo, measured on the SAME delta stream ----------
+  // Not in the datapath: it observes the deltas the ladder consumes and its own
+  // output is compared against the ladder's, which is the authoritative answer.
+  // The point is to get the certain/defer split on REAL data rather than on the
+  // uniform synthetic stimulus of tb_fast_bbo -- 98 % there says little, because
+  // how often a removal empties the best level depends entirely on the message
+  // mix, and D is 42.6 % of a real feed.
+  logic        fb_valid, fb_certain, fb_has_bid, fb_has_ask;
+  logic [47:0] fb_ts;
+  logic [31:0] fb_bid_price, fb_bid_qty, fb_ask_price, fb_ask_qty;
+  logic [31:0] fb_certain_cnt, fb_defer_cnt;
+
+  fast_bbo u_fb (
+    .clk(clk), .rst_n(rst_n),
+    .i_valid(df_valid && df_ready),
+    .i_ts       (df_data[185:138]),
+    .i_side     (df_data[137:130]),
+    .i_has_rem  (df_data[129]),
+    .i_rem_price(df_data[128:97]),
+    .i_rem_qty  (df_data[96:65]),
+    .i_has_add  (df_data[64]),
+    .i_add_price(df_data[63:32]),
+    .i_add_qty  (df_data[31:0]),
+    .i_lad_valid(bbo_valid),
+    .i_lad_has_bid(bbo_has_bid), .i_lad_bid_price(bbo_bid_price),
+    .i_lad_bid_qty(bbo_bid_qty),
+    .i_lad_has_ask(bbo_has_ask), .i_lad_ask_price(bbo_ask_price),
+    .i_lad_ask_qty(bbo_ask_qty),
+    .o_valid(fb_valid), .o_certain(fb_certain), .o_ts(fb_ts),
+    .o_has_bid(fb_has_bid), .o_bid_price(fb_bid_price), .o_bid_qty(fb_bid_qty),
+    .o_has_ask(fb_has_ask), .o_ask_price(fb_ask_price), .o_ask_qty(fb_ask_qty),
+    .certain_cnt(fb_certain_cnt), .defer_cnt(fb_defer_cnt)
+  );
+
+  // Safety check against the ladder itself: hold the last certain fast answer and
+  // compare it to the ladder's record for the same timestamp when it arrives.
+  logic        fbq_valid = 0, fbq_has_bid, fbq_has_ask;
+  logic [47:0] fbq_ts;
+  logic [31:0] fbq_bid_price, fbq_bid_qty, fbq_ask_price, fbq_ask_qty;
+  int fb_checked = 0, fb_wrong = 0;
+
+  always @(posedge clk) if (rst_n) begin
+    if (fb_valid && fb_certain) begin
+      fbq_valid <= 1'b1; fbq_ts <= fb_ts;
+      fbq_has_bid <= fb_has_bid; fbq_bid_price <= fb_bid_price;
+      fbq_bid_qty <= fb_bid_qty;
+      fbq_has_ask <= fb_has_ask; fbq_ask_price <= fb_ask_price;
+      fbq_ask_qty <= fb_ask_qty;
+    end
+    if (bbo_valid && fbq_valid && bbo_ts == fbq_ts) begin
+      fb_checked++;
+      if (fbq_has_bid !== bbo_has_bid || fbq_has_ask !== bbo_has_ask ||
+          (bbo_has_bid && (fbq_bid_price != bbo_bid_price ||
+                           fbq_bid_qty   != bbo_bid_qty)) ||
+          (bbo_has_ask && (fbq_ask_price != bbo_ask_price ||
+                           fbq_ask_qty   != bbo_ask_qty))) begin
+        fb_wrong++;
+        if (fb_wrong <= 3)
+          $display("FAST_BBO MISMATCH ts=%0d fast bid %0d@%0d ask %0d@%0d | ladder bid %0d@%0d ask %0d@%0d",
+                   fbq_ts, fbq_bid_qty, fbq_bid_price, fbq_ask_qty, fbq_ask_price,
+                   bbo_bid_qty, bbo_bid_price, bbo_ask_qty, bbo_ask_price);
+      end
+      fbq_valid <= 1'b0;
+    end
+  end
+
   // ---------- monitor ----------
   int fd_log;
   int n_bbo = 0, n_dropped = 0;
@@ -203,6 +269,12 @@ module tb_price_ladder;
     // oob = prices outside the ladder band (deep/stub quotes far from BBO).
     // Dropping them is by design (PLAN §2.1); the BBO diff is what proves
     // correctness — if an oob price should have been the BBO, the diff fails.
+    $display("FAST_BBO: certain=%0d defer=%0d (%0d%% early), checked=%0d wrong=%0d",
+             fb_certain_cnt, fb_defer_cnt,
+             (fb_certain_cnt * 100) / ((fb_certain_cnt + fb_defer_cnt) > 0 ?
+                                       (fb_certain_cnt + fb_defer_cnt) : 1),
+             fb_checked, fb_wrong);
+    if (fb_wrong != 0) $display("FAIL: fast_bbo was certain and wrong %0d times", fb_wrong);
     $display("TB done: %0d BBO updates, dropped=%0d overflow=%0d oob=%0d miss=%0d",
              n_bbo, n_dropped, overflow_cnt, oob_cnt, miss_cnt);
     if (mf_drop != 0) $display("FAIL: %0d messages dropped before the table", mf_drop);
