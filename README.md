@@ -292,14 +292,18 @@ Honest scope, all of it stated in the per-step READMEs:
 
 ## License
 
-Copyright (c) 2026 jinsuklee. All rights reserved.
+This project is licensed under the **GNU General Public License v3.0** — see
+[LICENSE](LICENSE) for the full text.
 
-No licence is granted for this repository. It is published as a portfolio and
-reference work: you are welcome to read it, and to cite or link to it, but use,
-modification, redistribution and derivative works are not permitted without
-written permission from the author.
+Copyright (c) 2026 jinsuklee
 
-Third-party components are not covered by the above and keep their own terms:
+In short: you may use, study, modify and redistribute this work, and any
+derivative you *distribute* must also be GPL-3.0 and ship its source. Running it
+privately, including for trading, carries no obligation to publish anything. The
+licence also grants patent rights from contributors, which matters more here than
+in most projects.
+
+Third-party components are **not** covered by the above and keep their own terms:
 
 | Component | Terms |
 |---|---|
@@ -308,6 +312,6 @@ Third-party components are not covered by the above and keep their own terms:
 | `cmac_usplus` | AMD/Xilinx IP, used under the licence AMD issues for it and not included here |
 | AMD Vitis / Vivado, XRT, the U55C platform | AMD's, under their own licence terms |
 
-If you want this code under an open-source licence, open an issue — the intent is
-to keep it readable rather than to restrict it, and a permissive licence can be
-added on request.
+Note that the GPL covers this repository's own source. It does not and cannot
+relicense the AMD IP a bitstream is built against, nor the exchange
+specifications the protocol blocks implement.
