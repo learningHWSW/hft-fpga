@@ -65,7 +65,7 @@ XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_ge
 
 .PHONY: test-latprobe test test-xsim test-latency test-gap-independent test-real test-real-latency \
         test-b test-b-latency test-b-real test-sffifo cmac gate-license xo-b xclbin-b run-card-b run-card-b-latency \
-        golden clean clean-build distclean elab synth xo xclbin host run-card run-card-latency card-info
+        golden clean clean-build distclean real-image run-card-real run-card-b-real elab synth xo xclbin host run-card run-card-latency card-info
 
 # ---------- harness in simulation: HBM in -> HBM out, diffed against golden ----
 # The capture image is parsed by the SAME script the host uses on the card, so a
@@ -140,6 +140,62 @@ test-real:
 	$(MAKE) -C $(STEP5) real.eth
 	$(MAKE) test-xsim ITCH=$(STEP5)/real.itch ETH=$(STEP5)/real.eth \
 	  LOC=13 BASE=2800000 RECS=8192
+
+# ---------- the real-data replay image, for CARD runs ----------
+# Simulation packs $(ETH) into replay.bin through the generic rule above. The
+# card wants the same thing built once from the real feed and kept, because
+# packing 222 MB is not something to redo per run -- and because the slice it
+# comes from is a long pipeline over the 7.7 GB full-day capture:
+#
+#   data/12302019.NASDAQ_ITCH50.gz          the free NASDAQ TotalView-ITCH day
+#     -> itch_slice.py  (5 M msgs, AAPL)    real.itch
+#     -> itch2mold.py                       real.mold   MoldUDP64, CONTIGUOUS
+#     -> mold2eth.py                        real.eth    Ethernet/IPv4/UDP
+#     -> pack_eth.py pack                   real_replay.bin  64-B aligned records
+#
+# The contiguous part matters: itch2mold emits unbroken sequences, so this image
+# has gap=0, feed_ab_arb's recovery timeout never fires, and the golden diff holds
+# at ANY injector gap. That is what makes a latency run from this image both
+# attributable and golden-verified, unlike the synthetic feed which deliberately
+# carries a sequence gap and a duplicate.
+#
+# 1,127,057 frames / 5,110,000 beats / 312 MB. Kept by clean and clean-build;
+# only distclean removes it, and it asks first.
+real_replay.bin: $(STEP5)/real.eth scripts/pack_eth.py
+	python3 scripts/pack_eth.py pack $(STEP5)/real.eth $@
+
+$(STEP5)/real.eth:
+	$(MAKE) -C $(STEP5) real.eth
+
+# The golden for the real slice, which the card runs diff against.
+real_gold.log: $(STEP5)/real.eth
+	$(MAKE) golden ITCH=$(STEP5)/real.itch LOC=13
+
+# ---------- the card, on real data ----------
+# The runs the measured numbers in README.md come from. GAP=512 spaces the
+# injector wide enough for lat_probe to attribute samples; lower it to sweep
+# offered load (the knee is between GAP=24 and GAP=16).
+RGAP ?= 512
+run-card-real: host/t2t_run real_replay.bin real_gold.log
+	./host/t2t_run --xclbin t2t.xclbin --replay real_replay.bin \
+	  --capture real_capture.bin --device $(BDF) --gap $(RGAP) \
+	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
+	  --clk-mhz $(shell echo $(AP_CLK) | awk '{print $$1/1000000}') \
+	  --core-mhz $(shell echo $(CORE_CLK) | awk '{print $$1/1000000}')
+	python3 scripts/pack_eth.py unpack real_capture.bin 8192 > real_hw.log
+	diff real_gold.log real_hw.log && echo "PASS: ON CARD, real 5M AAPL == golden"
+
+# Phase B: the same replay through the real MAC. Wire cycles are counted at the
+# CMAC's clock, not ap_clk, so the host has to be told which one the probe used.
+run-card-b-real: host/t2t_run real_replay.bin real_gold.log
+	./host/t2t_run --xclbin t2t_b.xclbin --replay real_replay.bin \
+	  --capture real_capture.bin --device $(BDF) --gap $(RGAP) \
+	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
+	  --clk-mhz 322.265625 \
+	  --core-mhz $(shell echo $(CORE_CLK_B) | awk '{print $$1/1000000}')
+	python3 scripts/pack_eth.py unpack real_capture.bin 8192 > real_hw.log
+	diff real_gold.log real_hw.log \
+	  && echo "PASS: ON CARD, THROUGH THE MAC, real 5M AAPL == golden"
 
 # Real-data latency: many more orders than the synthetic feed's four, so the
 # histogram and the min/mean/max actually mean something.
@@ -438,3 +494,7 @@ test-sffifo:
 	xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=5.0
 	xsim tb_sf_sim -runall -testplusarg wper=5.0    -testplusarg rper=1.5515
 	xsim tb_sf_sim -runall -testplusarg wper=1.5515 -testplusarg rper=1.5515
+
+# Convenience alias: build the replay image and nothing else.
+real-image: real_replay.bin
+	@ls -la real_replay.bin

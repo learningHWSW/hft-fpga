@@ -1560,6 +1560,45 @@ needs the core at ≥195.3 MHz at 512-bit width. That is why the core clock was
 settled first, at 215 MHz — measured against the order table's URAM rather than
 chosen.
 
+## The real-data replay image
+
+`real_replay.bin` is the stimulus every silicon measurement in this document was
+taken from: a 5 M-message AAPL session from 2019-12-30, packed into the 64-byte
+records `eth_replay` streams out of HBM. 1,127,057 frames, 5,110,000 beats,
+312 MB.
+
+```
+data/12302019.NASDAQ_ITCH50.gz          free NASDAQ TotalView-ITCH, full day
+  │  itch_slice.py  (5 M msgs, AAPL)
+  ▼  real.itch
+  │  itch2mold.py                       MoldUDP64, CONTIGUOUS sequences
+  ▼  real.mold
+  │  mold2eth.py                        Ethernet / IPv4 / UDP
+  ▼  real.eth        222 MB
+  │  pack_eth.py pack                   64-byte-aligned records
+  ▼  real_replay.bin 312 MB
+```
+
+Rebuild with `make real-image`. Only the last step runs if `step5-board/real.eth`
+still exists — about 35 seconds. If it does not, the rule rebuilds it first, which
+means slicing the 7.7 GB uncompressed capture and takes considerably longer.
+
+The pack is deterministic: regenerating it reproduces the image the measurements
+were taken from byte for byte (verified by md5).
+
+**The contiguous sequences matter.** `itch2mold.py` emits unbroken MoldUDP64
+sequence numbers, so this image has `gap=0`, `feed_ab_arb`'s recovery timeout never
+fires, and the golden diff holds at *any* injector gap. That is what makes a
+latency run from it both attributable and golden-verified — unlike the synthetic
+feed, which deliberately carries a sequence gap and a duplicate to exercise
+recovery, and which is exactly why that one once disagreed with the golden at
+gap 512.
+
+The card runs it drives are `make run-card-real` and `make run-card-b-real`
+(Phase B, through the MAC), both defaulting to `RGAP=512` — wide enough for
+`lat_probe` to attribute samples. Lower `RGAP` to sweep offered load; the
+saturation knee sits between `RGAP=24` and `RGAP=16`.
+
 ## Cleaning
 
 Three tiers, because they cost very different amounts to undo:
