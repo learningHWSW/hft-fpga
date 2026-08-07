@@ -192,12 +192,22 @@ test-real: ## Simulate|real 5M AAPL slice through the chain
 real_replay.bin: $(STEP5)/real.eth scripts/pack_eth.py
 	python3 scripts/pack_eth.py pack $(STEP5)/real.eth $@
 
+# Both of these live in step 5 and are delegated, not duplicated. real.itch is
+# needed as well as real.eth: the golden is computed from the ITCH messages, the
+# replay image from the Ethernet frames, and they are different files. Cleaning
+# step 5 can leave real.eth behind while removing the real.itch it came from,
+# which is exactly the state that broke `make run-card-b-real` with
+# "No rule to make target '../step5-board/real.itch'".
 $(STEP5)/real.eth:
 	$(MAKE) -C $(STEP5) real.eth
 
-# The golden for the real slice, which the card runs diff against.
-real_gold.log: $(STEP5)/real.eth
-	$(MAKE) golden ITCH=$(STEP5)/real.itch LOC=13
+$(STEP5)/real.itch:
+	$(MAKE) -C $(STEP5) real.itch
+
+# The golden for the real slice, which the card runs diff against. Depends on the
+# .itch, not the .eth -- dump_bbo.py reads messages, not frames.
+real_gold.log: $(STEP5)/real.itch
+	$(MAKE) golden ITCH=$(STEP5)/real.itch LOC=13 GPFX=real
 
 # ---------- the card, on real data ----------
 # The runs the measured numbers in README.md come from. GAP=512 spaces the
@@ -233,11 +243,17 @@ test-real-latency: ## Simulate|real slice, spaced for attributable latency sampl
 	  LOC=13 BASE=2800000 RECS=8192 GAP=512
 
 # ---------- golden: the step 4b/6 chain, unchanged ----------
+# Output prefix for the golden logs. The synthetic flow uses k_*; the real-data
+# flow passes GPFX=real so the two goldens cannot overwrite each other -- which
+# they silently did before, leaving run-card-*-real diffing against whichever
+# golden was generated last.
+GPFX ?= k
+
 golden: $(ITCH) ## Data|regenerate the software golden logs
-	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > k_bbo.log
-	python3 $(STEP6)/scripts/dump_orders.py k_bbo.log $(ORDARGS) > k_orders.log
-	python3 $(STEP6)/scripts/dump_ouch.py k_orders.log > k_ouch.log
-	python3 $(STEP6)/scripts/dump_tcp.py k_ouch.log > k_gold.log
+	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > $(GPFX)_bbo.log
+	python3 $(STEP6)/scripts/dump_orders.py $(GPFX)_bbo.log $(ORDARGS) > $(GPFX)_orders.log
+	python3 $(STEP6)/scripts/dump_ouch.py $(GPFX)_orders.log > $(GPFX)_ouch.log
+	python3 $(STEP6)/scripts/dump_tcp.py $(GPFX)_ouch.log > $(GPFX)_gold.log
 
 $(STEP1)/test.itch $(STEP1)/test.eth:
 	cd $(STEP1) && python3 gen_itch.py test.itch --mold test.mold
