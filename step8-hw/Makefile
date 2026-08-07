@@ -60,6 +60,34 @@ ifneq ($(wildcard $(HOME)/.locale/en_US.UTF-8),)
 export LOCPATH := $(HOME)/.locale
 endif
 
+# ---------- Xilinx environment, sourced on demand ----------
+# Every target below needs vivado/v++/xvlog on PATH, and forgetting to source
+# settings64.sh first fails in a way that reads like a broken Makefile
+# ("v++: command not found") rather than a missing environment. So each recipe
+# that uses a Xilinx tool sources it ITSELF.
+#
+# Vivado's settings64.sh also sources Vitis's, so this one script provides
+# vivado, v++ and xvlog together. Override for another install:
+#   make xclbin-b XILINX_SETTINGS=/opt/Xilinx/2024.2/Vivado/settings64.sh
+# Set it empty to use whatever is already on PATH.
+XILINX_SETTINGS ?= /opt/Xilinx/2025.2.1/Vivado/settings64.sh
+
+# bash, NOT the default /bin/sh. settings64.sh uses `source` internally, which is
+# a bashism: under dash it dies with "source: not found", rc=127. That failure is
+# silent if anything else is on PATH -- and on this machine ~/.bashrc puts Vitis
+# 2023.2 there, so make happily built with 2023.2 instead of the 2025.2.1 this
+# project is verified against. A wrong-version build that SUCCEEDS is worse than
+# one that fails, so this pins the shell and the settings failure is now fatal
+# rather than a silent fallback.
+SHELL := /bin/bash
+
+XSETUP = { if [ -n "$(XILINX_SETTINGS)" ]; then \
+             [ -r "$(XILINX_SETTINGS)" ] || { echo "ERROR: XILINX_SETTINGS=$(XILINX_SETTINGS) is not readable."; exit 1; }; \
+             . "$(XILINX_SETTINGS)" >/dev/null || { echo "ERROR: sourcing $(XILINX_SETTINGS) failed."; exit 1; }; \
+           fi; \
+           command -v v++ >/dev/null 2>&1 \
+           || { echo "ERROR: no Xilinx tools on PATH. Point XILINX_SETTINGS at a settings64.sh."; exit 1; }; } &&
+
 PART ?= xcu55c-fsvh2892-2L-e
 XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
 
@@ -79,9 +107,9 @@ test: golden replay.bin
 	diff k_gold.log k_rtl.log && echo "PASS: kernel HBM->HBM order frames == golden"
 
 test-xsim: golden replay.bin
-	xvlog -sv $(SRC) $(TB)
-	xelab -debug typical $(TOP) -s $(TOP)_sim
-	xsim $(TOP)_sim -runall -testplusarg eth=replay.bin -testplusarg cap=capture.bin \
+	@$(XSETUP) xvlog -sv $(SRC) $(TB)
+	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=replay.bin -testplusarg cap=capture.bin \
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) -testplusarg quiet=$(QUIET)
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > k_rtl.log
 	diff k_gold.log k_rtl.log && echo "PASS: kernel HBM->HBM order frames == golden"
@@ -117,9 +145,9 @@ $(STEP1)/test_clean.itch $(STEP1)/test_clean.eth:
 # diffs against exactly the same golden as `test-xsim`, which is what makes the
 # comparison worth running -- a Phase B golden of its own would prove nothing.
 test-b: golden replay.bin
-	xvlog -sv $(DEFS_B) $(SRC_B) $(TB)
-	xelab -debug typical -L xpm $(TOP_B) -s $(TOP_B)_sim
-	xsim $(TOP_B)_sim -runall -testplusarg eth=replay.bin -testplusarg cap=capture.bin \
+	@$(XSETUP) xvlog -sv $(DEFS_B) $(SRC_B) $(TB)
+	@$(XSETUP) xelab -debug typical -L xpm $(TOP_B) -s $(TOP_B)_sim
+	@$(XSETUP) xsim $(TOP_B)_sim -runall -testplusarg eth=replay.bin -testplusarg cap=capture.bin \
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) -testplusarg quiet=$(QUIET)
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > kb_rtl.log
 	diff k_gold.log kb_rtl.log && echo "PASS: Phase B (through the MAC) order frames == golden"
@@ -221,9 +249,9 @@ replay.bin: $(ETH) scripts/pack_eth.py
 
 # ---------- Vivado: elaboration and out-of-context synthesis ----------
 elab:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/elab_kernel.tcl
+	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/elab_kernel.tcl
 synth:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/elab_kernel.tcl -tclargs synth
+	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/elab_kernel.tcl -tclargs synth
 
 # ---------- Vitis: package the kernel and link an .xclbin for the card --------
 # ap_clk carries the control plane, both HBM masters and the injector/capture
@@ -262,7 +290,7 @@ CU        = t2t_kernel_1
 REF_CLK_ID ?= 2
 
 t2t_kernel.xo: $(SRC) syn/kernel.xml syn/package_kernel.tcl syn/t2t_kernel_cdc.xdc
-	vivado -mode batch -nojournal -nolog -notrace -source syn/package_kernel.tcl
+	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/package_kernel.tcl
 
 xo: t2t_kernel.xo
 
@@ -319,7 +347,7 @@ AP_CLK_B   ?= 250000000
 CORE_CLK_B ?= 200000000
 
 cmac:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/gen_cmac.tcl
+	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/gen_cmac.tcl
 
 # Gate 4: may the IP be turned into a BITSTREAM? A different question from "is
 # it in the catalogue", and the only one that gates delivery. Asking it cost
@@ -327,7 +355,7 @@ cmac:
 # timing constraint and was then refused by write_bitstream. See
 # syn/gate_license.tcl. xclbin-b depends on this deliberately.
 gate-license:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/gate_license.tcl \
+	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/gate_license.tcl \
 	  | tee license_gate.log
 	@grep -q "LICENCE GATE: PASS" license_gate.log || \
 	  { echo ""; \
@@ -339,7 +367,7 @@ gate-license:
 
 SRC_B_FILES = $(SRC_B) syn/kernel_b.xml syn/package_kernel_b.tcl syn/t2t_kernel_cdc.xdc
 t2t_kernel_b.xo: $(SRC_B_FILES)
-	vivado -mode batch -nojournal -nolog -notrace -source syn/package_kernel_b.tcl
+	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/package_kernel_b.tcl
 
 xo-b: t2t_kernel_b.xo
 
@@ -472,9 +500,9 @@ distclean: clean-build
 # through the full chain. The expected latency is re-derived by the testbench
 # from the same interface events, independently of the DUT.
 test-latprobe:
-	xvlog -sv rtl/lat_probe.sv tb/tb_lat_probe.sv
-	xelab -debug typical tb_lat_probe -s tb_lat_probe_sim
-	xsim tb_lat_probe_sim -runall
+	@$(XSETUP) xvlog -sv rtl/lat_probe.sv tb/tb_lat_probe.sv
+	@$(XSETUP) xelab -debug typical tb_lat_probe -s tb_lat_probe_sim
+	@$(XSETUP) xsim tb_lat_probe_sim -runall
 
 # ---------- unit test for the store-and-forward FIFO ----------
 # Every Phase B frame goes through this module, and a bug in it shows up in the
@@ -488,13 +516,19 @@ test-latprobe:
 # faster than the writer is the feed path, a slower one fills the array and
 # exercises s_tready, and equal clocks are the order path.
 test-sffifo:
-	xvlog -sv rtl/axis_sf_fifo.sv tb/tb_axis_sf_fifo.sv
-	xelab -debug typical tb_axis_sf_fifo -s tb_sf_sim
-	xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=1.5515
-	xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=5.0
-	xsim tb_sf_sim -runall -testplusarg wper=5.0    -testplusarg rper=1.5515
-	xsim tb_sf_sim -runall -testplusarg wper=1.5515 -testplusarg rper=1.5515
+	@$(XSETUP) xvlog -sv rtl/axis_sf_fifo.sv tb/tb_axis_sf_fifo.sv
+	@$(XSETUP) xelab -debug typical tb_axis_sf_fifo -s tb_sf_sim
+	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=1.5515
+	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=5.0
+	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=5.0    -testplusarg rper=1.5515
+	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.5515 -testplusarg rper=1.5515
 
 # Convenience alias: build the replay image and nothing else.
 real-image: real_replay.bin
 	@ls -la real_replay.bin
+
+# Diagnostic: which Xilinx tools will the recipes actually use?
+which-tools:
+	@$(XSETUP) echo "vivado : $$(command -v vivado)"; \
+	  echo "v++    : $$(command -v v++)"; \
+	  echo "xvlog  : $$(command -v xvlog)"

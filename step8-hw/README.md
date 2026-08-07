@@ -1560,6 +1560,31 @@ needs the core at ≥195.3 MHz at 512-bit width. That is why the core clock was
 settled first, at 215 MHz — measured against the order table's URAM rather than
 chosen.
 
+## Running the flows
+
+No `source settings64.sh` needed — every recipe that uses a Xilinx tool sources it
+itself:
+
+```sh
+cd step8-hw
+make xclbin-b        # Phase B bitstream; runs the licence gate first
+make run-card-b-real # replay through the real MAC
+```
+
+`XILINX_SETTINGS` selects the install (default `/opt/Xilinx/2025.2.1/Vivado/settings64.sh`,
+which also sources Vitis). Override it for another version, or set it empty to use
+whatever is already on PATH. `make which-tools` prints what the recipes will
+actually run.
+
+**Two traps this avoids, both found the hard way.** `settings64.sh` uses `source`
+internally, a bashism — under make's default `/bin/sh` (dash) it dies with
+`source: not found`, rc 127. And `~/.bashrc` on this machine already puts Vitis
+2023.2 on PATH, so that failure was invisible: the guard found *a* `v++` and the
+build proceeded on **2023.2** instead of the 2025.2.1 this project is verified
+against. A wrong-version build that succeeds is worse than one that fails, so the
+Makefile pins `SHELL := /bin/bash` and treats a settings-source failure as fatal
+rather than falling back to PATH.
+
 ## The real-data replay image
 
 `real_replay.bin` is the stimulus every silicon measurement in this document was
