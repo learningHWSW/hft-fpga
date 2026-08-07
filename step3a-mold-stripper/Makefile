@@ -4,10 +4,6 @@ TB    = tb/tb_mold_stripper.sv
 TOP   = tb_mold_stripper
 MOLD ?= ../step1-sw-parser/test.mold
 
-# WSL: Vivado's wrapper forces LC_ALL=en_US.UTF-8; point glibc at the
-# user-built locale so xsim doesn't abort. See scripts/setup-xsim-locale.sh.
-export LOCPATH := $(HOME)/.locale
-
 # ---------- xsim (Vivado/Vitis) — primary; source settings64.sh first ----------
 test: golden
 	xvlog -sv $(SRC) $(TB)

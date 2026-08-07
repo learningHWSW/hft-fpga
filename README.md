@@ -55,7 +55,7 @@ by **dropping and counting**, never by emitting a wrong order.
 and re-joined before a single message stream reaches the decoder.
 
 ```
-                           ┌─► eth/ip/udp A ─► drop_fifo ─┐
+                            ┌─► eth/ip/udp A ─► drop_fifo ─┐
 QSFP28 ─► CMAC ─► cdc_fifo ─┤   filter + strip             ├─► feed_ab_arb ─► mold_splitter
   RX      100G    322→215   │                              │   redundant-feed   realign to
           322MHz    MHz     └─► eth/ip/udp B ─► drop_fifo ─┘   gap recovery      messages
@@ -154,6 +154,7 @@ trade.
 | GCC | C++17 | host runner and the step-1 C model |
 | Verilator | 5.036 | **optional** — a no-Vivado fallback for most testbenches |
 | OS | Ubuntu 22.04, kernel 5.15 | the machine this was measured on |
+| Locale | `en_US.UTF-8` present | Vivado's launcher hard-codes it; if absent, xsim aborts with a `std::locale` error. `sudo locale-gen en_US.UTF-8` |
 
 A `cmac_usplus` licence is required **only** to generate the Phase B bitstream.
 AMD issues it at no cost. Synthesis, implementation and timing closure all work
@@ -167,18 +168,7 @@ git clone https://github.com/learningHWSW/hft-fpga.git
 cd hft-fpga
 ```
 
-**1. Locale for xsim (one time).** Vivado's launcher hard-codes
-`LC_ALL=en_US.UTF-8`; where that locale is absent, xsim aborts with a
-`std::locale` error. Build a user-local copy — no root needed:
-
-```sh
-scripts/setup-xsim-locale.sh          # creates ~/.locale/en_US.UTF-8
-```
-
-Each Makefile exports `LOCPATH` when that directory exists, so nothing else is
-needed afterwards.
-
-**2. Real market data (for the real-data replays).** The free NASDAQ
+**1. Real market data (for the real-data replays).** The free NASDAQ
 TotalView-ITCH full-day capture. It is not committed:
 
 ```sh
@@ -188,7 +178,7 @@ cd data && curl -O "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_IT
 3.5 GB compressed, ~269 M messages, 2019-12-30. Synthetic vectors are generated
 by the testbenches and need no download, so the simulation suite runs without it.
 
-**3. Xilinx tools.** No `source settings64.sh` needed for step 8 — its recipes
+**2. Xilinx tools.** No `source settings64.sh` needed for step 8 — its recipes
 source it themselves. Override the install with
 `XILINX_SETTINGS=/path/to/settings64.sh`, and check what will actually be used
 with `make which-tools`. Earlier steps expect the tools already on `PATH`.

@@ -10,9 +10,6 @@ GOLD  = $(STEP3A)/scripts/dump_mold.py
 # Real-data run:  make test-real  (or REAL=1 and set MOLD/RMSGS)
 MOLD  ?= $(STEP1)/test.mold
 
-# WSL: point glibc at the user-built locale so xsim doesn't abort.
-export LOCPATH := $(HOME)/.locale
-
 # ---------- xsim (Vivado 2025.2) — primary; source settings64.sh first ----------
 test: golden
 	xvlog -sv $(SRC) $(TB)

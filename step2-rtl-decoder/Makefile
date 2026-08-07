@@ -3,10 +3,6 @@ TB   = tb/tb_itch_decoder.sv
 TOP  = tb_itch_decoder
 ITCH ?= ../step1-sw-parser/test.itch
 
-# WSL: Vivado's wrapper forces LC_ALL=en_US.UTF-8; point glibc at the
-# user-built locale so xsim doesn't abort. See scripts/setup-xsim-locale.sh.
-export LOCPATH := $(HOME)/.locale
-
 # ---------- xsim (Vivado/Vitis) — primary; source settings64.sh first ----------
 test: golden
 	xvlog -sv $(SRC) $(TB)

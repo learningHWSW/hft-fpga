@@ -8,8 +8,6 @@ TOP   = tb_order_table
 ITCH ?= $(STEP1)/test.itch
 LOC  ?= 1
 
-export LOCPATH := $(HOME)/.locale
-
 # ---------- xsim (Vivado 2025.2) — primary; source settings64.sh first ----------
 test: golden
 	xvlog -sv $(SRC) $(TB)

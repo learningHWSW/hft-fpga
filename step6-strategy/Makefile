@@ -4,9 +4,6 @@
 # on its own rather than through the whole chain: a mismatch here is a rule or
 # risk-gate bug, never a book bug.
 #
-# LOCPATH: Vivado's rdiArgs.sh hardcodes LC_ALL=en_US.UTF-8, which this WSL
-# image does not ship; scripts/setup-xsim-locale.sh builds it rootless.
-export LOCPATH := $(HOME)/.locale
 
 STEP4B = ../step4b-book
 STEP5  = ../step5-board

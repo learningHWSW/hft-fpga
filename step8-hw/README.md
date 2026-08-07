@@ -1742,9 +1742,11 @@ Both are declaration-order only — no logic changed — and both were latent:
   `step6-strategy/rtl/tcp_tx.sv` did the same with `hold`. Vivado *synthesis*
   tolerates a forward reference; `xvlog` rejects it outright, so neither file
   would compile for simulation under this toolchain. The declarations moved up.
-- The step 5 Makefile pattern `export LOCPATH := $(HOME)/.locale` is a WSL
-  workaround for a locale Vitis hardcodes. On a machine that ships
-  `en_US.utf8` system-wide it is actively harmful — it replaces the search path,
-  glibc then finds nothing, and v++ aborts with
-  `locale::facet::_S_create_c_locale name not valid`. Here it is applied only
-  when the user-local copy actually exists.
+- The Makefiles used to carry `export LOCPATH := $(HOME)/.locale`, a rootless
+  workaround for the `en_US.UTF-8` locale Vivado and Vitis hardcode in their
+  launchers. It has been removed everywhere: on a machine that ships the locale
+  system-wide the export is actively *harmful*, because it replaces the search
+  path, glibc then finds nothing, and v++ aborts with
+  `locale::facet::_S_create_c_locale name not valid`. The correct fix is one
+  command, `sudo locale-gen en_US.UTF-8`, and the requirement is listed in the
+  top-level README rather than worked around in eight Makefiles.

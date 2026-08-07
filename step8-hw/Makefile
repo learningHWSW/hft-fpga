@@ -49,17 +49,6 @@ QUIET ?= 256
 # strategy knobs, identical to the step 5/6 golden invocations
 ORDARGS = 2000 1 100 100 1000 65535 50
 
-# Vivado and Vitis both hardcode LC_ALL=en_US.UTF-8 in their launchers. On the
-# WSL image that locale is missing, so scripts/setup-xsim-locale.sh builds a
-# user-local copy and LOCPATH points at it. On a machine that ships the locale
-# system-wide, exporting LOCPATH unconditionally is actively harmful: it replaces
-# the search path, glibc then finds nothing, and v++ aborts with
-# "locale::facet::_S_create_c_locale name not valid". So set it only when the
-# user-local copy actually exists.
-ifneq ($(wildcard $(HOME)/.locale/en_US.UTF-8),)
-export LOCPATH := $(HOME)/.locale
-endif
-
 # ---------- Xilinx environment, sourced on demand ----------
 # Every target below needs vivado/v++/xvlog on PATH, and forgetting to source
 # settings64.sh first fails in a way that reads like a broken Makefile

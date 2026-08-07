@@ -18,8 +18,6 @@ LOC  ?= 1
 BASE ?= 1500000
 GAP  ?= 24
 
-export LOCPATH := $(HOME)/.locale
-
 # ---------- functional: end-to-end 512-bit chain vs BBO golden ----------
 test: golden
 	xvlog -sv $(SRC) $(TB)
