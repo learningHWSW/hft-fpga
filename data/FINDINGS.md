@@ -382,6 +382,38 @@ gate-level).
   latency comes mostly from FSMs deliberately split deep for timing closure (ladder
   10 cy, table 5 cy) — traded against Fmax.
 
+### 7.1.1 Cut-through decode: measured as a no-op, and not built
+
+PLAN §3 held cut-through decode — "fire the instant the last needed field
+arrives" — as a deferred optimisation to be done once the pipe was complete, with
+a before/after comparison on the same replay. The pipe is complete, so this is
+that evaluation. **The answer is that the width change already took the win.**
+
+The idea dates from when the datapath was 64 bits (steps 2 and 3a), where a
+message spanned several beats and there was a real window between "the field I
+need has arrived" and "the message has ended". At 512 bits that window is gone:
+
+- `MAX_MSG_BYTES = 50` — the largest ITCH 5.0 message ('I', NOII);
+- `mold_splitter` at `DATA_W=512` emits `m_tlast = 1` on **every** beat, 64 bytes
+  per beat.
+
+So every message is delivered complete in a single beat, and `itch_decoder`
+registers it one cycle later. A cut-through variant could only collapse that one
+register stage — **1 core cycle, 4.65 ns at 215 MHz**. Against the measured
+in-fabric path that is 2.2 % (of 206.7 ns), and against wire-to-wire 0.9 % (of
+515.1 ns).
+
+The cost is the wrong shape for this design: it means decoding a 512-bit beat
+into `itch_msg_t` combinationally — field extraction plus type dispatch across
+some twenty message types — and putting that ahead of the register, in the core
+domain whose worst path is already 21 logic levels and whose margin was just
+clawed back from +0.011 ns to +0.099 ns (§7.6.2). Every timing fix in this project
+has gone the other way: *adding* register stages to break combinational depth.
+
+**Not built.** Recorded here so the deferred item is closed with arithmetic rather
+than left looking undone. If the datapath ever narrows again, the idea comes back
+with it.
+
 ### 7.2 Burst tail latency (full day 268.7M messages, itch_hist 3-server)
 
 The same 100G arrival trace drains splitter, iterative and II=1 pipe at their own

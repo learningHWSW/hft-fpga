@@ -126,9 +126,13 @@ QSFP28 ──► CMAC(100G) ──► eth/ip/udp parser ──► MoldUDP64 stri
   (LUT/FF/BRAM/URAM), max clock.
 - Real-data baseline: RTL multiple over the step-1 SW throughput (M msg/s).
 - Drop/gap/overflow counters are built into every module as standard.
-- Cut-through decode (fire the instant the last needed field arrives) is a
-  separate optimisation commit **after the whole pipe is complete** — compare
-  before/after latency on the same replay.
+- Cut-through decode (fire the instant the last needed field arrives) was held as
+  a separate optimisation commit **after the whole pipe is complete**. Now
+  evaluated and **not built**: at 512-bit width every ITCH message (max 50 B)
+  arrives in one 64-byte beat, so there is no partial-message window left to
+  exploit and the most it can save is the decoder's single register stage —
+  1 cycle, 4.65 ns, 2.2 % of the in-fabric path — in exchange for a full
+  combinational decode on the core clock. See `data/FINDINGS.md` §7.1.1.
 
 ## 4. Priority
 

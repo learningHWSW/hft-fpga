@@ -32,8 +32,14 @@ scripts/dump_itch.py — a golden log in the same format from the same file
   framing (MoldUDP64 or the file's length prefix) is the upstream (step 3) job.
 - **store-then-decode**: extract all fields in parallel + a valid pulse on the
   cycle after tlast. Simple and clear for functional verification. The latency
-  optimisation (cut-through — fire the instant the last needed field arrives)
-  comes after the pipeline is complete.
+  optimisation (cut-through — fire the instant the last needed field arrives) was
+  deferred until the pipeline was complete, and has now been **evaluated and
+  dropped**: at the 512-bit width this decoder is instantiated at, every ITCH
+  message (max 50 B) arrives inside one 64-byte beat, so there is no
+  partial-message window left and cut-through could only collapse this one
+  register stage — 1 cycle, 4.65 ns, in exchange for a full combinational decode
+  on the core clock. `data/FINDINGS.md` §7.1.1 has the arithmetic. The idea was
+  sound when this module was 64 bits wide; the width change took the win instead.
 - **s_tready = constant 1**: the market-data path never backpressures the wire.
   If a downstream is slow it is absorbed in a FIFO, and overflow is drop + gap
   handling.
