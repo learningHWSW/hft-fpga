@@ -1316,6 +1316,51 @@ not a placement effect, and it is the clearest evidence available that 215 MHz i
 the ceiling for this design on this platform rather than a round number someone
 liked.
 
+### The critical path was not where the docs said, and fixing it bought 9x the margin
+
+`ap_clk_2` had been sitting at +0.011 ns, which is not margin, and every datapath
+idea was blocked behind finding some. `step5-board/README.md` had concluded years
+of commits ago that "the next move is a Pblock for the ladder, not more
+pipelining", so that was the plan. Measuring the routed checkpoint first said
+otherwise (`syn/slr_analysis*.tcl`, committed so this is re-derivable):
+
+- **The kernel is entirely in SLR0** — 87,206 cells, zero in SLR1 or SLR2. There
+  are no SLR crossings to remove; that half of the question is simply closed.
+- **92 of the 200 worst core-clock endpoints were `order_table`'s `sel_ent`
+  register**, against 11 in the ladder. The ladder *had* been the critical path
+  when that note was written; splitting its read-modify-write fixed it and the
+  binding path moved without the note following.
+- The worst path was 10 logic levels, **2.011 ns logic against 2.209 ns route**.
+  Half the delay is depth. A Pblock cannot move that.
+
+The depth came from doing the selection twice. The way comparators already produce
+a one-hot vector; collapsing it to a binary `hit_way` and using that to drive a
+16:1 mux over 130-bit entries inserts a priority encoder between the compare and
+the mux purely to re-derive what the compare already knew. Selecting straight off
+the one-hot removes the encoder. It is safe because `order_ref` is unique — the
+premise of keying the table on it — and a simulation-only assertion now states
+that rather than trusting it.
+
+| | before | after |
+|---|---|---|
+| `ap_clk_2` (core, 215 MHz) | +0.011 ns | **+0.099 ns** |
+| `ap_clk` (300 MHz) | +0.021 ns | **+0.106 ns** |
+| design WNS | +0.003 ns | +0.003 ns (platform DMA, not ours) |
+| worst core endpoint | `u_otab/sel_ent_reg`, 10 levels | `u_ladder/r_fwd_reg`, 21 levels |
+| failing endpoints | 0 | 0 |
+
+**Nine times the core margin at the same 215 MHz, for no latency.** On silicon the
+replay is byte-identical — 70/70 order frames against the golden, 62 cycles /
+206.7 ns unloaded and 23 cycles decode-to-order, all unchanged.
+
+**And the path moved back to the ladder**, which makes the old advice right again
+for the original reason. The new worst endpoints there look completely different
+from the order table's: `askocc_reg` at **4 logic levels with 3.683 ns of route**,
+86 % routing. That is a placement problem, so a Pblock is now the correct next
+move — it just was not, while a deeper path existed somewhere else. The lesson is
+narrower than "measure first": a stale conclusion about a critical path is
+especially misleading, because fixing the real one *restores* it.
+
 ### The rebuild produced a bitstream — and only one of the two backoffs did anything
 
 `make xclbin-b` linked in **1 h 13 m** and wrote `t2t_b.xclbin` (53.1 MB) with

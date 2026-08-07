@@ -466,6 +466,17 @@ delay grew from 2.617 ns to 3.934 ns on the *same* logic, so this is placement
 pressure from the larger design rather than anything new — which is why the
 next move is a Pblock for the ladder, not more pipelining.
 
+> **Later, and worth reading with the above:** that conclusion went stale and then
+> came back. Measured on the step-8 routed build, the binding path was no longer
+> the ladder at all — 92 of the 200 worst core-clock endpoints were the order
+> table's `sel_ent` register, at 10 logic levels and roughly half logic delay,
+> which a Pblock cannot help. Removing that (a one-hot entry select in place of
+> priority-encode-then-mux, `step4a`) took the core from +0.011 ns to +0.099 ns —
+> and moved the critical path *back* to the ladder, where it is now 86 % routing
+> at 4 logic levels. So the Pblock advice is right again, for the original reason,
+> just not while a deeper path existed elsewhere. See
+> [step8-hw/README.md](../step8-hw/README.md).
+
 ### The order table at its real size: 163.5 MHz
 
 The table is now an instantiated XPM/URAM macro at 2^16 x 8, the size every
