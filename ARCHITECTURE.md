@@ -13,7 +13,7 @@ The pipeline is a full **tick-to-trade** path: a 100 GbE stream of NASDAQ
 MoldUDP64/ITCH in, an OUCH order frame out, wire to wire on the FPGA.
 
 ```
-        CMAC RX                     core clock domain (~220 MHz)                          CMAC TX
+        CMAC RX                     core clock domain (215 MHz)                            CMAC TX
 QSFP28 ─► CMAC ─► cdc_fifo ─► eth/ip/udp ─► mold_splitter ─► itch_decoder ─► order_table ─► price_ladder ─► BBO
           100G   clock cross   (step 5)      (step 3b)         (step 2)       (step 4a)      (step 4b)      │
           322MHz                filter+strip realign to msgs   field extract  ref→{px,qty}  L2 aggregate    │
@@ -28,8 +28,13 @@ QSFP28 ─► CMAC ─► cdc_fifo ─► eth/ip/udp ─► mold_splitter ─►
 Everything from the UDP strip to the OUCH builder runs in one core clock domain,
 joined to the CMAC's 322.265625 MHz by a dual-clock FIFO on each side (§9). The
 core need only clear 195.3 MHz (512 b × 195.3 MHz = 100 Gb/s); it measures 220
-MHz post-route on the U55C, so the crossing — not a faster core — is what makes
-the design both correct and buildable.
+MHz post-route out of context and runs at 215 MHz inside the Vitis kernel, so the
+crossing — not a faster core — is what makes the design both correct and
+buildable.
+
+The whole path has since been **executed on a real Alveo U55C**, first replaying
+from HBM and then through a real `cmac_usplus` with the GT in near-end loopback,
+so MAC, PCS and SerDes are inside the measurement (§10).
 
 Two principles shape every block:
 
@@ -154,17 +159,47 @@ The interesting design work here is entirely measurement-driven:
   *for all symbols combined*. But one symbol's refs are a correlated subset of
   that monotonic sequence and **cluster** in the low bits. Measured on AAPL
   (peak ~27 k live): raw low-bits at 2^16×4 overflows 24,142 times/day; a
-  multiply-shift mix at the same size overflows only 132. The adopted design
-  point is **2^16 sets × 8-way + multiply-shift mix**, which overflows **zero**
-  times over the full day (~10 MB URAM). This is the exact opposite of the
-  all-symbol conclusion, and only measurement surfaces it.
+  multiply-shift mix at the same size overflows only 132. This is the exact
+  opposite of the all-symbol conclusion, and only measurement surfaces it.
 
-The current implementation is a correctness-first FSM (one cycle per set access:
-2 cycles/message, 3 for `U`); the two-cycle spacing plus same-cycle NBA
-writeback makes cross-message same-set accesses hazard-free without forwarding.
-At 64-bit input a message spans several beats, so the decoder never presents
-faster than this keeps up. An II=1 pipeline (read/modify/write with forwarding,
-`U` served by a dual-ported memory) is the planned performance follow-up.
+- **Two later measurements moved the design point off that first answer**, and
+  both are worth following because the first answer was reasonable:
+
+  *The mixer does not need a multiply.* Once the memory problem was fixed the
+  64×64 multiply-shift became the critical path — a multi-DSP cascade, 4.6 ns. A
+  pure XOR fold (`r ^ r>>16 ^ r>>32 ^ r>>48`) was measured over the same full day
+  and matches it at **zero overflow** with a *lower* worst-set occupancy (6 vs 7),
+  for no DSPs and about two LUT levels (`FINDINGS §4.3`).
+
+  *The geometry is set by URAM cascade depth, not capacity.* At 2^16 deep each
+  way is 16 URAM primitives chained, so every access walks a 16-long cascade and
+  256 URAM must be placed; three separate critical paths in a row were logic
+  reaching those cascaded pins. At **2^13 × 16** the chain is 2 long and the whole
+  table is 64 URAM.
+
+  **The deployed design point is therefore `2^13 sets × 16 ways` with an XOR-fold
+  hash**, zero overflow over the full trading day.
+
+The deployed implementation is a correctness-first FSM (one cycle per set access:
+2 cycles/message, 3 for `U`); the two-cycle spacing plus same-cycle NBA writeback
+makes cross-message same-set accesses hazard-free without forwarding. An II=1
+pipeline (`order_table_pipe`, read/modify/write with forwarding, `U` served by a
+dual-ported memory) exists as a verified drop-in with identical ports and
+byte-identical output, selected with `+define+OT_PIPE`. Unloaded latency is the
+same either way — 5 cycles — so II=1 buys throughput, not latency.
+
+Two implementation details matter more than they look:
+
+- **The entry select is a one-hot OR, not a priority encoder followed by a mux.**
+  The way comparators already produce a one-hot vector (`order_ref` is unique,
+  which is the premise of keying on it); collapsing it to a binary index and using
+  that to drive a 16:1 mux over 130-bit entries re-derives what the compare
+  already knew, and measured as the design's critical path — 10 logic levels,
+  +0.011 ns. Selecting straight off the one-hot took the core from +0.011 ns to
+  **+0.099 ns** at the same 215 MHz, for no latency.
+- **URAM cannot be initialised**, so the table sweeps itself clear on reset and
+  holds `init_done` low until it finishes. `initial mem = 0` works in simulation
+  and in BRAM and is a lie on the device.
 
 ## 6. Stage 4b — price ladder / top-of-book
 
@@ -185,6 +220,27 @@ bid/ask price + quantity) whenever it changes.
   AAPL replay, 465 prices fall outside the band and the BBO sequence still
   matches the golden bit-for-bit. `oob_cnt` also quantifies how often the
   low-frequency re-centering path would fire.
+
+- **The quantity arrays sweep clear on reset**, like the order table's. They infer
+  BRAM, and `initial` sets BRAM contents when the *bitstream* loads, not when
+  `rst_n` asserts. Since the update path is read-modify-write, a soft reset that
+  cleared the occupancy flops but left stale quantities behind made adds
+  accumulate onto stale values and removals leave nonzero remainders, so levels
+  never released: the book filled with phantom levels, best bid and ask crossed,
+  the spread never read tight and the strategy stopped firing silently. Simulation
+  cannot see this — `initial` runs at time 0 there — and it was found only on
+  silicon.
+
+**A fast top-of-book path exists but is not wired in.** `fast_bbo` keeps only best
+bid/ask and applies each delta to them directly. Exactly one delta shape needs the
+ladder's scan — a removal that empties the best level, because the next best is
+whatever the occupancy bitmap says; everything else is a comparison and an add or
+subtract. Measured on the real AAPL replay, **91 % of book updates are answerable
+in one cycle instead of ten**, with zero cases of claiming certainty and being
+wrong across 1,174 cross-checks against the ladder. It never approximates: it
+either knows or defers. Integrating it means deciding how fast and deferred
+records rejoin — a fast record must be held behind an earlier deferred one, or the
+BBO sequence changes and so do the strategy's edges.
 
 L2 is the starting point (aggregate qty per level); per-level order counts and a
 fixed-slot approximate L3 are future extensions.
@@ -270,24 +326,105 @@ momentum-ignition thesis predicts.
 **`ouch_builder`** turns an order intent into OUCH 4.2 over SoupBinTCP: per the
 session/hot-path split, login and sequence recovery are software's job, and the
 hardware is a one-cycle constant concatenation of registered configuration with
-three live fields. **`tcp_tx`** wraps that in TCP/IPv4/Ethernet, computing both
-checksums as one's-complement adder trees (the payload sum registered in its own
-cycle to meet timing). There is no retransmission — a dropped segment is a
-dropped order and recovery is the host's — and flow control is satisfied by
+three live fields. Every offset and enum is verified against the published
+specification (Version 4.2, updated October 2025) rather than written from memory
+— which caught `Display = "Y"`, a legal code meaning *Anonymous-Price to Comply*
+rather than "yes, display"; it is now `"A"`, *Attributable-Price to Display*. A
+golden that agrees with itself can never catch that class of error.
+
+**`tcp_tx`** wraps the packet in TCP/IPv4/Ethernet, computing both checksums as
+one's-complement adder trees (the payload sum registered in its own cycle to meet
+timing). The hot path is fire-and-forget, and flow control is satisfied by
 construction because the in-flight limiter caps unacknowledged payload far below
 any TCP window.
 
-## 10. Results and what is not done
+**Retransmission is available but not wired in.** The specification makes it far
+smaller than it looks: client-to-host messages are designed to be "benignly
+resent", and an Enter Order carrying a previously used token is *ignored*, so a
+resend cannot double-fill and needs no dedup protocol. `tx_replay_buf` keeps the
+last N transmitted frames — N already bounded by the in-flight limiter — and
+stores the **assembled bytes**, not the order intent: re-deriving a frame would
+mint a new token and a new TCP sequence number, which is a different order and a
+hole in the stream. It adds no latency, since the live frame passes through while
+the ring is written in parallel and a replay only goes out when the path is idle.
 
-Full chain, `xcu55c-fsvh2892-2L-e`, post-route: core_clk **220.0 MHz** (above the
-195.3 MHz floor), cmac_clk meets 322.265625 MHz, all timing constraints met;
-44,908 LUT, 66 URAM, 2 DSP. The order table is the measured 2^13 × 16 point
-instantiated as URAM. Closing timing meant working through a cluster of ~160 MHz
-paths in the book engine; the decisive fix was splitting the price ladder's
-read-modify-write (+65 MHz where earlier register stages bought single digits) —
-the full, candid path with its missed predictions is in `step5-board/README.md`.
+**The card gets its own OUCH session, rather than sharing the host's connection.**
+Two senders on one TCP connection must coordinate sequence numbers and forward
+inbound segments — genuinely hard, and unnecessary: OUCH scopes order identity to
+*(account, token)* and binds each account to a physical port, so a second port
+deletes the problem instead of managing it (`step7-host`). What still needs
+solving is the inbound direction on the card's own connection: acks and fills
+arrive at the card's MAC, and the FPGA does not parse TCP.
 
-Not done, and stated plainly: no physical card, so no measured hardware latency;
-host software (SoupBinTCP session, handshake, ack feedback, fills) is absent; the
-transmit path does not retransmit; and the OUCH enum codes are placeholders to
-confirm against the current NASDAQ specification.
+## 10. Results, measured on silicon
+
+**Post-route, out of context** (`xcu55c-fsvh2892-2L-e`): core_clk **220.0 MHz**,
+above the 195.3 MHz floor; cmac_clk meets 322.265625 MHz; all timing constraints
+met. Closing that meant working through a cluster of ~160 MHz paths in the book
+engine, and the decisive fix was splitting the price ladder's read-modify-write
+(+65 MHz where earlier register stages bought single digits). The candid path,
+missed predictions included, is in `step5-board/README.md`.
+
+**As a Vitis kernel on the card**, 215 MHz core, all timing met, 0 of 525,146
+endpoints failing. Kernel resources with the real MAC included: 52,387 LUT,
+34,871 FF, 101 BRAM, 66 URAM, 2 DSP — about 4.4 % of the part's LUTs.
+
+**Executed on a real Alveo U55C**, replaying a 5 M-message NASDAQ AAPL session:
+
+| | |
+|---|---|
+| Wire-to-wire, through a real 100 G MAC | **518.2 ns** min / 579.4 ns mean, 70 samples |
+| In fabric only (first RX beat to first TX beat) | 206.7 ns min |
+| Decoder to order (the queueing part) | 107.0 ns min |
+| Order frames vs. the software golden | **70 / 70 byte-identical**, zero drops |
+| MAC frames | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |
+
+The three intervals are **not** comparable as-is, and the constant between them is
+measured rather than assumed: 206.7 − 107.0 = **99.7 ns** of fixed front and back
+end (RX, CDC, splitter, decode inbound; builder, framer, TX CDC outbound), the
+part that does not queue. Wire-to-order under load is the queueing figure plus
+that constant.
+
+**Under load** the floor never moves — 23 core cycles at every offered rate — but
+from 25.1 to 40.6 M msg/s the mean grows 1.49× while the **max grows 2.21×, to
+730 ns**. That divergence is the queueing tail, and it is why quoting a mean for
+this design would mislead. Saturation is a knee rather than a shoulder, between
+40.6 and 46.3 M msg/s, which is 20–40× the real NASDAQ peak the design was sized
+against. Every non-saturated point is byte-identical to the golden: the pipeline
+degrades by **dropping and counting**, never by emitting a wrong order.
+
+**The MAC is the larger half of the path**, which reorders what is worth
+optimising: ~207 ns of fabric against **~300 ns** of MAC, SerDes and framing. Of
+that ~300 ns, about 285 ns is inside `cmac_usplus` and the GT — already generated
+with RS-FEC and flow control off, and with an RX path the vendor documents as
+cut-through — leaving ~9–12 ns that is ours. Simulation had predicted ~145 ns for
+that term and was wrong by a factor of two, because the behavioural MAC's latency
+is a constant a testbench author chose. Cycle-shaving in the ladder or the decoder
+attacks the smaller term.
+
+## 11. What is not done
+
+- **Loopback is not a cable.** The wire-to-wire figure uses the GT in near-end PMA
+  loopback: frames are 64b/66b encoded, serialized at 25.78125 Gb/s on four lanes,
+  recovered, aligned and FCS-checked, so it is the same `D + T_tx + T_rx` a real
+  wire gives. A cabled two-port measurement against a live feed is still the
+  honest end state.
+- **Inbound on the card's own TCP connection** is unsolved: acks and fills arrive
+  at the card's MAC and the FPGA does not parse TCP. Splitting the sessions
+  removed the sender-side problem only.
+- **`fast_bbo` and `tx_replay_buf` are proven but not integrated** (§6, §9). Both
+  have self-checking testbenches; neither is wired into `t2t_top`.
+- **Cut-through decode was evaluated and dropped.** At 512-bit width every ITCH
+  message (max 50 B) arrives in one 64-byte beat, so there is no partial-message
+  window left: it could only collapse the decoder's single register stage, 1 cycle
+  and 4.65 ns, in exchange for a full combinational decode on the core clock
+  (`FINDINGS §7.1.1`). The idea was sound when the datapath was 64 bits; the width
+  change took the win instead.
+- **Floorplanning the ladder will not help**, despite its paths being 86 % routing.
+  The failing endpoints sit four columns and three rows apart — already adjacent —
+  so the delay is congestion and fanout from the 4,096-flop occupancy scan, not
+  span. The lever is restructuring that scan.
+- **The strategy parameters are tuned on a thin reconstructed book**, not real
+  AAPL: they test the mechanism, not a tradeable edge.
+- **The OUCH Shares range** (`0 < shares < 1,000,000`) is not enforced in hardware;
+  it holds by configuration only.
