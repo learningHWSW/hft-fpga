@@ -215,6 +215,7 @@ real_gold.log: $(STEP5)/real.itch
 # offered load (the knee is between GAP=24 and GAP=16).
 RGAP ?= 512
 run-card-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase A, real 5M AAPL   [RGAP=512]
+	$(call need_xclbin,t2t.xclbin,xclbin,1 h 10 m)
 	./host/t2t_run --xclbin t2t.xclbin --replay real_replay.bin \
 	  --capture real_capture.bin --device $(BDF) --gap $(RGAP) \
 	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
@@ -226,6 +227,7 @@ run-card-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase A, real 
 # Phase B: the same replay through the real MAC. Wire cycles are counted at the
 # CMAC's clock, not ap_clk, so the host has to be told which one the probe used.
 run-card-b-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase B, real 5M AAPL, through the MAC  [RGAP=512]
+	$(call need_xclbin,t2t_b.xclbin,xclbin-b,1 h 15 m)
 	./host/t2t_run --xclbin t2t_b.xclbin --replay real_replay.bin \
 	  --capture real_capture.bin --device $(BDF) --gap $(RGAP) \
 	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
@@ -407,6 +409,7 @@ xclbin-b: t2t_kernel_b.xo $(XCLBIN_B_DEPS) ## Build|link Phase B bitstream -> t2
 # On the card, Phase B measures wire cycles at the CMAC's 322.265625 MHz rather
 # than ap_clk's 300, so the host has to be told which clock the probe counted.
 run-card-b: host/t2t_run golden replay.bin ## Card|Phase B, synthetic feed, through the MAC
+	$(call need_xclbin,t2t_b.xclbin,xclbin-b,1 h 15 m)
 	./host/t2t_run --xclbin t2t_b.xclbin --replay replay.bin --capture capture.bin \
 	  --device $(BDF) --gap $(GAP) --loc $(LOC) --base $(BASE) --records $(RECS) \
 	  --quiet $(QUIET) --clk-mhz 322.265625 \
@@ -416,6 +419,18 @@ run-card-b: host/t2t_run golden replay.bin ## Card|Phase B, synthetic feed, thro
 
 run-card-b-latency: ## Card|Phase B, synthetic feed at gap 512
 	$(MAKE) run-card-b GAP=512
+
+# Fail early, and say what to do. Without this a run-card target builds every
+# prerequisite -- the replay image, the golden -- and only then dies inside the
+# host tool with "FAIL: No such file 't2t.xclbin'", which says what is wrong but
+# not that the fix is an hour-long link. Same philosophy as gate-license: find out
+# before spending the time, not after.
+define need_xclbin
+@[ -r "$(1)" ] || { echo "ERROR: $(1) not found -- nothing to load onto the card."; \
+  echo "       Build it first:   make $(2)"; \
+  echo "       That takes roughly $(3), and $(1) is not created until it finishes."; \
+  exit 1; }
+endef
 
 # ---------- host: build, then run on the real card ----------
 XRT ?= /opt/xilinx/xrt
@@ -434,6 +449,7 @@ host: host/t2t_run ## Card|build the host runner
 # THE POINT OF THIS DIRECTORY: replay on real silicon, then diff the frames the
 # card emitted against the same golden the simulations use.
 run-card: host/t2t_run golden replay.bin ## Card|Phase A, synthetic feed
+	$(call need_xclbin,t2t.xclbin,xclbin,1 h 10 m)
 	./host/t2t_run --xclbin t2t.xclbin --replay replay.bin --capture capture.bin \
 	  --device $(BDF) --gap $(GAP) --loc $(LOC) --base $(BASE) --records $(RECS) \
 	  --quiet $(QUIET) --clk-mhz $(shell echo $(AP_CLK) | awk '{print $$1/1000000}') \
