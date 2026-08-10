@@ -264,15 +264,19 @@ Honest scope, all of it stated in the per-step READMEs:
   irreducible: ~285 ns of it is inside `cmac_usplus` and the GT, already generated
   with RS-FEC and flow control off, and only ~9–12 ns of the term is ours. The
   only real lever is a thin custom PCS/MAC — a project, not an optimisation pass.
-- **Split-sender TCP is gone rather than solved; inbound replaces it.** OUCH 4.2
-  scopes order identity to *(account, token)* and binds each account to a physical
-  port, so giving the card its own port deletes the sequence-coordination problem
-  ([step7-host](step7-host/)). What still needs a card is the *inbound* direction:
-  acks and fills arrive at the card's MAC, and the FPGA does not parse TCP.
-- **Two modules are proven but not integrated.** `fast_bbo` answers 91 % of real
+- **Split-sender TCP is gone rather than solved, and inbound is now built.** OUCH
+  4.2 scopes order identity to *(account, token)* and binds each account to a
+  physical port, so giving the card its own port deletes the sequence-coordination
+  problem ([step7-host](step7-host/)). The remaining cost is provisioning — NASDAQ
+  assigns accounts. The inbound direction, where NASDAQ's acks and fills arrive at
+  the *card's* MAC and nothing parsed TCP, is handled by `tcp_rx.sv`: a 4-tuple
+  filter, sequence tracking, and the two numbers the transmit side needs —
+  replacing a `cfg_ack_num` shadow register that could only ever be stale on
+  hardware. It does no reassembly, deliberately.
+- **Three modules are proven but not integrated.** `fast_bbo` answers 91 % of real
   book updates in one cycle instead of ten, never approximating; `tx_replay_buf`
-  makes retransmission idempotent. Both have self-checking testbenches; neither is
-  wired into `t2t_top`.
+  makes retransmission idempotent; `tcp_rx` closes the inbound path. All three have
+  self-checking testbenches; none is wired into `t2t_top`.
 - **The strategy parameters are tuned on a thin reconstructed book**, not on real
   AAPL. They test the *mechanism*, not a tradeable edge, and would have to be
   re-derived from a full trading day before they meant anything about markets.

@@ -68,13 +68,13 @@ TCP socket against an independent decoder.
 order and fills it at its limit price. It tests the protocol and the host's
 bookkeeping, not execution quality.
 
-**No longer split-sender.** This used to model the FPGA and the host as two
-senders on **one** TCP connection. That is now replaced by two independent
-sessions — see below for why the spec makes it the right answer, and
-`make test` for the proof. What still genuinely needs a card is the *inbound*
-path on the card's own connection: acks and fills for its orders arrive at the
-card's MAC, and the FPGA does not parse TCP, so getting them to the host is
-unsolved here.
+**No longer split-sender, and inbound is no longer unsolved.** This used to model
+the FPGA and the host as two senders on **one** TCP connection. That is replaced
+by two independent sessions (below). The inbound direction — acks and fills for
+the card's orders arriving at the *card's* MAC, on a path where the FPGA did not
+parse TCP — is handled by [`tcp_rx.sv`](../step5-board/rtl/tcp_rx.sv),
+`make test-tcprx` in step 5. What remains is wiring it in and re-running on the
+card.
 
 The OUCH enum codes are no longer placeholders — every offset and value is now
 checked against O*U*C*H 4.2 (updated October 2025); see
@@ -160,3 +160,62 @@ inferring them from a golden diff.
 
 Not yet wired into `t2t_top` or given its control register — the module and its
 contract are proven, the integration is not.
+
+
+## The inbound direction
+
+The card sends its orders from its own MAC, so NASDAQ's replies come back to the
+*card*: TCP acknowledgements, and SoupBinTCP/OUCH Order Accepted / Executed /
+Rejected. Nothing looked at them. `eth_ip_udp_rx` filters UDP for the market-data
+feed and drops the rest, and `tcp_tx` took its acknowledgement number from
+`cfg_ack_num` — a **static shadow register software wrote by hand**. That works in
+the test above, where the host owns the socket. On hardware it cannot: every
+segment the card transmitted would carry a stale ACK, and nothing would release
+the in-flight limiter.
+
+[`tcp_rx.sv`](../step5-board/rtl/tcp_rx.sv) closes it. It filters on the session's
+4-tuple, tracks the sequence space, and hands the transmit side the two numbers it
+actually needs — `rcv_nxt` to replace the shadow register, and `peer_ack` so the
+in-flight limiter and the replay buffer know what the venue has taken.
+
+**What it deliberately does not do is the design:**
+
+| segment | behaviour |
+|---|---|
+| in-order | payload forwarded, `rcv_nxt` advances |
+| out-of-order (gap) | counted and **dropped** — the sender retransmits |
+| duplicate | counted and dropped |
+| partial overlap | **accepted**, contributing only its new tail |
+| pure ACK | `peer_ack` updates, nothing forwarded |
+| FIN / RST | flagged; teardown stays software's business |
+
+No reassembly, no out-of-order buffer, no retransmission. Declining to buffer is
+legitimate receiver behaviour — it costs the sender a retransmission — and it
+removes what would otherwise be the largest thing in the module, existing to
+optimise a path carrying a few acknowledgements per second. The property that
+matters is kept: never deliver bytes out of order, never deliver one twice.
+
+The payload is **not** realigned to byte 0. A TCP header is 20 bytes plus options,
+so the payload starts between byte 54 and 74 and can land in either of the first
+two 512-bit beats; realigning needs the two-beat barrel shift that makes
+`mold_splitter` the hardest block in the project. Instead the frame passes through
+unmodified with `o_pay_off` / `o_pay_len` saying where the payload sits, and the
+host — which already reads these frames out of the capture buffer — slices at an
+offset in one line of Python. OUCH decoding stays where it already works.
+
+### Two bugs worth recording
+
+- **`b(s_tdata,46)[7:4]` evaluates to zero.** A part-select applied directly to a
+  function-call result parses cleanly under `xvlog` and silently yields 0, so
+  every TCP data offset read as zero: payload offsets came out 34 instead of 54,
+  and payload lengths included the whole header. Nothing warned. The part-select
+  has to be on a wire.
+- **A duplicate FIN advanced the sequence.** SYN and FIN each consume one sequence
+  number, and an early version patched `rcv_nxt` for them *after* the acceptance
+  test rather than folding them into it — so a retransmitted FIN moved `rcv_nxt`
+  and desynchronised the connection permanently. The sequence-consuming length is
+  now computed once and used by both the test and the advance.
+
+Both are the kind of error that produces no symptom until a live session quietly
+stops progressing, which is why the testbench checks sequence *state* after each
+case rather than checking that a frame came out.

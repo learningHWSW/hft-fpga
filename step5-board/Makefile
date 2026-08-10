@@ -104,7 +104,7 @@ impl-axil:
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 
-.PHONY: test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
+.PHONY: test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
 
 # xsim twins for the self-checking unit tests. Verilator is not installed
 # everywhere -- it is absent on the machine with the actual U55C, which made most
@@ -243,3 +243,10 @@ real.eth: real.mold
 test-wire-real: real.eth
 	$(MAKE) test-wire ITCH=real.itch LOC=13 BASE=2800000 WETH=real.eth
 	@true
+
+# Self-checking, no golden needed: tcp_rx's contract is its sequence bookkeeping,
+# and every way of getting that wrong is silent on the wire.
+test-tcprx:
+	xvlog -sv rtl/tcp_rx.sv tb/tb_tcp_rx.sv
+	xelab -debug typical tb_tcp_rx -s tb_tcp_rx_sim
+	xsim tb_tcp_rx_sim -runall
