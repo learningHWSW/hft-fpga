@@ -8,8 +8,8 @@ market data in off the wire, an order out to the exchange, entirely on the FPGA.
 The FPGA parses the feed, maintains an L2 order book, runs two measured trading
 signals, and assembles the OUCH / SoupBinTCP / TCP order frame — wire to wire,
 with no host in the hot path. The software half owns only what is stateful and
-not latency-critical: session login, heartbeats, acknowledgement feedback and
-register configuration.
+not latency-critical: session login, heartbeats, order-acknowledgement feedback
+and register configuration.
 
 Two commitments shape the whole project:
 
@@ -60,12 +60,12 @@ QSFP28 ─► CMAC ─► cdc_fifo ─┤   filter + strip             ├─►
   RX      100G    322→215   │                              │   redundant-feed   realign to
           322MHz    MHz     └─► eth/ip/udp B ─► drop_fifo ─┘   gap recovery      messages
                             │                                                        │
-                            └─► igmp_query_detect                                    ▼
-                                (arms a report on TX)                          itch_decoder
-                                                                               field extract
-                                                                                     │
-                                                              ┌──────────────────────┤ book delta
-                                                              ▼                      ▼
+                            ├─► igmp_query_detect                                    ▼
+                            │   (arms a report on TX)                          itch_decoder
+                            │                                                  field extract
+                            └─► tcp_rx                                               │
+                                order-session inbound         ┌──────────────────────┤ book delta
+                                the live ack for tcp_tx       ▼                      ▼
                                                         sweep_detect            order_table
                                                         momentum, skips         ref→{px,qty}
                                                         the ladder                   │
@@ -80,12 +80,12 @@ trade.
 
 ```
      sweep ─┐
-            ├─► strategy ─► ouch_builder ─► tcp_tx ─► cdc_fifo ─┐
-     BBO ───┘   + risk gate  OUCH 4.2 /     TCP/IPv4   215→322  │
-                             SoupBinTCP      /Eth       MHz     │
-                                                                ▼
-    QSFP28 ◄─ CMAC ◄─ axis_tx_arb ◄─────────────────────────────┘ orders take the
-       ▲       TX          ▲                                      priority port
+            ├─► strategy ─► ouch_builder ─► tcp_tx ─► tx_replay_buf ─► cdc_fifo ─┐
+     BBO ───┘   + risk gate  OUCH 4.2 /     TCP/IPv4  last 16 frames    215→322  │
+                             SoupBinTCP      /Eth     host may resend    MHz     │
+                                                                                 ▼
+    QSFP28 ◄─ CMAC ◄─ axis_tx_arb ◄──────────────────────────────────────────────┘ orders take the
+       ▲       TX          ▲                                                       priority port
        │                   │
        │                   └─ axis_tx_arb ◄─ igmp_join      control traffic,
        │                                  ◄─ arp_responder  yields to orders
@@ -110,6 +110,12 @@ trade.
 - **Risk gate is not deferred**: kill switch, position limit, in-flight limit,
   each rejection counted separately so a quiet strategy is distinguishable from a
   blocked one.
+- **The order session is maintained on the card.** `tcp_tx` takes its
+  acknowledgement number from `tcp_rx`, which advances it as the venue's segments
+  arrive rather than reading a shadow register software has to keep fresh, and
+  `tx_replay_buf` keeps the last 16 assembled frames so one can go back out
+  without the host re-assembling it. Login, heartbeats and OUCH-level feedback
+  stay software's.
 - **Runs on real silicon** as a Vitis kernel, replaying from HBM, with a real
   `cmac_usplus` and the GT in near-end loopback so MAC, PCS and SerDes are inside
   the measurement.
@@ -124,8 +130,8 @@ trade.
 | 3b | 512-bit realignment, multiple message boundaries per beat | Done — [step3b-splitter](step3b-splitter/) |
 | 4a | Order table — `order_ref` hash in URAM, sized from real data | Done — [step4a-order-table](step4a-order-table/) |
 | 4b | Top-of-book engine — price ladder (L2), BBO | Done — [step4b-book](step4b-book/) |
-| 5 | U55C integration: Eth/IP/UDP RX, CDC, full-chain P&R | Done — [step5-board](step5-board/) |
-| 6 | Strategy, risk gate, OUCH + SoupBinTCP + TCP transmit | Done — [step6-strategy](step6-strategy/) |
+| 5 | U55C integration: Eth/IP/UDP RX, TCP session RX, CDC, full-chain P&R | Done — [step5-board](step5-board/) |
+| 6 | Strategy, risk gate, OUCH + SoupBinTCP + TCP transmit, replay buffer | Done — [step6-strategy](step6-strategy/) |
 | 7 | Host software — session, register config, ack/fill feedback | Done — [step7-host](step7-host/) |
 | 8 | On real silicon — Vitis kernel, HBM replay, measured latency | Done — [step8-hw](step8-hw/) |
 
@@ -202,7 +208,7 @@ cd step4b-book && make test-verilator  # Verilator (no Vivado)
 | 3a / 3b | `make test`, `make test-real-xsim` | MoldUDP64 strip and 512-bit realignment |
 | 4a | `make test`, `make test-real-xsim` | order table == golden, zero overflow |
 | 4b | `make test`, `make test-real-xsim` | BBO sequence == golden |
-| 5 | `make test-t2t`, `make test-units-xsim` | the whole chain, two clocks, wire frames in |
+| 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx` | the whole chain, two clocks, wire frames in and session frames back |
 | 6 | `make test-xsim`, `make test-replay` | orders and OUCH/TCP bytes == golden |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
 | 8 | `make test-xsim`, `make test-b` | the Vitis kernel, HBM to HBM, and through the MAC |
@@ -269,10 +275,10 @@ Honest scope, all of it stated in the per-step READMEs.
 
 ### Integration
 
-- **`tcp_rx` and `fast_bbo` are proven but not wired into `t2t_top`.** Both have
-  self-checking testbenches; `tx_replay_buf` was the third of these and *is* now
-  integrated, with control registers and the datapath verified byte-identical
-  through the full chain and through the MAC.
+- **`fast_bbo` is the last module proven but not wired into `t2t_top`.** It was
+  one of three with a self-checking testbench and no instantiation; `tx_replay_buf`
+  and now `tcp_rx` are both integrated, each verified byte-identical against every
+  existing golden through the full chain and through the MAC.
 - **`fast_bbo`'s rejoin is harder than its own header assumes**, and this is the
   live obstacle rather than a matter of wiring. The module emits one record per
   book delta, but `price_ladder` emits only when the BBO *changes* — 1,779 records
@@ -286,10 +292,17 @@ Honest scope, all of it stated in the per-step READMEs.
   16 assembled frames and the host can ask for one back (`A_CTRL` bit 2). Nothing
   detects a loss and re-sends on its own — the hot path stays fire-and-forget by
   design, and deciding when to resend remains software's.
-- **Inbound reaches the card but not yet the host.** `tcp_rx` extracts the session
-  state the transmit side needs and reports where each payload sits, but wiring it
-  in — and getting those OUCH bytes from the capture buffer into the host's
-  decoder — is unfinished.
+- **Inbound reaches the fabric, not yet the host.** With `tcp_rx` wired, the
+  acknowledgement number `tcp_tx` puts on the wire is live: `cfg_ack_num` is now
+  only the *initial* value software hands over from the handshake, and the hardware
+  advances it as segments arrive. A static shadow register could never track a
+  connection whose replies land at the card, which was the real defect. What is
+  still missing sits above that: the session stream and its counters
+  (`peer_ack`, out-of-order, duplicate, session-frame count) terminate inside
+  `t2t_axil` with no register readback and no capture path, so the OUCH replies
+  never reach the host's decoder. `tcp_rx` reports where each payload sits
+  (`o_rx_pay_off` / `o_rx_pay_len`) and does not realign it; the capture path
+  belongs in the step-8 harness.
 
 ### Signal
 
