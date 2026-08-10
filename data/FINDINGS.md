@@ -225,6 +225,57 @@ net/trade (1e-4 units, +ve = continuation beyond cost):
   [test_session.py](../step7-host/tests/test_session.py)) was lowered 1 ms ->
   0.25 ms.
 
+### 5.2 The imbalance parameters were tuned on pre-market data (full-day fix)
+
+The strategy's spread threshold was derived from the first 5 M messages of the
+day, and every document in this project carried the caveat that this was "a thin
+reconstructed book, not real AAPL". Measured over the **full day** with
+`itch_parser`, split by session, that caveat turns out to have understated the
+problem — the 5 M slice is not merely thin, it is **entirely pre-market**:
+
+| session | records | p10 | p25 | **p50** | p75 | p90 | p99 |
+|---|---|---|---|---|---|---|---|
+| pre-market (04:00–09:30) | 1,921 | 500 | 900 | **1700** | 2900 | 4000 | 9300 |
+| **regular hours (09:30–16:00)** | **422,301** | **100** | **200** | **300** | **400** | **500** | **700** |
+| post (16:00–20:05) | 435 | 400 | 800 | 1300 | 2000 | 2900 | 22400 |
+
+Spreads in 1e-4 units; 424,657 two-sided BBO records over the day.
+
+**The 17-cent median the parameters were chosen against is the pre-market
+distribution**, reproduced here exactly (p50 1700). Real AAPL during regular hours
+is **3 cents**, with 96.1 % of quotes inside 5 cents and 11.9 % at a single tick.
+
+**So `max_spread = 2000` selects nothing.** Every RTH quote is inside a 20-cent
+threshold, which means the "tight spread" half of the signal was not a filter at
+all. Sweeping the threshold against the 422,301 RTH records shows where it starts
+to bind:
+
+| `max_spread` | 100 | 200 | 300 | 400 | 2000 |
+|---|---|---|---|---|---|
+| orders, `ratio_shift=1` (2:1) | 6,365 | 14,689 | 22,645 | 26,474 | 28,230 |
+| orders, `ratio_shift=2` (4:1) | 1,734 | 4,743 | 8,175 | 10,505 | 11,599 |
+
+2000 and 400 differ by 6 %: the threshold is inert above ~400. A **venue operating
+point** derived from this data rather than from pre-market is `max_spread = 100`
+(one tick — what "tight" actually means for AAPL, the tightest 11.9 % of quotes)
+with `ratio_shift = 2` (4:1 size imbalance), giving 1,734 orders across the
+session, roughly one per 13 seconds.
+
+**What this fixes and what it does not.** It fixes the calibration: the parameters
+now describe a genuinely tight market instead of a threshold that admits
+everything. It does **not** establish an edge. That needs the forward-return
+treatment §5 gave the sweep signal — does the mid actually move in the taken
+direction after an imbalance fires — and until that is measured, the imbalance
+signal tests the mechanism only. The sweep signal remains the one with measured
+forward returns behind it.
+
+**The test configuration is deliberately not changed.** Every golden in the repo
+is generated from the 5 M pre-market slice, where a 100-unit threshold fires
+almost nothing and the risk gates would never bind. Test parameters are chosen so
+the gates are exercised; venue parameters are chosen from the data above. Those
+are different jobs and conflating them is what produced this finding in the first
+place.
+
 ## 6. Is II=1 needed — measurement answers (order table throughput vs latency)
 
 The order table is a correctness-first FSM at 6 cycles per message (11 for U),

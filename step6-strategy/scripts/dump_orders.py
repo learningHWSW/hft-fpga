@@ -114,8 +114,18 @@ def main(path, max_spread, ratio_shift, min_qty, order_qty, pos_limit, max_infli
     acks_at = {}                # BBO record index -> orders acknowledged then
     rec = 0
 
+    # OUCH 4.2 Enter Order: shares must be > 0 and < 1,000,000. The RTL refuses
+    # an order outside that range and counts it (strategy.sv, blk_qty_cnt); the
+    # golden has to refuse it identically or the two disagree the moment a
+    # configuration actually trips it. It does not trip at the deployed
+    # parameters, which is exactly why it has to be modelled rather than assumed.
+    OUCH_MAX_SHARES = 1000000
+
     def gate_and_emit(ts, is_buy, qty, px):
         nonlocal pos, inflight
+        # validity before risk, matching the RTL's order
+        if qty <= 0 or qty >= OUCH_MAX_SHARES:
+            return
         # sweep and imbalance share this gate exactly
         if inflight >= max_inflight:
             return

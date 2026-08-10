@@ -79,6 +79,7 @@ module strategy (
   output logic [31:0]  blk_pos_cnt,
   output logic [31:0]  blk_inflight_cnt,
   output logic [31:0]  blk_txfull_cnt,
+  output logic [31:0]  blk_qty_cnt,        // shares outside OUCH's legal range
   output logic signed [31:0] position,
   output logic [15:0]  inflight
 );
@@ -179,6 +180,20 @@ module strategy (
                      (pos_new >= -signed'(cfg_pos_limit));
   wire inflight_ok = (inflight < cfg_max_inflight);
 
+  // OUCH 4.2, Enter Order: "Shares ... Must be greater than zero and less than
+  // 1,000,000". Nothing in this design guaranteed that -- the quantity is
+  // min(resting, cfg_order_qty), so a zero-size level with cfg_min_qty=0 gives
+  // zero shares, and any cfg_order_qty at or above a million passes straight
+  // through. The venue would reject the order; we would learn about it from a
+  // rejection message, which is the expensive way to find out.
+  //
+  // REJECTED, not clamped. Clamping would send a DIFFERENT order from the one
+  // the strategy decided on and hide the misconfiguration that caused it; a
+  // counted refusal says exactly what happened. Same reasoning as the blocked
+  // transmit path dropping rather than queueing.
+  localparam int unsigned OUCH_MAX_SHARES = 1000000;
+  wire qty_ok = (eff_qty != 0) && (eff_qty < OUCH_MAX_SHARES);
+
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       o_valid          <= 1'b0;
@@ -190,6 +205,7 @@ module strategy (
       blk_pos_cnt      <= '0;
       blk_inflight_cnt <= '0;
       blk_txfull_cnt   <= '0;
+      blk_qty_cnt      <= '0;
     end else begin
       o_valid <= 1'b0;
 
@@ -203,7 +219,11 @@ module strategy (
       end
 
       if (cfg_enable && want) begin
-        if (!inflight_ok) begin
+        // validity before risk: an order that cannot be legal is not a risk
+        // decision, and checking it first keeps the risk counters meaningful
+        if (!qty_ok) begin
+          blk_qty_cnt <= blk_qty_cnt + 1;
+        end else if (!inflight_ok) begin
           blk_inflight_cnt <= blk_inflight_cnt + 1;
         end else if (!pos_ok) begin
           blk_pos_cnt <= blk_pos_cnt + 1;

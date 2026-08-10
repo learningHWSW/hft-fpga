@@ -113,6 +113,7 @@ module t2t_top #(
   output logic [31:0]         st_blk_pos,
   output logic [31:0]         st_blk_inflight,
   output logic [31:0]         st_blk_txfull,
+  output logic [31:0]         st_blk_qty,
   output logic signed [31:0]  st_position,
   output logic [31:0]         st_seq_num,
   output logic [31:0]         st_frame_cnt,
@@ -274,6 +275,7 @@ module t2t_top #(
     .o_qty(ord_qty), .o_price(ord_price), .o_ready(ord_ready),
     .sent_cnt(st_sent), .blk_pos_cnt(st_blk_pos),
     .blk_inflight_cnt(st_blk_inflight), .blk_txfull_cnt(st_blk_txfull),
+    .blk_qty_cnt(st_blk_qty),
     .position(st_position), .inflight(inflight)
   );
 

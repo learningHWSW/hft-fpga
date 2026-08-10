@@ -37,6 +37,21 @@ version of a real thing, it is a different and much worse thing:
 | `cfg_enable` | kill switch |
 | `cfg_pos_limit` | \|position\| after the order may not exceed it |
 | `cfg_max_inflight` | orders sent but not yet acknowledged |
+| *(validity)* | shares must satisfy OUCH's `0 < shares < 1,000,000` |
+
+The shares check is a **validity** test rather than a risk one, so it runs first
+and keeps the risk counters meaningful. OUCH 4.2 requires shares greater than zero
+and less than a million; nothing guaranteed that, because the quantity is
+`min(resting, cfg_order_qty)` — a zero-size level with `cfg_min_qty = 0` yields
+zero shares, and any `cfg_order_qty` at or above a million passes straight
+through. The venue would reject such an order, and a rejection message is an
+expensive way to learn about a misconfigured register.
+
+It **rejects and counts** (`blk_qty_cnt`) rather than clamping. Clamping would
+send a different order from the one the strategy decided on and hide the
+misconfiguration that caused it — the same reasoning as the blocked transmit path
+dropping rather than queueing. The golden models the identical rule, so the two
+cannot diverge the moment a configuration actually trips it.
 
 Each rejection reason is counted separately, so a strategy that is quiet can be
 told apart from one that is blocked — they look identical from the outside
@@ -67,11 +82,45 @@ instead:
 | 1e-4 units | 500 | 900 | 1700 | 2900 | 4100 |
 
 A 17-cent median spread is nothing like real AAPL, whose inside market is
-usually a cent wide. The reason is the data: the book is reconstructed from a
-5 M-message slice, so it starts empty and only ever contains the orders that
-slice happens to carry. **A rule tuned here is tuned for a thin book, not for
-AAPL** — the parameters are right for testing the mechanism and would have to
-be re-derived from a full trading day before they meant anything about markets.
+usually a cent wide.
+
+**Re-derived from the full day, and the diagnosis was worse than "thin".** The
+5 M-message slice is not merely a truncated book — it is **entirely pre-market**.
+Measuring every BBO change across the whole session and splitting by trading
+period (`FINDINGS §5.2`):
+
+| session | records | p10 | p25 | **p50** | p75 | p90 |
+|---|---|---|---|---|---|---|
+| pre-market | 1,921 | 500 | 900 | **1700** | 2900 | 4000 |
+| **regular hours** | **422,301** | **100** | **200** | **300** | **400** | **500** |
+
+The 17 cents above is reproduced exactly as the pre-market median. Real AAPL
+during regular hours is **3 cents**, 96.1 % of quotes inside 5 cents.
+
+**Which means `max_spread = 2000` selects nothing.** Every RTH quote is inside a
+20-cent threshold, so the "tight spread" half of the signal was not filtering at
+all. Sweeping it against the 422,301 RTH records:
+
+| `max_spread` | 100 | 200 | 300 | 400 | 2000 |
+|---|---|---|---|---|---|
+| orders, `ratio_shift=1` | 6,365 | 14,689 | 22,645 | 26,474 | 28,230 |
+| orders, `ratio_shift=2` | 1,734 | 4,743 | 8,175 | 10,505 | 11,599 |
+
+2000 and 400 differ by 6 %: the threshold is inert above ~400. A **venue**
+operating point taken from this data is `max_spread=100` (one tick, the tightest
+11.9 % of quotes) with `ratio_shift=2`, giving 1,734 orders across the session.
+
+Two things this does and does not settle. It fixes the **calibration** — the
+threshold now describes a genuinely tight market. It does **not** establish an
+edge: that needs the forward-return treatment §5 gave the sweep signal, and until
+that exists the imbalance signal still tests the mechanism only. The sweep is the
+signal with measured forward returns behind it.
+
+**The test parameters below are deliberately unchanged.** Every golden here is
+generated from the pre-market slice, where a 100-unit threshold fires almost
+nothing and no risk gate would ever bind. Test parameters exist to exercise the
+gates; venue parameters come from the table above. Conflating the two is what
+produced this finding.
 
 Chosen from that: `max_spread=2000`, `ratio_shift=1`, `min_qty=100`,
 `order_qty=100`, `pos_limit=1000`, `max_inflight=4`, `ack_gap=50`. The last

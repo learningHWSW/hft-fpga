@@ -171,6 +171,7 @@ module t2t_axil #(
   logic [31:0] c_igmp_interval, c_group_ip_b;
   logic [3:0]  c_resend_age;
   logic [31:0] st_rb_stored, st_rb_resent, st_rb_drop;
+  logic [31:0] st_blk_qty;
   assign {
     c_group_ip, c_udp_port, c_track_locate, c_band_base, c_enable, c_max_spread,
     c_ratio_shift, c_min_qty, c_order_qty, c_pos_limit, c_max_inflight, c_sweep_en,
@@ -201,6 +202,7 @@ module t2t_axil #(
     .cfg_pos_limit(c_pos_limit), .cfg_max_inflight(c_max_inflight), .cfg_order_ack(ack_core),
     .cfg_resend_req(resend_core), .cfg_resend_age(c_resend_age),
     .st_rb_stored(st_rb_stored), .st_rb_resent(st_rb_resent), .st_rb_drop(st_rb_drop),
+    .st_blk_qty(st_blk_qty),
     .cfg_sweep_en(c_sweep_en), .cfg_sweep_min_levels(c_sweep_min_levels), .cfg_sweep_gap(c_sweep_gap),
     .cfg_token_prefix(c_token_prefix), .cfg_stock(c_stock), .cfg_firm(c_firm), .cfg_tif(c_tif),
     .cfg_ouch_min_qty(c_ouch_min_qty), .cfg_display(c_display), .cfg_capacity(c_capacity),

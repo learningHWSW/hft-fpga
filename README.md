@@ -277,12 +277,17 @@ Honest scope, all of it stated in the per-step READMEs:
   book updates in one cycle instead of ten, never approximating; `tx_replay_buf`
   makes retransmission idempotent; `tcp_rx` closes the inbound path. All three have
   self-checking testbenches; none is wired into `t2t_top`.
-- **The strategy parameters are tuned on a thin reconstructed book**, not on real
-  AAPL. They test the *mechanism*, not a tradeable edge, and would have to be
-  re-derived from a full trading day before they meant anything about markets.
-- **Shares range is not enforced in hardware.** OUCH requires
-  `0 < shares < 1,000,000`; the design emits `min(resting, cfg_order_qty)` with no
-  clamp, so it holds only by configuration.
+- **The imbalance signal has no measured edge, though its calibration is now
+  fixed.** Re-deriving the spread threshold from the full trading day found the
+  5 M-message slice was *entirely pre-market*: its 17-cent median is the
+  pre-market distribution, while real AAPL during regular hours is **3 cents**
+  across 422,301 quotes. So the deployed `max_spread = 2000` selected nothing —
+  every RTH quote sits inside it — and a venue operating point derived from the
+  data is `max_spread = 100` with `ratio_shift = 2` (`data/FINDINGS.md` §5.2).
+  That fixes the *calibration*; it does not establish an edge, which needs the
+  forward-return treatment the sweep signal already has. Test parameters stay as
+  they are on purpose, since the goldens run on the pre-market slice where a tight
+  threshold would never exercise the risk gates.
 
 ## License
 
