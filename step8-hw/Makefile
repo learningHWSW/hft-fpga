@@ -17,7 +17,7 @@ DPSRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
         $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/sweep_detect.sv \
         $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv \
         $(STEP5)/rtl/feed_ab_arb.sv $(STEP5)/rtl/igmp_query_detect.sv \
-        $(STEP5)/rtl/t2t_top.sv $(STEP5)/rtl/axil_regfile.sv \
+        $(STEP5)/rtl/tcp_rx.sv $(STEP5)/rtl/t2t_top.sv $(STEP5)/rtl/axil_regfile.sv \
         $(STEP5)/rtl/cfg_cdc.sv $(STEP5)/rtl/axis_tx_arb.sv \
         $(STEP5)/rtl/igmp_join.sv $(STEP5)/rtl/arp_responder.sv \
         $(STEP5)/rtl/t2t_axil.sv

@@ -36,7 +36,7 @@ set srcs [list \
   $repo/step6-strategy/rtl/strategy.sv $repo/step6-strategy/rtl/sweep_detect.sv \
   $repo/step6-strategy/rtl/ouch_builder.sv \
   $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv \
-  $root/rtl/feed_ab_arb.sv $root/rtl/igmp_query_detect.sv $root/rtl/t2t_top.sv ]
+  $root/rtl/feed_ab_arb.sv $root/rtl/igmp_query_detect.sv $root/rtl/tcp_rx.sv $root/rtl/t2t_top.sv ]
 
 create_project -in_memory -part $part
 foreach f $srcs { read_verilog -sv $f }

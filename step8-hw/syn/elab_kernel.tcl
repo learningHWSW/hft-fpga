@@ -30,7 +30,7 @@ set srcs [list \
   $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv \
   $repo/step5-board/rtl/feed_ab_arb.sv \
   $repo/step5-board/rtl/igmp_query_detect.sv \
-  $repo/step5-board/rtl/t2t_top.sv \
+  $repo/step5-board/rtl/tcp_rx.sv $repo/step5-board/rtl/t2t_top.sv \
   $repo/step5-board/rtl/axil_regfile.sv \
   $repo/step5-board/rtl/cfg_cdc.sv \
   $repo/step5-board/rtl/axis_tx_arb.sv \

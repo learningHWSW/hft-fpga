@@ -172,6 +172,16 @@ module t2t_axil #(
   logic [3:0]  c_resend_age;
   logic [31:0] st_rb_stored, st_rb_resent, st_rb_drop;
   logic [31:0] st_blk_qty;
+  // Session-inbound stream. Terminated here rather than brought out of the
+  // wrapper: getting these OUCH bytes to the host needs a capture path, which
+  // lives in the step-8 harness, not in t2t_axil. The counters below are what the
+  // register map can already report, and they are what says whether the venue is
+  // talking to us at all.
+  logic [DATA_W-1:0]   rxs_tdata;
+  logic [DATA_W/8-1:0] rxs_tkeep;
+  logic                rxs_tvalid, rxs_tlast;
+  logic [31:0] st_rx_peer_ack, st_rx_ooo, st_rx_dup, st_rx_sess_frames;
+  logic [15:0] o_rx_pay_off, o_rx_pay_len;
   assign {
     c_group_ip, c_udp_port, c_track_locate, c_band_base, c_enable, c_max_spread,
     c_ratio_shift, c_min_qty, c_order_qty, c_pos_limit, c_max_inflight, c_sweep_en,
@@ -203,6 +213,14 @@ module t2t_axil #(
     .cfg_resend_req(resend_core), .cfg_resend_age(c_resend_age),
     .st_rb_stored(st_rb_stored), .st_rb_resent(st_rb_resent), .st_rb_drop(st_rb_drop),
     .st_blk_qty(st_blk_qty),
+    // Order-session inbound. The frames are brought out of the wrapper so the
+    // harness can capture them; the host reads the OUCH payload at the reported
+    // offset. Left unconnected here would silently discard the venue's replies.
+    .rxs_tdata(rxs_tdata), .rxs_tkeep(rxs_tkeep),
+    .rxs_tvalid(rxs_tvalid), .rxs_tlast(rxs_tlast),
+    .o_rx_pay_off(o_rx_pay_off), .o_rx_pay_len(o_rx_pay_len),
+    .st_rx_peer_ack(st_rx_peer_ack), .st_rx_ooo(st_rx_ooo),
+    .st_rx_dup(st_rx_dup), .st_rx_sess_frames(st_rx_sess_frames),
     .cfg_sweep_en(c_sweep_en), .cfg_sweep_min_levels(c_sweep_min_levels), .cfg_sweep_gap(c_sweep_gap),
     .cfg_token_prefix(c_token_prefix), .cfg_stock(c_stock), .cfg_firm(c_firm), .cfg_tif(c_tif),
     .cfg_ouch_min_qty(c_ouch_min_qty), .cfg_display(c_display), .cfg_capacity(c_capacity),

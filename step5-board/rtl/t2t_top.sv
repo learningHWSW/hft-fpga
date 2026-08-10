@@ -133,7 +133,21 @@ module t2t_top #(
   output logic                o_dec_valid,
   output logic [47:0]         o_dec_ts,
   output logic                o_ord_valid,
-  output logic [47:0]         o_ord_ts
+  output logic [47:0]         o_ord_ts,
+
+  // ---- order-session inbound (tcp_rx) ----
+  // Session frames only, for the host to read the OUCH payload out of. The
+  // payload is not realigned; o_rx_pay_off/len say where it sits in the frame.
+  output logic [DATA_W-1:0]   rxs_tdata,
+  output logic [DATA_W/8-1:0] rxs_tkeep,
+  output logic                rxs_tvalid,
+  output logic                rxs_tlast,
+  output logic [15:0]         o_rx_pay_off,
+  output logic [15:0]         o_rx_pay_len,
+  output logic [31:0]         st_rx_peer_ack,
+  output logic [31:0]         st_rx_ooo,
+  output logic [31:0]         st_rx_dup,
+  output logic [31:0]         st_rx_sess_frames
 );
   localparam int KEEP_W = DATA_W / 8;
 
@@ -157,6 +171,41 @@ module t2t_top #(
     .clk(core_clk), .rst_n(core_rst_n), .cfg_group_ip(cfg_group_ip),
     .s_tdata(rxc_tdata), .s_tvalid(rxc_tvalid), .s_tlast(rxc_tlast),
     .o_query(o_igmp_query), .query_cnt()
+  );
+
+  // ---- order-session inbound ----
+  // Taps the same raw stream as the IGMP detector, for the same reason: this is
+  // TCP, and the UDP filter below would drop it. It maintains the acknowledgement
+  // number the transmit side needs, which used to be a static shadow register
+  // that could only ever be stale once the card sends its own orders.
+  //
+  // cfg_ack_num is its INITIAL value rather than its permanent one: software
+  // still hands over what it saw during the handshake, and the hardware advances
+  // from there. With no inbound session traffic rcv_nxt stays at cfg_ack_num, so
+  // a design that never receives behaves exactly as it did before -- which is
+  // what keeps every existing golden byte-identical.
+  logic [31:0] rx_rcv_nxt;
+  logic [15:0] rx_peer_window;
+  logic        rx_seen_fin, rx_seen_rst;
+  logic [31:0] rx_not_tcp, rx_tuple_drop, rx_pay_bytes;
+
+  tcp_rx #(.DATA_W(DATA_W)) u_tcp_rx (
+    .clk(core_clk), .rst_n(core_rst_n),
+    .cfg_local_ip(cfg_src_ip),   .cfg_peer_ip(cfg_dst_ip),
+    .cfg_local_port(cfg_src_port), .cfg_peer_port(cfg_dst_port),
+    .cfg_irs(cfg_ack_num), .cfg_load(cfg_load),
+    .s_tdata(rxc_tdata), .s_tkeep(rxc_tkeep),
+    .s_tvalid(rxc_tvalid), .s_tlast(rxc_tlast),
+    .m_tdata(rxs_tdata), .m_tkeep(rxs_tkeep),
+    .m_tvalid(rxs_tvalid), .m_tlast(rxs_tlast),
+    .o_pay_off(o_rx_pay_off), .o_pay_len(o_rx_pay_len),
+    .rcv_nxt(rx_rcv_nxt), .peer_ack(st_rx_peer_ack),
+    .peer_window(rx_peer_window),
+    .seen_fin(rx_seen_fin), .seen_rst(rx_seen_rst),
+    .frames_in(), .frames_kept(st_rx_sess_frames),
+    .drop_not_tcp(rx_not_tcp), .drop_tuple(rx_tuple_drop),
+    .drop_ooo(st_rx_ooo), .drop_dup(st_rx_dup),
+    .payload_bytes(rx_pay_bytes)
   );
 
   // ---- strip Ethernet/IPv4/UDP ----
@@ -312,7 +361,7 @@ module t2t_top #(
     .cfg_dst_mac(cfg_dst_mac), .cfg_src_mac(cfg_src_mac),
     .cfg_src_ip(cfg_src_ip), .cfg_dst_ip(cfg_dst_ip),
     .cfg_src_port(cfg_src_port), .cfg_dst_port(cfg_dst_port),
-    .cfg_init_seq(cfg_init_seq), .cfg_ack_num(cfg_ack_num),
+    .cfg_init_seq(cfg_init_seq), .cfg_ack_num(rx_rcv_nxt),
     .cfg_window(cfg_window), .cfg_init_id(cfg_init_id), .cfg_load(cfg_load),
     .s_tdata(ouch_tdata), .s_tvalid(ouch_tvalid), .s_tready(ouch_tready),
     .m_tdata(frm_tdata), .m_tkeep(frm_tkeep), .m_tvalid(frm_tvalid),
