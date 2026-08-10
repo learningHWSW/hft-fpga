@@ -252,42 +252,61 @@ make distclean      # + bitstreams, ip/, replay image        (HOURS — asks fir
 
 ## What is not done
 
-Honest scope, all of it stated in the per-step READMEs:
+Honest scope, all of it stated in the per-step READMEs.
+
+### Measurement
 
 - **Loopback is not a cable.** The wire-to-wire figure is measured with the GT in
   near-end PMA loopback: frames are 64b/66b encoded, serialized at 25.78125 Gb/s
   on four lanes, recovered, aligned and FCS-checked. That is the same
-  `D + T_tx + T_rx` a real wire gives, but a cabled two-port measurement against
-  a live feed is still the honest end state, and the QSFP cages here are empty.
+  `D + T_tx + T_rx` a real wire gives, but a cabled two-port measurement against a
+  live feed is still the honest end state, and the QSFP cages here are empty.
 - **The MAC is the larger half of the latency, and untouched.** ~207 ns in the
   fabric against **~300 ns** in MAC, SerDes and framing. It is close to
-  irreducible: ~285 ns of it is inside `cmac_usplus` and the GT, already generated
-  with RS-FEC and flow control off, and only ~9–12 ns of the term is ours. The
-  only real lever is a thin custom PCS/MAC — a project, not an optimisation pass.
-- **Split-sender TCP is gone rather than solved, and inbound is now built.** OUCH
-  4.2 scopes order identity to *(account, token)* and binds each account to a
-  physical port, so giving the card its own port deletes the sequence-coordination
-  problem ([step7-host](step7-host/)). The remaining cost is provisioning — NASDAQ
-  assigns accounts. The inbound direction, where NASDAQ's acks and fills arrive at
-  the *card's* MAC and nothing parsed TCP, is handled by `tcp_rx.sv`: a 4-tuple
-  filter, sequence tracking, and the two numbers the transmit side needs —
-  replacing a `cfg_ack_num` shadow register that could only ever be stale on
-  hardware. It does no reassembly, deliberately.
-- **Three modules are proven but not integrated.** `fast_bbo` answers 91 % of real
-  book updates in one cycle instead of ten, never approximating; `tx_replay_buf`
-  makes retransmission idempotent; `tcp_rx` closes the inbound path. All three have
-  self-checking testbenches; none is wired into `t2t_top`.
+  irreducible: ~285 ns sits inside `cmac_usplus` and the GT, already generated with
+  RS-FEC and flow control off, and only ~9–12 ns of the term is ours. The one real
+  lever is a thin custom PCS/MAC — a project, not an optimisation pass.
+
+### Integration
+
+- **`tcp_rx` and `fast_bbo` are proven but not wired into `t2t_top`.** Both have
+  self-checking testbenches; `tx_replay_buf` was the third of these and *is* now
+  integrated, with control registers and the datapath verified byte-identical
+  through the full chain and through the MAC.
+- **`fast_bbo`'s rejoin is harder than its own header assumes**, and this is the
+  live obstacle rather than a matter of wiring. The module emits one record per
+  book delta, but `price_ladder` emits only when the BBO *changes* — 1,779 records
+  against ~6,740 deltas on the real replay. They are therefore not in
+  one-to-one correspondence, so merging the early and late records needs
+  change-detection in `fast_bbo` that matches the ladder's exactly, plus
+  bookkeeping to suppress the ladder record whose delta was already answered. Get
+  that wrong and the BBO *sequence* changes, which moves the strategy's rising
+  edges and silently changes which orders fire.
+- **Retransmission is available, not automatic.** `tx_replay_buf` holds the last
+  16 assembled frames and the host can ask for one back (`A_CTRL` bit 2). Nothing
+  detects a loss and re-sends on its own — the hot path stays fire-and-forget by
+  design, and deciding when to resend remains software's.
+- **Inbound reaches the card but not yet the host.** `tcp_rx` extracts the session
+  state the transmit side needs and reports where each payload sits, but wiring it
+  in — and getting those OUCH bytes from the capture buffer into the host's
+  decoder — is unfinished.
+
+### Signal
+
 - **The imbalance signal has no measured edge, though its calibration is now
   fixed.** Re-deriving the spread threshold from the full trading day found the
-  5 M-message slice was *entirely pre-market*: its 17-cent median is the
-  pre-market distribution, while real AAPL during regular hours is **3 cents**
-  across 422,301 quotes. So the deployed `max_spread = 2000` selected nothing —
-  every RTH quote sits inside it — and a venue operating point derived from the
-  data is `max_spread = 100` with `ratio_shift = 2` (`data/FINDINGS.md` §5.2).
-  That fixes the *calibration*; it does not establish an edge, which needs the
-  forward-return treatment the sweep signal already has. Test parameters stay as
-  they are on purpose, since the goldens run on the pre-market slice where a tight
-  threshold would never exercise the risk gates.
+  5 M-message slice was *entirely pre-market*: its 17-cent median is the pre-market
+  distribution, while real AAPL during regular hours is **3 cents** across 422,301
+  quotes. The deployed `max_spread = 2000` therefore selected nothing — every RTH
+  quote sits inside it — and a venue operating point derived from the data is
+  `max_spread = 100` with `ratio_shift = 2` (`data/FINDINGS.md` §5.2). That fixes
+  the *calibration*; it does not establish an edge, which needs the forward-return
+  treatment the sweep signal already has. Test parameters stay as they are on
+  purpose, since the goldens run on the pre-market slice where a tight threshold
+  would never exercise the risk gates.
+- **Only one tracked symbol.** `track_locate` is a single register, not a bitmap:
+  one symbol is what fits URAM at the measured geometry. Multi-symbol needs the
+  HBM path, and the filter widens with it.
 
 ## License
 
