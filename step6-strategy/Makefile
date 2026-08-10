@@ -11,7 +11,7 @@ STEP5  = ../step5-board
 ITCH ?= $(STEP5)/real.itch
 LOC  ?= 13
 
-VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv tb/tb_strategy.sv
+VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv rtl/tx_replay_buf.sv tb/tb_strategy.sv
 VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0
 

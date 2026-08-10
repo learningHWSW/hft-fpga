@@ -64,6 +64,10 @@ module t2t_top #(
   input  logic [31:0]         cfg_pos_limit,
   input  logic [15:0]         cfg_max_inflight,
   input  logic                cfg_order_ack,
+  // transmit replay buffer: pulse cfg_resend_req with an age (0 = most recent
+  // frame stored) to push a previously sent order frame back onto the wire.
+  input  logic                cfg_resend_req,
+  input  logic [3:0]          cfg_resend_age,
   input  logic                cfg_sweep_en,
   input  logic [31:0]         cfg_sweep_min_levels,
   input  logic [47:0]         cfg_sweep_gap,
@@ -113,6 +117,9 @@ module t2t_top #(
   output logic [31:0]         st_seq_num,
   output logic [31:0]         st_frame_cnt,
   output logic [31:0]         st_tx_drop,
+  output logic [31:0]         st_rb_stored,
+  output logic [31:0]         st_rb_resent,
+  output logic [31:0]         st_rb_drop,
 
   // RX-side IGMP query -> drives igmp_join.i_query in the wrapper (RFC 2236)
   output logic                o_igmp_query,
@@ -293,6 +300,10 @@ module t2t_top #(
   logic [DATA_W-1:0] frm_tdata;
   logic [KEEP_W-1:0] frm_tkeep;
   logic              frm_tvalid, frm_tlast;
+  // declared here rather than beside u_replay: tcp_tx's m_tready reads it, and
+  // xvlog rejects a forward reference even where synthesis tolerates one. Third
+  // time this pattern has bitten in this repo.
+  logic              rb_s_tready;
 
   tcp_tx #(.DATA_W(DATA_W), .PAYLD_B(52)) u_tcp (
     .clk(core_clk), .rst_n(core_rst_n),
@@ -303,8 +314,32 @@ module t2t_top #(
     .cfg_window(cfg_window), .cfg_init_id(cfg_init_id), .cfg_load(cfg_load),
     .s_tdata(ouch_tdata), .s_tvalid(ouch_tvalid), .s_tready(ouch_tready),
     .m_tdata(frm_tdata), .m_tkeep(frm_tkeep), .m_tvalid(frm_tvalid),
-    .m_tlast(frm_tlast), .m_tready(1'b1),
+    .m_tlast(frm_tlast), .m_tready(rb_s_tready),
     .seq_num(st_seq_num), .frame_cnt(st_frame_cnt)
+  );
+
+  // ---- transmit replay buffer ----
+  // Keeps the last SLOTS assembled order frames so the host can ask for one to be
+  // re-sent. It is transparent when idle: the live frame passes straight through
+  // while the ring is written in parallel, so with no resend outstanding the byte
+  // stream is exactly what tcp_tx produced. A replay is only ever emitted when
+  // the live path is idle, so retransmission cannot delay a new order.
+  //
+  // tcp_tx's m_tready used to be tied high. It now honours the buffer, which
+  // holds it low only for the couple of cycles a replay occupies.
+  logic [DATA_W-1:0] rb_tdata;
+  logic [KEEP_W-1:0] rb_tkeep;
+  logic              rb_tvalid, rb_tlast;
+
+  tx_replay_buf #(.DATA_W(DATA_W), .SLOTS(16), .BEATS(2)) u_replay (
+    .clk(core_clk), .rst_n(core_rst_n),
+    .s_tdata(frm_tdata), .s_tkeep(frm_tkeep), .s_tvalid(frm_tvalid),
+    .s_tlast(frm_tlast), .s_tready(rb_s_tready),
+    .m_tdata(rb_tdata), .m_tkeep(rb_tkeep), .m_tvalid(rb_tvalid),
+    .m_tlast(rb_tlast), .m_tready(1'b1),
+    .resend_req(cfg_resend_req), .resend_age(cfg_resend_age),
+    .stored_cnt(st_rb_stored), .resent_cnt(st_rb_resent),
+    .resend_drop(st_rb_drop)
   );
 
   // ---- core -> CMAC ----
@@ -315,7 +350,7 @@ module t2t_top #(
 
   cdc_fifo #(.DATA_W(DATA_W), .DEPTH(64)) u_tx_cdc (
     .w_clk(core_clk), .w_rst_n(core_rst_n),
-    .s_tdata(frm_tdata), .s_tkeep(frm_tkeep), .s_tvalid(frm_tvalid), .s_tlast(frm_tlast),
+    .s_tdata(rb_tdata), .s_tkeep(rb_tkeep), .s_tvalid(rb_tvalid), .s_tlast(rb_tlast),
     .drop_cnt(st_tx_drop), .hwm(tx_hwm_unused),
     .r_clk(cmac_clk), .r_rst_n(cmac_rst_n),
     .m_tdata(tx_tdata), .m_tkeep(tx_tkeep), .m_tvalid(tx_tvalid), .m_tlast(tx_tlast),

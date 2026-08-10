@@ -95,6 +95,8 @@ module axil_regfile #(
   // ---- commit pulses (one aclk cycle) ----
   output logic                cfg_load,
   output logic                cfg_order_ack,
+  output logic                cfg_resend_req,     // pulse, A_CTRL bit 2
+  output logic [3:0]          cfg_resend_age,
 
   // ---- status inputs (from t2t_top st_* ports) ----
   input  logic [31:0]         st_rx_drop,
@@ -129,7 +131,8 @@ module axil_regfile #(
                  A_SRC_IP=31,    A_DST_IP=32,   A_SRC_PORT=33,   A_DST_PORT=34,
                  A_INIT_SEQ=35,  A_ACK_NUM=36,  A_WINDOW=37,     A_INIT_ID=38,
                  A_IGMP_EN=39,   A_IGMP_INTERVAL=40, A_GROUP_IP_B=41;
-  localparam int NCFG   = 42;
+  localparam int NCFG   = 44;
+  localparam int A_RESEND_AGE = 43;   // 0xAC  which stored frame to re-send
   localparam int A_CTRL = 42;         // 0xA8
   localparam int A_STAT = 64;         // 0x100 status base
   localparam int A_ID   = 127;        // 0x1FC
@@ -156,17 +159,20 @@ module axil_regfile #(
     if (!aresetn) begin
       for (int i = 0; i < 64; i++) cfgw[i] <= 32'd0;
       s_axil_bvalid <= 1'b0;
-      cfg_load      <= 1'b0;
-      cfg_order_ack <= 1'b0;
+      cfg_load       <= 1'b0;
+      cfg_order_ack  <= 1'b0;
+      cfg_resend_req <= 1'b0;
     end else begin
-      cfg_load      <= 1'b0;          // default: pulses are one cycle
-      cfg_order_ack <= 1'b0;
+      cfg_load       <= 1'b0;          // default: pulses are one cycle
+      cfg_order_ack  <= 1'b0;
+      cfg_resend_req <= 1'b0;
       if (do_wr) begin
         if (widx < NCFG)
           cfgw[widx[5:0]] <= wmask(cfgw[widx[5:0]], s_axil_wdata, s_axil_wstrb);
         if (widx == A_CTRL) begin
-          cfg_load      <= s_axil_wdata[0];
-          cfg_order_ack <= s_axil_wdata[1];
+          cfg_load       <= s_axil_wdata[0];
+          cfg_order_ack  <= s_axil_wdata[1];
+          cfg_resend_req <= s_axil_wdata[2];
         end
         s_axil_bvalid <= 1'b1;
       end else if (s_axil_bvalid & s_axil_bready) begin
@@ -243,6 +249,7 @@ module axil_regfile #(
   assign cfg_firm             = cfgw[A_FIRM];
   assign cfg_tif              = cfgw[A_TIF];
   assign cfg_ouch_min_qty     = cfgw[A_OUCH_MINQ];
+  assign cfg_resend_age       = cfgw[A_RESEND_AGE][3:0];
   assign cfg_display          = cfgw[A_DISPLAY][7:0];
   assign cfg_capacity         = cfgw[A_CAPACITY][7:0];
   assign cfg_sweep            = cfgw[A_SWEEP][7:0];
