@@ -71,8 +71,14 @@ make impl              # + place & route
 ```
 eth frames -> eth_ip_udp_rx -> [beat FIFO] -> mold_splitter -> itch_decoder
                             -> [msg FIFO]  -> order_table   -> [delta FIFO]
-                            -> price_ladder ─┐
-                               fast_bbo ─────┴─> bbo_merge -> BBO
+                                                                    │ + sym
+        ┌───────────────────────────────────────────────────────────┘
+        │
+        ├─> price_ladder[0]   ─┐
+        │   fast_bbo[0]       ─┴─> bbo_merge[0]   ─┐
+        │                                          │
+        └─> price_ladder[K-1] ─┐                   │
+            fast_bbo[K-1]     ─┴─> bbo_merge[K-1] ─┴─> bbo_arb -> BBO + sym
 ```
 
 `fast_bbo` hangs off the ladder's ACCEPT handshake, not off the delta FIFO, and
@@ -80,6 +86,18 @@ eth frames -> eth_ip_udp_rx -> [beat FIFO] -> mold_splitter -> itch_decoder
 ordering argument, not a convenience — see [step4b-book](../step4b-book/). The
 merged stream is the ladder's own stream: on the 5 M replay, the same 1,779
 records, 1,174 of them ten cycles early, `st_bbo_mismatch = 0`.
+
+**`NSYM` replicates everything below the table.** One order table holds every
+tracked name — it is set-associative on `order_ref`, which is unique across
+symbols, so sharing costs only capacity — and a book is a book of one
+instrument, so there is nothing for K names to share in a ladder, a fast-BBO
+tracker or a sweep detector. The delta FIFO carries the symbol index, the demux
+pops when the ladder that *owns* the delta is ready (so K names keep K ladders'
+throughput rather than sharing one), and `bbo_arb` merges the K streams with a
+tag. `NSYM = 1` collapses every generate here to the single-symbol structure
+that shipped, wire for wire, which is what lets every existing golden stand.
+`make test-msym` runs two books through one chain and diffs each against its
+own single-symbol golden.
 
 `eth_ip_udp_rx` is deliberately not a general network stack. A receive-only
 multicast feed needs three checks — IPv4 with IHL=5, protocol UDP, and the

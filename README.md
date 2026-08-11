@@ -121,6 +121,13 @@ trade.
 - **Order table sized by measurement** — `hash(order_ref)` into 2¹³ × 16 URAM.
   A full trading day gives zero overflow, and an XOR fold beats a multiply-shift
   mixer at lower cost (`FINDINGS §4`).
+- **Several symbols, one chain.** `NSYM` replicates everything a book belongs to
+  — ladder, fast-BBO tracker, sweep detector, the strategy's edge state and
+  position — and shares everything the *wire* belongs to: one order table, one
+  TCP session, one in-flight budget. The delta stream is demultiplexed by symbol
+  and the book streams merged back tagged, so K names cost K ladders' area but
+  keep K ladders' throughput rather than sharing one. Each book's output is
+  byte-identical to what a single-symbol build tracking that name alone emits.
 - **Two signals, one risk gate.** Order-book imbalance, and sweep / momentum
   ignition. The sweep path taps the order-table delta and skips the ladder
   entirely — 19 core cycles against imbalance's 28. Only one of the two has a
@@ -362,17 +369,31 @@ Honest scope, all of it stated in the per-step READMEs.
   `max_spread = 2000` selected nothing where AAPL's real regular-hours spread is
   3 cents. Test parameters stay as they are on purpose — the goldens run on that
   pre-market slice, where a tight threshold would never exercise the risk gates.
-- **One tracked symbol end to end; the table now holds more.** `order_table`
-  takes a set of locates and tags every delta with the symbol it belongs to
-  (`NSYM`, default 1, verified against a two-symbol golden). The capacity question
-  behind the old "multi-symbol needs HBM" claim turned out to be answerable
-  differently: measured over the full day, **16 symbols fit in URAM** — 2 need
-  2^14 × 16, 4 and 8 need 2^15 × 16, 16 need 2^16 × 16, against 960 URAM on the
-  device (`FINDINGS` §4.4). HBM is what *all* symbols need, not a handful. What is
-  still single-symbol is everything downstream: one price ladder (27,505 LUTs
-  each, so four is 8.4 % of the device), one set of strategy edge/position state,
-  and one OUCH stock field. Those are a sizing decision now rather than an
-  unknown.
+- **Multi-symbol is wired end to end and has never been built for the card.**
+  `NSYM` now runs the whole chain, not just the table: one order table tags each
+  delta with its book, a demux feeds `NSYM` price ladders, `bbo_arb` merges their
+  streams back with a symbol tag, and the strategy's edge detector, latched BBO
+  and position are per name while the in-flight limit stays shared — it counts
+  orders on one TCP session, and the resource it limits is the wire, not the
+  book. The OUCH Stock field is per symbol; nothing else in an Enter Order is.
+  Verified two ways at `NSYM = 2`, in both cases against the *single*-symbol
+  goldens rather than a new one written beside the new RTL: two genuinely
+  different books each reproduce their own locate's golden, and the same BBO log
+  driven into both symbols reproduces the order golden twice over — the worst
+  case for shared state, and confirmed sensitive by temporarily sharing the edge
+  detector and watching symbol 1 fall to zero orders. What has not happened is a
+  bitstream: `NSYM = 1` is what every card measurement in this README describes,
+  and both halves of the cost are now measured (`FINDINGS` §4.4): a second symbol
+  is **+32,687 LUTs (+58 %) and +2 DSP** with no BRAM change and no synthesis
+  timing cost, and the table it feeds has to grow from 64 URAM to 128, because
+  2^13 × 16 holds exactly one name. Four symbols would be ~12 % of the device's
+  LUTs. A real multi-symbol build is a sizing decision now, not a rebuild.
+- **The register map holds five symbols, and the order table would need
+  resizing before that.** Symbols 1–4 have a per-symbol config block at
+  `0x0C0`–`0x0FF` and per-symbol positions at `0x180`–`0x18C`; symbol 0 keeps the
+  registers it always had, because moving it would repoint offsets that shipped.
+  Beyond five the map needs extending. That is a smaller job than the table it
+  would sit in front of.
 
 ## License
 

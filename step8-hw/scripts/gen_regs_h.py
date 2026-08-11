@@ -35,6 +35,18 @@ def main():
     out.write("// at this offset (see step8-hw/rtl/t2t_kernel.sv).\n")
     out.write("#define T2T_WINDOW 0x1000u\n\n")
 
+    # The per-symbol config block, emitted as its anchor plus a macro rather
+    # than as flattened per-symbol defines: the block is derived from one base
+    # on both sides, so the base is the thing the C host should share. Symbol 0
+    # is not in it -- its locate, base and stock are the original registers, so
+    # the macro deliberately covers 1.. only and a caller looping over symbols
+    # uses CFG_TRACK_LOCATE / CFG_BAND_BASE / CFG_STOCK_* for the first.
+    out.write(f"#define T2T_SYM_BASE       0x{regmap.SYM_BASE:03X}u\n")
+    out.write(f"#define T2T_SYM_STRIDE     {regmap.SYM_STRIDE}u\n")
+    out.write(f"#define T2T_SYM_MAX        {regmap.SYM_MAX}u\n")
+    out.write("// symbol k >= 1: +0 locate, +4 band base, +8 stock lo, +12 stock hi\n")
+    out.write("#define T2T_SYM(k) (T2T_SYM_BASE + T2T_SYM_STRIDE * ((k) - 1u))\n\n")
+
     out.write(f"#define T2T_CTRL           0x{regmap.CTRL_OFFSET:03X}u\n")
     out.write(f"#define T2T_CTRL_LOAD      0x{regmap.CTRL_LOAD:X}u\n")
     out.write(f"#define T2T_CTRL_ORDER_ACK 0x{regmap.CTRL_ORDER_ACK:X}u\n")

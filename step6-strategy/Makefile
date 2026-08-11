@@ -15,7 +15,7 @@ VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv rtl/tx_replay_buf.sv tb
 VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0
 
-.PHONY: test test-combined test-xsim check-frames test-sweep test-replay test-rto imbalance-edge clean
+.PHONY: test test-combined test-xsim test-msym check-frames test-sweep test-replay test-rto imbalance-edge clean
 
 # bbo_in.log is the shared stimulus: the golden reads it, and so does the RTL
 bbo_in.log:
@@ -53,6 +53,23 @@ test-xsim: bbo_in.log
 	diff orders_gold.log orders_rtl.log && echo "PASS: orders == golden (xsim)"
 	python3 scripts/dump_ouch.py orders_gold.log > ouch_gold.log
 	diff ouch_gold.log ouch_rtl.log && echo "PASS: OUCH packets == golden (xsim)"
+
+# Multi-symbol: the SAME BBO log presented to two symbols, which is the worst
+# case for shared state -- so each symbol's order stream must still be the
+# ordinary single-symbol golden. cfg_max_inflight is raised out of the way
+# because it is shared BY DESIGN (one session, one replay buffer); everything
+# else in the golden's configuration is unchanged, including cfg_pos_limit,
+# which is per symbol and does bind. See tb_strategy_msym.sv.
+MSYM_SRC = rtl/strategy.sv rtl/ouch_builder.sv tb/tb_strategy_msym.sv
+test-msym: bbo_in.log
+	python3 scripts/dump_orders.py bbo_in.log 2000 1 100 100 1000 65535 50 > orders_gold_msym.log
+	xvlog -sv $(MSYM_SRC)
+	xelab -debug typical tb_strategy_msym -s tb_strategy_msym_sim
+	xsim tb_strategy_msym_sim -testplusarg bbo=bbo_in.log \
+	     -testplusarg out0=orders_rtl_s0.log -testplusarg out1=orders_rtl_s1.log -runall
+	diff orders_gold_msym.log orders_rtl_s0.log
+	diff orders_gold_msym.log orders_rtl_s1.log
+	@echo "PASS: two symbols, each == the single-symbol golden, own stock in OUCH"
 
 # independent re-derivation of the checksums; skips if scapy is absent
 check-frames:

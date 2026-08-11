@@ -45,7 +45,11 @@ A_TO_REG = {
     "GROUP_IP_B": ("cfg_group_ip_b", 0),
 }
 # anchors that are not per-register config words
-ANCHORS = {"CTRL", "STAT", "ID", "RESEND_AGE", "RTO_EN", "RTO_CYCLES", "RTO_RETRIES"}
+ANCHORS = {"CTRL", "STAT", "ID", "RESEND_AGE", "RTO_EN", "RTO_CYCLES",
+           "RTO_RETRIES",
+           # base of the per-symbol config block; its contents are derived from
+           # it on both sides (regmap.sym_offsets), so the anchor is the contract
+           "SYM"}
 
 fails = 0
 
@@ -122,6 +126,44 @@ def test_status_order_matches_rtl():
               f"A_STAT+{i} is {name} (RTL: {mux.get(i)}) @ 0x{regmap.STATUS_OFFSET[name]:X}")
 
 
+def test_per_symbol_block_matches_rtl():
+    """The per-symbol config block is derived on both sides from one anchor, so
+    the anchor is the whole contract -- and an anchor that drifted would put
+    symbol 1's stock somewhere the RTL is not reading, which no other test here
+    would notice."""
+    a = parse_rtl_localparams()
+    check("SYM" in a, "axil_regfile declares A_SYM")
+    if "SYM" not in a:
+        return
+    check(4 * a["SYM"] == regmap.SYM_BASE,
+          f"A_SYM word {a['SYM']} = 0x{4*a['SYM']:X}, host SYM_BASE "
+          f"0x{regmap.SYM_BASE:X}")
+    # symbol 0 answers from the registers it has always had, not from the block
+    s0 = regmap.sym_offsets(0)
+    check(s0["track_locate"] == regmap.WORD_OFFSET["cfg_track_locate"][0],
+          "symbol 0's locate is still cfg_track_locate")
+    check(s0["stock_hi"] == regmap.WORD_OFFSET["cfg_stock"][1],
+          "symbol 0's stock is still cfg_stock")
+    # the block is four words per symbol, ordered locate/base/stock_lo/stock_hi
+    for k in range(1, regmap.SYM_MAX):
+        o = regmap.sym_offsets(k)
+        base = regmap.SYM_BASE + regmap.SYM_STRIDE * (k - 1)
+        check([o["track_locate"], o["band_base"], o["stock_lo"], o["stock_hi"]]
+              == [base, base + 4, base + 8, base + 12],
+              f"symbol {k} occupies 0x{base:X}..0x{base+12:X}")
+    # and it must not run into the status page
+    last = regmap.sym_offsets(regmap.SYM_MAX - 1)["stock_hi"]
+    check(last < regmap.STATUS_BASE,
+          f"the block ends at 0x{last:X}, below the status base "
+          f"0x{regmap.STATUS_BASE:X}")
+    # asking for a symbol the map cannot hold is an error, not a silent alias
+    try:
+        regmap.sym_offsets(regmap.SYM_MAX)
+        check(False, f"sym_offsets({regmap.SYM_MAX}) is refused")
+    except ValueError:
+        check(True, f"sym_offsets({regmap.SYM_MAX}) is refused")
+
+
 def test_reg_words_roundtrip():
     # 64-bit, 48-bit and 32-bit values split into words and reassemble
     cases = {
@@ -159,6 +201,7 @@ def test_axil_writes_cover_config():
 if __name__ == "__main__":
     test_rtl_matches_host()
     test_status_order_matches_rtl()
+    test_per_symbol_block_matches_rtl()
     test_reg_words_roundtrip()
     test_axil_writes_cover_config()
     print(f"\n{'ALL PASS' if fails == 0 else str(fails) + ' FAILED'}")

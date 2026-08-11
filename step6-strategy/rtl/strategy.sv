@@ -16,10 +16,33 @@
 // the difference between a strategy and a runaway loop, so the edge state
 // advances on EVERY record, including records where the risk gate blocks.
 //
+// MULTI-SYMBOL. The BBO stream is tagged (i_sym), and the state that describes
+// a BOOK is per symbol while the state that describes the TRANSMIT PATH is not.
+// The split is not a convenience -- it is what the two kinds of state mean:
+//
+//   per symbol   prev_buy / prev_sell, the rising-edge memory. Sharing it would
+//                let a condition holding on one name suppress the edge on
+//                another, which is not a risk decision, it is a lost order.
+//   per symbol   the latched two-sided BBO the sweep path prices against. A
+//                sweep in one name must not be priced at another name's inside
+//                market -- that is an order at a nonsense price.
+//   per symbol   position, and cfg_pos_limit is applied to each independently.
+//                Long one name and short another is not flat.
+//   SHARED       inflight. It counts orders on ONE TCP session with one
+//                replay buffer; the resource being limited is the wire, not
+//                the book.
+//   SHARED       the counters. One number per rejection reason is what the
+//                register map carries and what the question ("is it quiet or
+//                is it blocked?") needs; per-symbol totals would be NSYM times
+//                the registers for the same answer.
+//
+// NSYM = 1 leaves every array one deep and every index constant zero, so the
+// single-symbol behaviour every golden here checks is unchanged.
+//
 // Risk gate, applied before anything leaves:
 //   * cfg_enable       kill switch
-//   * cfg_pos_limit    |position| after the order may not exceed it
-//   * cfg_max_inflight orders sent but not yet acknowledged
+//   * cfg_pos_limit    |position| after the order may not exceed it, PER SYMBOL
+//   * cfg_max_inflight orders sent but not yet acknowledged, across all symbols
 // Position moves OPTIMISTICALLY, as though every order fills in full. That is
 // wrong, but wrong in the safe direction: an unfilled order still consumes
 // position budget, so the error can only suppress trading, never permit more.
@@ -30,7 +53,10 @@
 // by the time the path drains, the book that justified it has moved. The
 // counter is what makes the loss visible instead of silent.
 `timescale 1ns/1ps
-module strategy (
+module strategy #(
+  parameter int NSYM = 1,
+  parameter int SYMW = (NSYM > 1) ? $clog2(NSYM) : 1
+)(
   input  logic         clk,
   input  logic         rst_n,
 
@@ -43,8 +69,9 @@ module strategy (
   input  logic [31:0]  cfg_pos_limit,
   input  logic [15:0]  cfg_max_inflight,
 
-  // BBO stream from price_ladder
+  // BBO stream from the book engine, tagged with the symbol whose book moved
   input  logic         i_valid,
+  input  logic [SYMW-1:0] i_sym,
   input  logic [47:0]  i_ts,
   input  logic         i_has_bid,
   input  logic [31:0]  i_bid_price,
@@ -60,13 +87,16 @@ module strategy (
   // updates still has a price to trade at.
   input  logic         cfg_sweep_en,
   input  logic         i_sweep,
+  input  logic [SYMW-1:0] i_sweep_sym,
   input  logic         i_sweep_is_buy,
 
   // one acknowledgement pulse per order the host/exchange has confirmed
   input  logic         i_ack,
 
-  // order intent
+  // order intent. o_sym tells the OUCH builder which stock symbol to put in the
+  // message -- the one field of an Enter Order that is per name.
   output logic         o_valid,
+  output logic [SYMW-1:0] o_sym,
   output logic [47:0]  o_ts,
   output logic         o_is_buy,
   output logic [31:0]  o_qty,
@@ -80,7 +110,8 @@ module strategy (
   output logic [31:0]  blk_inflight_cnt,
   output logic [31:0]  blk_txfull_cnt,
   output logic [31:0]  blk_qty_cnt,        // shares outside OUCH's legal range
-  output logic signed [31:0] position,
+  // one signed position per symbol, packed: symbol k is position[32*k +: 32]
+  output logic [NSYM*32-1:0] position,
   output logic [15:0]  inflight
 );
   // Comparisons are done at 48 bits. cfg_ratio_shift can reach 15 and the
@@ -89,8 +120,19 @@ module strategy (
   // Python, where integers never wrap, so the RTL has to not wrap either.
   localparam int CW = 48;
 
+  // At NSYM = 1 the symbol tag carries no information -- there is one book, so
+  // every record belongs to it -- and reading the port would be wrong whatever
+  // drove it. Forcing the index to zero says that, and means a caller built
+  // before the tag existed (every single-symbol testbench in this repo) cannot
+  // put an X into an array index and produce a mysterious failure a long way
+  // downstream. At NSYM > 1 the tag is the only thing that says which book, so
+  // it is read exactly as given.
+  wire [SYMW-1:0] sym_in    = (NSYM == 1) ? '0 : i_sym;
+  wire [SYMW-1:0] sweep_sym = (NSYM == 1) ? '0 : i_sweep_sym;
+
   // ---- stage 1: evaluate the rule ----
   logic        s1_valid, s1_buy, s1_sell;
+  logic [SYMW-1:0] s1_sym;
   logic [47:0] s1_ts;
   logic [31:0] s1_buy_qty, s1_buy_px, s1_sell_qty, s1_sell_px;
 
@@ -109,15 +151,17 @@ module strategy (
   wire [31:0] buy_qty  = (i_ask_qty < cfg_order_qty) ? i_ask_qty : cfg_order_qty;
   wire [31:0] sell_qty = (i_bid_qty < cfg_order_qty) ? i_bid_qty : cfg_order_qty;
 
-  // Latest two-sided BBO, held so a sweep arriving between BBO updates has a
-  // price. Updated on every BBO event; the sweep path reads the REGISTERED
-  // value, i.e. the last BBO seen strictly before the sweep, which is what the
-  // golden uses too.
-  logic        bbo_ok;
-  logic [31:0] bbo_bid_px, bbo_bid_qty, bbo_ask_px, bbo_ask_qty;
+  // Latest two-sided BBO PER SYMBOL, held so a sweep arriving between BBO
+  // updates has a price. Updated on every BBO event for that symbol; the sweep
+  // path reads the REGISTERED value, i.e. the last BBO seen strictly before the
+  // sweep, which is what the golden uses too.
+  logic        bbo_ok      [NSYM];
+  logic [31:0] bbo_bid_px  [NSYM], bbo_bid_qty [NSYM];
+  logic [31:0] bbo_ask_px  [NSYM], bbo_ask_qty [NSYM];
 
   // sweep path, pipelined one stage to line up with the imbalance path
   logic        s1_sweep, s1_sweep_buy;
+  logic [SYMW-1:0] s1_sweep_sym;
   logic [47:0] s1_sweep_ts;
   logic [31:0] s1_sweep_qty, s1_sweep_px;
 
@@ -125,9 +169,10 @@ module strategy (
     if (!rst_n) begin
       s1_valid <= 1'b0;
       s1_sweep <= 1'b0;
-      bbo_ok   <= 1'b0;
+      for (int k = 0; k < NSYM; k++) bbo_ok[k] <= 1'b0;
     end else begin
       s1_valid    <= i_valid;
+      s1_sym      <= sym_in;
       s1_ts       <= i_ts;
       s1_buy      <= buy_sig;
       s1_sell     <= sell_sig;
@@ -137,30 +182,34 @@ module strategy (
       s1_sell_px  <= i_bid_price;   // hit the bid
 
       if (i_valid && two_sided) begin
-        bbo_ok      <= 1'b1;
-        bbo_bid_px  <= i_bid_price; bbo_bid_qty <= i_bid_qty;
-        bbo_ask_px  <= i_ask_price; bbo_ask_qty <= i_ask_qty;
+        bbo_ok     [sym_in] <= 1'b1;
+        bbo_bid_px [sym_in] <= i_bid_price; bbo_bid_qty[sym_in] <= i_bid_qty;
+        bbo_ask_px [sym_in] <= i_ask_price; bbo_ask_qty[sym_in] <= i_ask_qty;
       end
 
-      // a sweep can only be priced once a two-sided BBO exists; take the same
-      // side as the sweep at the current best
-      s1_sweep     <= i_sweep && cfg_sweep_en && bbo_ok;
+      // A sweep can only be priced once a two-sided BBO exists FOR ITS OWN
+      // symbol; take the same side as the sweep at that book's current best.
+      s1_sweep     <= i_sweep && cfg_sweep_en && bbo_ok[sweep_sym];
+      s1_sweep_sym <= sweep_sym;
       s1_sweep_buy <= i_sweep_is_buy;
       s1_sweep_ts  <= i_ts;
       s1_sweep_qty <= i_sweep_is_buy
-                    ? ((bbo_ask_qty < cfg_order_qty) ? bbo_ask_qty : cfg_order_qty)
-                    : ((bbo_bid_qty < cfg_order_qty) ? bbo_bid_qty : cfg_order_qty);
-      s1_sweep_px  <= i_sweep_is_buy ? bbo_ask_px : bbo_bid_px;
+                    ? ((bbo_ask_qty[sweep_sym] < cfg_order_qty) ? bbo_ask_qty[sweep_sym] : cfg_order_qty)
+                    : ((bbo_bid_qty[sweep_sym] < cfg_order_qty) ? bbo_bid_qty[sweep_sym] : cfg_order_qty);
+      s1_sweep_px  <= i_sweep_is_buy ? bbo_ask_px[sweep_sym] : bbo_bid_px[sweep_sym];
     end
   end
 
   // ---- stage 2: edge detect, risk gate, emit ----
   // buy_sig and sell_sig cannot both hold: that would need
   // bid_qty >= 2^k * ask_qty and ask_qty >= 2^k * bid_qty at once.
-  logic prev_buy, prev_sell;
+  // Per symbol: a condition that holds on one name must not swallow another
+  // name's edge. This is the array whose sharing would be an outright bug, not
+  // merely an approximation.
+  logic prev_buy [NSYM], prev_sell [NSYM];
 
-  wire fire_buy  = s1_valid && s1_buy  && !prev_buy;
-  wire fire_sell = s1_valid && s1_sell && !prev_sell;
+  wire fire_buy  = s1_valid && s1_buy  && !prev_buy [s1_sym];
+  wire fire_sell = s1_valid && s1_sell && !prev_sell[s1_sym];
   wire imb_fire  = fire_buy || fire_sell;
 
   // Merge the two trigger sources. Sweep has priority over imbalance — it is
@@ -169,13 +218,18 @@ module strategy (
   // edge and a sweep never contend; the priority is a safety rule for the real
   // chain where they could coincide.
   wire        want    = s1_sweep || imb_fire;
+  wire [SYMW-1:0] eff_sym = s1_sweep ? s1_sweep_sym : s1_sym;
   wire        eff_buy = s1_sweep ? s1_sweep_buy : fire_buy;
   wire [47:0] eff_ts  = s1_sweep ? s1_sweep_ts  : s1_ts;
   wire [31:0] eff_qty = s1_sweep ? s1_sweep_qty : (fire_buy ? s1_buy_qty : s1_sell_qty);
   wire [31:0] eff_px  = s1_sweep ? s1_sweep_px  : (fire_buy ? s1_buy_px  : s1_sell_px);
 
   wire signed [31:0] eff_qty_s = signed'(eff_qty);
-  wire signed [31:0] pos_new = eff_buy ? (position + eff_qty_s) : (position - eff_qty_s);
+  // The limit is applied to the order's OWN symbol. A shared position would let
+  // a long in one name pay for a short in another, which is not what a position
+  // limit is for.
+  wire signed [31:0] pos_cur = signed'(position[32*eff_sym +: 32]);
+  wire signed [31:0] pos_new = eff_buy ? (pos_cur + eff_qty_s) : (pos_cur - eff_qty_s);
   wire pos_ok      = (pos_new <= signed'(cfg_pos_limit)) &&
                      (pos_new >= -signed'(cfg_pos_limit));
   wire inflight_ok = (inflight < cfg_max_inflight);
@@ -197,8 +251,10 @@ module strategy (
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       o_valid          <= 1'b0;
-      prev_buy         <= 1'b0;
-      prev_sell        <= 1'b0;
+      for (int k = 0; k < NSYM; k++) begin
+        prev_buy [k] <= 1'b0;
+        prev_sell[k] <= 1'b0;
+      end
       position         <= '0;
       inflight         <= '0;
       sent_cnt         <= '0;
@@ -214,8 +270,8 @@ module strategy (
       if (i_ack && (inflight != 0)) inflight <= inflight - 1'b1;
 
       if (s1_valid) begin
-        prev_buy  <= s1_buy;        // advances even when the gate blocks
-        prev_sell <= s1_sell;
+        prev_buy [s1_sym] <= s1_buy;    // advances even when the gate blocks
+        prev_sell[s1_sym] <= s1_sell;
       end
 
       if (cfg_enable && want) begin
@@ -231,11 +287,12 @@ module strategy (
           blk_txfull_cnt <= blk_txfull_cnt + 1;
         end else begin
           o_valid  <= 1'b1;
+          o_sym    <= eff_sym;
           o_ts     <= eff_ts;
           o_is_buy <= eff_buy;
           o_qty    <= eff_qty;
           o_price  <= eff_px;
-          position <= pos_new;
+          position[32*eff_sym +: 32] <= pos_new;
           sent_cnt <= sent_cnt + 1;
           // an ack in the same cycle as a send leaves the count unchanged
           if (!(i_ack && (inflight != 0))) inflight <= inflight + 1'b1;

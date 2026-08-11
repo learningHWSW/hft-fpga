@@ -60,6 +60,7 @@ set srcs [list \
   $repo/step4a-order-table/rtl/order_table_pipe.sv \
   $repo/step4b-book/rtl/price_ladder.sv $repo/step4b-book/rtl/fast_bbo.sv \
   $repo/step4b-book/rtl/bbo_merge.sv \
+  $repo/step4b-book/rtl/bbo_arb.sv \
   $repo/step5-board/rtl/drop_fifo.sv \
   $repo/step5-board/rtl/fh_core.sv \
   $repo/step5-board/rtl/eth_ip_udp_rx.sv \

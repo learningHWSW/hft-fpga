@@ -61,6 +61,39 @@ RESEND_AGE_OFFSET = CTRL_OFFSET + 4     # 0xAC: which stored frame to re-send
 RTO_EN_OFFSET      = CTRL_OFFSET + 8    # 0xB0: bit0 enables the detector
 RTO_CYCLES_OFFSET  = CTRL_OFFSET + 12   # 0xB4: idle core cycles before a resend
 RTO_RETRIES_OFFSET = CTRL_OFFSET + 16   # 0xB8: attempts per unacknowledged frame
+# ---- per-symbol configuration block (mirrors axil_regfile's A_SYM) ----
+# Symbol 0's locate, band base and stock keep the registers they have always
+# had, in REGS above. Symbols 1 and up live here, four words each, in the gap
+# between the RTO words and the status base -- so nothing that has shipped
+# moves, at the cost of the map being asymmetric in the first symbol. That is
+# the right trade: making the map pretty would repoint four offsets that hosts
+# have already been compiled against.
+#
+# Sixteen words is four symbols, i.e. NSYM up to 5. Beyond that both this and
+# the order table need extending, and the table is the harder one (FINDINGS
+# §4.4 measures how much bigger it has to be at each K).
+SYM_BASE       = 0x0C0
+SYM_STRIDE     = 16                     # 4 words per symbol
+SYM_MAX        = 5                      # symbol 0 + four in the block
+
+
+def sym_offsets(k: int):
+    """Byte offsets of symbol k's {locate, band_base, stock_lo, stock_hi}.
+
+    Symbol 0 answers from the original registers, so a caller can loop over
+    every tracked symbol without special-casing the first one."""
+    if k == 0:
+        return {"track_locate": WORD_OFFSET["cfg_track_locate"][0],
+                "band_base":    WORD_OFFSET["cfg_band_base"][0],
+                "stock_lo":     WORD_OFFSET["cfg_stock"][0],
+                "stock_hi":     WORD_OFFSET["cfg_stock"][1]}
+    if not 1 <= k < SYM_MAX:
+        raise ValueError(f"symbol {k} is outside the register map (0..{SYM_MAX-1})")
+    b = SYM_BASE + SYM_STRIDE * (k - 1)
+    return {"track_locate": b, "band_base": b + 4,
+            "stock_lo": b + 8, "stock_hi": b + 12}
+
+
 STATUS_BASE    = 0x100
 ID_OFFSET      = 0x1FC
 ID_VALUE       = 0x54325430            # "T2T0"
@@ -86,6 +119,17 @@ STATUS = [
     # the replay buffer behind them, and the last rejection reason the RTL
     # counted but the map did not carry
     "st_rb_stored", "st_rb_resent", "st_rb_drop", "st_blk_qty",
+    # Per-symbol positions for symbols 1..4. Symbol 0 stays at st_position,
+    # where it has always been. Always four entries whatever NSYM the build
+    # has, because a map whose LENGTH depended on a build parameter would not
+    # be a contract; symbols a build does not have read zero, which is also
+    # their position. A single summed "net position" is deliberately not
+    # offered: long one name and short another is not flat.
+    "st_position_1", "st_position_2", "st_position_3", "st_position_4",
+    # BBO records lost merging the per-symbol book streams. Zero by
+    # construction (bbo_arb does the arithmetic); published because the
+    # alternative is a silent hole in one symbol's stream.
+    "st_bbo_arb_drop",
 ]
 STATUS_OFFSET = {name: STATUS_BASE + 4 * i for i, name in enumerate(STATUS)}
 

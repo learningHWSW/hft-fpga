@@ -7,7 +7,7 @@ STEP4B = ../step4b-book
 SRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
       $(STEP3B)/rtl/mold_splitter.sv $(STEP4A)/rtl/otable_mem.sv $(STEP4A)/rtl/order_table.sv \
       $(STEP4A)/rtl/order_table_pipe.sv \
-      $(STEP4B)/rtl/price_ladder.sv $(STEP4B)/rtl/fast_bbo.sv $(STEP4B)/rtl/bbo_merge.sv \
+      $(STEP4B)/rtl/price_ladder.sv $(STEP4B)/rtl/fast_bbo.sv $(STEP4B)/rtl/bbo_merge.sv $(STEP4B)/rtl/bbo_arb.sv \
       rtl/drop_fifo.sv ../step6-strategy/rtl/sweep_detect.sv rtl/fh_core.sv
 TB  = tb/tb_fh_core.sv
 TOP = tb_fh_core
@@ -37,6 +37,30 @@ golden: $(ITCH)
 
 $(STEP1)/test.itch $(STEP1)/test.mold:
 	cd $(STEP1) && python3 gen_itch.py test.itch --mold test.mold
+
+# ---------- multi-symbol: two tracked books through one chain ----------
+# The goldens are the SINGLE-symbol goldens for each locate, because that is
+# exactly the claim: with NSYM=2 each book's BBO sequence must be the one a
+# build tracking that symbol alone would emit. See tb_fh_core_msym.sv.
+#
+# The stimulus is the gap-free variant. The default plan drops a packet, and
+# the two messages in it are MSFT's cancel and delete -- untracked noise when
+# only AAPL is tracked, and half of MSFT's book when it is not.
+CLEAN_ITCH = $(STEP1)/test_clean.itch
+CLEAN_MOLD = $(STEP1)/test_clean.mold
+$(CLEAN_ITCH) $(CLEAN_MOLD):
+	cd $(STEP1) && python3 gen_itch.py test_clean.itch --mold test_clean.mold --clean
+
+MSYM_SRC = $(SRC)
+test-msym: $(CLEAN_ITCH) $(CLEAN_MOLD)
+	python3 $(STEP4B)/scripts/dump_bbo.py $(CLEAN_ITCH) 1 > bbo_gold_s0.log
+	python3 $(STEP4B)/scripts/dump_bbo.py $(CLEAN_ITCH) 2 > bbo_gold_s1.log
+	xvlog -sv $(MSYM_SRC) tb/tb_fh_core_msym.sv
+	xelab -debug typical tb_fh_core_msym -s tb_fh_core_msym_sim
+	xsim tb_fh_core_msym_sim -runall -testplusarg mold=$(CLEAN_MOLD)
+	diff bbo_gold_s0.log bbo_rtl_s0.log
+	diff bbo_gold_s1.log bbo_rtl_s1.log
+	@echo "PASS: two tracked books, each == its own single-symbol golden"
 
 # ---------- real-data replay (AAPL locate 13) ----------
 RCAP  ?= ../data/12302019.NASDAQ_ITCH50.gz
@@ -126,11 +150,12 @@ test-t2t-pipe: real.eth
 T2T_PERIOD ?= 4.618
 FAST       ?= 1
 DIRSET     ?= default
+NSYM       ?= 1
 T2T_ARGS    = $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
 synth-t2t:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) $(FAST) $(DIRSET)
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) $(FAST) $(DIRSET) $(NSYM)
 impl-t2t:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(T2T_ARGS) $(FAST) $(DIRSET)
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(T2T_ARGS) $(FAST) $(DIRSET) $(NSYM)
 
 # The fast_bbo timing question: is the post-route fMAX difference between
 # FAST=0 and FAST=1 a real cost of the feature, or is it the tool's run-to-run
@@ -156,15 +181,15 @@ sweep-t2t-report:
 
 # t2t_axil wrapper (three clocks): synth checks the 3-clock XDC applies cleanly
 synth-axil:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000 $(NSYM)
 impl-axil:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000 $(NSYM)
 
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 	rm -f  realsmall-*.itch realsmall-*.mold realsmall-*.eth
 
-.PHONY: test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
+.PHONY: test-msym test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
 
 # xsim twins for the self-checking unit tests. Verilator is not installed
 # everywhere -- it is absent on the machine with the actual U55C, which made most

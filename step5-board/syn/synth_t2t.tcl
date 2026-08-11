@@ -10,7 +10,7 @@
 #
 #   vivado -mode batch -source syn/synth_t2t.tcl \
 #          -tclargs <part> <synth|impl> <ot_sets_bits> <ot_ways> <core_period> \
-#                   <use_fast_bbo> <directive_set>
+#                   <use_fast_bbo> <directive_set> <nsym>
 #
 # THE LAST TWO ARGUMENTS EXIST TO MAKE THIS BUILD COMPARABLE WITH ITSELF.
 # Asking "what did feature X cost in fMAX?" needs two builds that differ only in
@@ -48,6 +48,13 @@ array set dirsets {
   netdly  {ExtraNetDelay_high AggressiveExplore        NoTimingRelaxation}
   fanout  {AltSpreadLogic_medium AggressiveFanoutOpt   AggressiveExplore}
 }
+# Tracked symbols. One order table holds all of them and everything downstream
+# is replicated, so this is the knob that says what a second name costs. It does
+# NOT raise OT_SETS_BITS with it -- that is deliberate, because the two move
+# together for capacity reasons the tool cannot see (FINDINGS §4.4: two symbols
+# need 2^14 sets), and a build that silently resized the table would hide the
+# fact that the area answer has two halves.
+set nsym [expr {[lindex $argv 7] ne "" ? [lindex $argv 7] : 1}]
 set dset [expr {[lindex $argv 6] ne "" ? [lindex $argv 6] : "default"}]
 if {![info exists dirsets($dset)]} {
   error "unknown directive set '$dset'; have: [lsort [array names dirsets]]"
@@ -57,7 +64,7 @@ lassign $dirsets($dset) d_place d_phys d_route
 set here   [file dirname [file normalize [info script]]]
 set root   [file dirname $here]
 set repo   [file dirname $root]
-set outdir $here/out_t2t-f$fast-$dset
+set outdir $here/out_t2t-f$fast-$dset[expr {$nsym > 1 ? "-n$nsym" : ""}]
 file mkdir $outdir
 
 set srcs [list \
@@ -67,6 +74,7 @@ set srcs [list \
   $repo/step4a-order-table/rtl/otable_mem.sv $repo/step4a-order-table/rtl/order_table.sv $repo/step4a-order-table/rtl/order_table_pipe.sv \
   $repo/step4b-book/rtl/price_ladder.sv $repo/step4b-book/rtl/fast_bbo.sv \
   $repo/step4b-book/rtl/bbo_merge.sv \
+  $repo/step4b-book/rtl/bbo_arb.sv \
   $root/rtl/drop_fifo.sv \
   $root/rtl/fh_core.sv \
   $root/rtl/eth_ip_udp_rx.sv \
@@ -109,10 +117,10 @@ read_xdc $gen_xdc
 set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
 set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
 
-puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} fast_bbo=$fast ==="
+puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} fast_bbo=$fast nsym=$nsym ==="
 synth_design -top t2t_top -part $part -mode out_of_context \
   -generic OT_SETS_BITS=$ot_sets_bits -generic OT_WAYS=$ot_ways \
-  -generic USE_FAST_BBO=$fast
+  -generic USE_FAST_BBO=$fast -generic NSYM=$nsym
 
 # Cheap insurance against the generic silently not applying: with USE_FAST_BBO=0
 # the generate block leaves no fast_bbo cells at all, and with 1 it must leave
@@ -122,6 +130,13 @@ set nfast [llength [get_cells -hier -quiet \
              -filter {REF_NAME =~ "fast_bbo*" || NAME =~ "*u_fast*"}]]
 if {($fast && $nfast == 0) || (!$fast && $nfast != 0)} {
   error "USE_FAST_BBO=$fast did not take: $nfast fast_bbo cells in the netlist"
+}
+# Same insurance for NSYM: one price_ladder per tracked symbol, so a generic
+# that missed would build a single-symbol design and report its area as the
+# multi-symbol answer.
+set nlad [llength [get_cells -hier -quiet -filter {REF_NAME =~ "price_ladder*"}]]
+if {$nlad != $nsym} {
+  error "NSYM=$nsym did not take: $nlad price_ladder instances in the netlist"
 }
 
 file mkdir $outdir
@@ -179,5 +194,5 @@ if {$mode eq "impl"} {
   write_checkpoint -force $outdir/post_route.dcp
   summarize IMPL $period
 }
-puts "SUMMARY_BUILD: fast=$fast dirset=$dset period=$period outdir=[file tail $outdir]"
+puts "SUMMARY_BUILD: fast=$fast dirset=$dset nsym=$nsym period=$period outdir=[file tail $outdir]"
 puts "=== DONE mode=$mode ==="

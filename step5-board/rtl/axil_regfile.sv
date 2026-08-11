@@ -30,6 +30,11 @@
 // integration step; this file is the slave and is self-contained.
 `timescale 1ns/1ps
 module axil_regfile #(
+  // Tracked symbols. Symbol 0's locate/base/stock keep the registers they have
+  // always had; symbols 1..NSYM-1 come from the per-symbol block below. That
+  // asymmetry is deliberate -- moving symbol 0 into a uniform block would move
+  // four shipped offsets to make the map prettier.
+  parameter int NSYM   = 1,
   parameter int ADDR_W = 12,          // 4 KB register page
   parameter logic [31:0] ID_VALUE = 32'h5432_5430  // "T2T0"
 )(
@@ -58,8 +63,8 @@ module axil_regfile #(
   // ---- configuration outputs (drive t2t_top cfg_* ports) ----
   output logic [31:0]         cfg_group_ip,
   output logic [15:0]         cfg_udp_port,
-  output logic [15:0]         cfg_track_locate,
-  output logic [31:0]         cfg_band_base,
+  output logic [NSYM*16-1:0]  cfg_track_locate,
+  output logic [NSYM*32-1:0]  cfg_band_base,
   output logic                cfg_enable,
   output logic [31:0]         cfg_max_spread,
   output logic [3:0]          cfg_ratio_shift,
@@ -71,7 +76,7 @@ module axil_regfile #(
   output logic [31:0]         cfg_sweep_min_levels,
   output logic [47:0]         cfg_sweep_gap,
   output logic [47:0]         cfg_token_prefix,
-  output logic [63:0]         cfg_stock,
+  output logic [NSYM*64-1:0]  cfg_stock,
   output logic [31:0]         cfg_firm,
   output logic [31:0]         cfg_tif,
   output logic [31:0]         cfg_ouch_min_qty,
@@ -119,7 +124,10 @@ module axil_regfile #(
   input  logic [31:0]         st_blk_pos,
   input  logic [31:0]         st_blk_inflight,
   input  logic [31:0]         st_blk_txfull,
-  input  logic signed [31:0]  st_position,
+  // One signed position per symbol, packed. The readmux publishes symbol 0 at
+  // the offset it has always had, and symbols 1..4 in a block appended at the
+  // end -- see A_STAT+32 below.
+  input  logic [NSYM*32-1:0]  st_position,
   input  logic [31:0]         st_seq_num,
   input  logic [31:0]         st_frame_cnt,
   input  logic [31:0]         st_tx_drop,
@@ -138,7 +146,8 @@ module axil_regfile #(
   input  logic [31:0]         st_rb_stored,      // frames the replay buffer kept
   input  logic [31:0]         st_rb_resent,      // ... and handed back out again
   input  logic [31:0]         st_rb_drop,        // resend asked for a slot never filled
-  input  logic [31:0]         st_blk_qty         // orders blocked: shares out of range
+  input  logic [31:0]         st_blk_qty,        // orders blocked: shares out of range
+  input  logic [31:0]         st_bbo_arb_drop    // BBO records lost merging K books
 );
   // ---- config word indices (match regmap.py REG order) ----
   localparam int A_GROUP_IP=0,  A_UDP_PORT=1,  A_TRACK_LOCATE=2, A_BAND_BASE=3,
@@ -162,11 +171,31 @@ module axil_regfile #(
   localparam int A_RTO_CYCLES  = 45;  // 0xB4  idle core cycles before a resend
   localparam int A_RTO_RETRIES = 46;  // 0xB8  attempts per unacknowledged frame
   localparam int A_CTRL = 42;         // 0xA8
+  // Per-symbol config block, four words per symbol for symbols 1 and up:
+  //   +0 track locate, +1 band base, +2 stock lo, +3 stock hi
+  // It sits at 0x0C0 (word 48), in the gap between the RTO words and the
+  // status base, so nothing that has shipped moves. Sixteen words is four
+  // symbols, i.e. NSYM up to 5; beyond that the map needs extending, and so
+  // does the order table (FINDINGS §4.4 sizes it).
+  localparam int A_SYM  = 48;         // 0x0C0
   localparam int A_STAT = 64;         // 0x100 status base
   localparam int A_ID   = 127;        // 0x1FC
 
   // Padded to a power of two so an out-of-range write index can never touch it.
   logic [31:0] cfgw [64];
+
+  // Symbol k's position, or zero for a symbol this build does not have.
+  function automatic logic [31:0] pos_of(input int k);
+    return (k < NSYM) ? st_position[32*k +: 32] : 32'd0;
+  endfunction
+  // Named, not called inline in the read mux. step7's test_regmap.py parses
+  // these lines to check the RTL's offsets against the host's list, and it can
+  // only do that if each line SAYS which counter it returns -- `pos_of(2)`
+  // would be an offset the contract test cannot see.
+  wire [31:0] st_position_1 = pos_of(1);
+  wire [31:0] st_position_2 = pos_of(2);
+  wire [31:0] st_position_3 = pos_of(3);
+  wire [31:0] st_position_4 = pos_of(4);
 
   // ---- write channel: accept when AW+W both offered and B is free ----
   logic [ADDR_W-3:0] widx;
@@ -235,7 +264,7 @@ module axil_regfile #(
       A_STAT+12: readmux = st_blk_pos;
       A_STAT+13: readmux = st_blk_inflight;
       A_STAT+14: readmux = st_blk_txfull;
-      A_STAT+15: readmux = st_position;
+      A_STAT+15: readmux = st_position[31:0];   // symbol 0, its shipped offset
       A_STAT+16: readmux = st_seq_num;
       A_STAT+17: readmux = st_frame_cnt;
       A_STAT+18: readmux = st_tx_drop;
@@ -252,6 +281,16 @@ module axil_regfile #(
       A_STAT+29: readmux = st_rb_resent;
       A_STAT+30: readmux = st_rb_drop;
       A_STAT+31: readmux = st_blk_qty;
+      // Per-symbol positions for symbols 1..4. Always four entries whatever
+      // NSYM is: a read mux whose LENGTH depended on a parameter would make the
+      // address map a function of the build, and the map is a contract with
+      // hosts that were compiled against it. Symbols the build does not have
+      // read as zero, which is also their position.
+      A_STAT+32: readmux = st_position_1;
+      A_STAT+33: readmux = st_position_2;
+      A_STAT+34: readmux = st_position_3;
+      A_STAT+35: readmux = st_position_4;
+      A_STAT+36: readmux = st_bbo_arb_drop;
       default:   readmux = 32'd0;
     endcase
   endfunction
@@ -273,8 +312,15 @@ module axil_regfile #(
   // ---- assemble typed config outputs from the word array ----
   assign cfg_group_ip         = cfgw[A_GROUP_IP];
   assign cfg_udp_port         = cfgw[A_UDP_PORT][15:0];
-  assign cfg_track_locate     = cfgw[A_TRACK_LOCATE][15:0];
-  assign cfg_band_base        = cfgw[A_BAND_BASE];
+  // symbol 0 from its shipped registers, symbols 1.. from the per-symbol block
+  assign cfg_track_locate[15:0] = cfgw[A_TRACK_LOCATE][15:0];
+  assign cfg_band_base[31:0]    = cfgw[A_BAND_BASE];
+  for (genvar k = 1; k < NSYM; k++) begin : g_sym_cfg
+    assign cfg_track_locate[16*k +: 16] = cfgw[A_SYM + 4*(k-1) + 0][15:0];
+    assign cfg_band_base   [32*k +: 32] = cfgw[A_SYM + 4*(k-1) + 1];
+    assign cfg_stock       [64*k +: 64] = {cfgw[A_SYM + 4*(k-1) + 3],
+                                           cfgw[A_SYM + 4*(k-1) + 2]};
+  end
   assign cfg_enable           = cfgw[A_ENABLE][0];
   assign cfg_max_spread       = cfgw[A_MAX_SPREAD];
   assign cfg_ratio_shift      = cfgw[A_RATIO_SHIFT][3:0];
@@ -286,7 +332,7 @@ module axil_regfile #(
   assign cfg_sweep_min_levels = cfgw[A_SWEEP_MINLV];
   assign cfg_sweep_gap        = {cfgw[A_SWEEP_GAP_HI][15:0], cfgw[A_SWEEP_GAP_LO]};
   assign cfg_token_prefix     = {cfgw[A_TOKEN_HI][15:0],     cfgw[A_TOKEN_LO]};
-  assign cfg_stock            = {cfgw[A_STOCK_HI],           cfgw[A_STOCK_LO]};
+  assign cfg_stock[63:0]      = {cfgw[A_STOCK_HI],           cfgw[A_STOCK_LO]};
   assign cfg_firm             = cfgw[A_FIRM];
   assign cfg_tif              = cfgw[A_TIF];
   assign cfg_ouch_min_qty     = cfgw[A_OUCH_MINQ];

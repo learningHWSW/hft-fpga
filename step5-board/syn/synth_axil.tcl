@@ -18,7 +18,12 @@ if {$mode eq ""} { set mode synth }
 set here   [file dirname [file normalize [info script]]]
 set root   [file dirname $here]
 set repo   [file dirname $root]
-set outdir $here/out_axil
+# Tracked symbols. Worth a knob here and not only in synth_t2t.tcl: this is the
+# wrapper where NSYM widens two hand-packed buses (CFGW and STW), and an
+# off-by-one in either is a width error synthesis catches and no simulation at
+# NSYM=1 ever would.
+set nsym [expr {[lindex $argv 6] ne "" ? [lindex $argv 6] : 1}]
+set outdir $here/out_axil[expr {$nsym > 1 ? "-n$nsym" : ""}]
 file mkdir $outdir
 
 set srcs [list \
@@ -29,6 +34,7 @@ set srcs [list \
   $repo/step4a-order-table/rtl/order_table_pipe.sv \
   $repo/step4b-book/rtl/price_ladder.sv $repo/step4b-book/rtl/fast_bbo.sv \
   $repo/step4b-book/rtl/bbo_merge.sv \
+  $repo/step4b-book/rtl/bbo_arb.sv \
   $root/rtl/drop_fifo.sv \
   $root/rtl/fh_core.sv \
   $root/rtl/eth_ip_udp_rx.sv \
@@ -60,9 +66,10 @@ read_xdc $gen_xdc                       ;# clocks only (ports exist pre-synth)
 set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
 set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
 
-puts "=== synth_design t2t_axil: core=${core_ns}ns axil=${axil_ns}ns cmac=3.103ns ==="
+puts "=== synth_design t2t_axil: core=${core_ns}ns axil=${axil_ns}ns cmac=3.103ns nsym=$nsym ==="
 synth_design -top t2t_axil -part $part -mode out_of_context \
-  -generic OT_SETS_BITS=$ot_sets_bits -generic OT_WAYS=$ot_ways
+  -generic OT_SETS_BITS=$ot_sets_bits -generic OT_WAYS=$ot_ways \
+  -generic NSYM=$nsym
 
 # CDC exceptions reference the synthesised netlist, so apply them now
 read_xdc $here/t2t_axil_cdc.xdc         ;# async groups + max_delay/bus_skew

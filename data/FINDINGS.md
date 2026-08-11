@@ -178,13 +178,39 @@ is what fits two URAM columns (144 b). Multi-symbol puts back an INDEX, not a
 locate: 4 bits for 16 symbols, 14 bits available. The order table's per-symbol
 cost is the capacity above, not the width.
 
-**What is NOT in this table** is the rest of the chain. Each tracked symbol also
-needs its own price ladder, measured post-route at **27,505 LUTs, 9,143 FFs and
-2 BRAM** (step5 `syn/out_t2t_fast/util_impl_hier.rpt`), so four symbols add
-~110 k LUTs — 8.4 % of the device, comfortable — plus a book-delta demux, a
-tagged BBO merge, per-symbol strategy state and per-symbol OUCH stock fields. The
-table was the part with a capacity question; the ladders are the part with an
-area answer.
+**What is NOT in this table** was the rest of the chain, which has since been
+built (`NSYM` now runs the whole datapath, not just the table). The second half
+of the cost, measured the same way — one `synth_design` at `NSYM = 1` against
+one at `NSYM = 2`, everything else identical, `make -C step5-board synth-t2t
+NSYM=2`:
+
+| | NSYM=1 | NSYM=2 | per extra symbol |
+|---|---|---|---|
+| CLB LUTs | 55,933 | 88,620 | **+32,687 (+58 %)** |
+| registers | 33,942 | 44,482 | +10,540 (+31 %) |
+| DSP48E2 | 2 | 4 | +2 (the ladder's divide-by-tick) |
+| BRAM36 / BRAM18 | 48 / 4 | 48 / 4 | unchanged |
+| URAM288 | 66 | 68 | +2 |
+| synthesis core_clk WNS | +0.123 ns | +0.123 ns | unchanged |
+
+**A symbol costs about a third of the current design in LUTs.** That is the
+price ladder (27.5 k of it) plus its own `fast_bbo`, `bbo_merge` and
+`sweep_detect`, plus the merge — everything a *book* belongs to is replicated,
+and everything the *wire* belongs to is not. Four symbols would be roughly 155 k
+LUTs, ~12 % of the device: comfortable, and still not the binding constraint.
+
+**The binding constraint is the table, and it is not in that LUT number.** The
+build above keeps `OT_SETS_BITS = 13`, which the capacity table above says is
+enough for exactly one symbol — two need 2^14 × 16, i.e. **128 URAM instead of
+64**. The synthesis script does not raise it automatically, on purpose: the two
+parameters move together for a reason the tool cannot see, and a build that
+silently resized the table would hide half the answer.
+
+**No synthesis-level timing cost**, and no claim is made about post-route from
+this. The two builds have identical core-clock WNS after synthesis, but §7.7 is
+exactly the lesson that one post-route build against one post-route build cannot
+measure a difference — a real answer needs `sweep-t2t` at both `NSYM`, and
+nobody has spent those eight runs.
 
 ## 5. Sweep (momentum ignition) signal — measured on real data (step 6 strategy)
 

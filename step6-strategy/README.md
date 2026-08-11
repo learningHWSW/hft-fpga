@@ -62,6 +62,41 @@ first three are the gate doing its job, while a nonzero `st_blk_qty` means the
 strategy computed a share count OUCH cannot carry, which is a bug and not a
 limit.
 
+## Several symbols: which state is per book and which is per wire
+
+`NSYM` makes the BBO stream tagged, and the split between replicated and shared
+state is not a convenience — it is what the two kinds of state *mean*:
+
+| | | why |
+|---|---|---|
+| `prev_buy` / `prev_sell` | **per symbol** | The rising-edge memory. Sharing it lets a condition holding on one name swallow another name's edge — not a risk decision, a lost order. |
+| the latched two-sided BBO | **per symbol** | What the sweep path prices against. A sweep in one name priced at another name's inside market is an order at a nonsense price. |
+| `position`, and `cfg_pos_limit` against it | **per symbol** | Long one name and short another is not flat. |
+| `cfg_max_inflight` | **shared** | It counts orders on one TCP session with one replay buffer. The resource being limited is the wire, not the book. |
+| the rejection counters | **shared** | One number per reason is what the register map carries and what the question ("quiet or blocked?") needs. |
+
+The OUCH builder follows the same rule: `cfg_stock` is per symbol because the
+Stock field is the one part of an Enter Order that differs between names, while
+firm, TIF, display, capacity and the rest describe the *account* and the order
+type, which belong to the session.
+
+**Tested with the worst possible stimulus for shared state** (`make test-msym`):
+the *same* BBO log presented to both symbols, record by record. If any per-book
+state were shared the two streams would interfere maximally — a shared edge
+detector means symbol 0 raises the edge and symbol 1's identical record finds
+the condition already true and fires nothing. So the expected result for each
+symbol is the ordinary single-symbol golden, and the check is `dump_orders.py`'s
+output diffed twice. Measured: **70 orders each, both exact, position 800 each,
+144 orders blocked on the per-symbol position limit (72 per book), every OUCH
+packet carrying its own stock**.
+
+That test was confirmed sensitive rather than assumed to be: pinning the edge
+detector to book 0 drops symbol 1 to **zero** orders and fails loudly. The
+in-flight limiter is configured out of the way for this run, because it is
+shared by design and two symbols firing into one budget cannot reproduce a
+single-symbol golden — it stays covered by `tb_strategy.sv`, where it is the
+thing under test.
+
 Two deliberate choices worth naming:
 
 **Position moves optimistically**, as though every order fills in full. This is

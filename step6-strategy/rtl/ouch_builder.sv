@@ -40,14 +40,20 @@
 // and buys nothing: the token has to be unique, not readable.
 `timescale 1ns/1ps
 module ouch_builder #(
-  parameter int DATA_W = 512
+  parameter int DATA_W = 512,
+  // Tracked symbols. The Stock field is the one part of an Enter Order that
+  // differs between names, so it is the only config here that has to be
+  // per symbol -- firm, TIF, display, capacity and the rest describe the
+  // ACCOUNT and the order type, which are properties of the session.
+  parameter int NSYM   = 1,
+  parameter int SYMW   = (NSYM > 1) ? $clog2(NSYM) : 1
 )(
   input  logic         clk,
   input  logic         rst_n,
 
   // static configuration (host-written while the strategy is disabled)
   input  logic [47:0]  cfg_token_prefix,   // 6 ASCII bytes, [7:0] is first
-  input  logic [63:0]  cfg_stock,          // 8 ASCII bytes, [7:0] is first
+  input  logic [NSYM*64-1:0] cfg_stock,    // 8 ASCII bytes per symbol, [7:0] first
   input  logic [31:0]  cfg_firm,           // 4 ASCII bytes
   input  logic [31:0]  cfg_tif,            // 0 = IOC
   input  logic [31:0]  cfg_min_qty,
@@ -59,6 +65,7 @@ module ouch_builder #(
 
   // order intent from strategy
   input  logic         i_valid,
+  input  logic [SYMW-1:0] i_sym,            // which stock this order is for
   input  logic         i_is_buy,
   input  logic [31:0]  i_qty,
   input  logic [31:0]  i_price,
@@ -102,7 +109,11 @@ module ouch_builder #(
       pkt[8*(10 + k) +: 8] = hexc(token_seq[4*(7-k) +: 4]);
     pkt[8*18 +: 8] = i_is_buy ? "B" : "S";
     for (int k = 0; k < 4; k++) pkt[8*(19 + k) +: 8] = be32(i_qty, k);
-    for (int k = 0; k < 8; k++) pkt[8*(23 + k) +: 8] = cfg_stock[8*k +: 8];
+    // At NSYM = 1 there is one stock field and the tag means nothing, so it is
+    // not read -- a caller that predates the port cannot shift the Stock field
+    // by an undefined amount. See strategy.sv, same reasoning.
+    for (int k = 0; k < 8; k++)
+      pkt[8*(23 + k) +: 8] = cfg_stock[64*((NSYM == 1) ? '0 : i_sym) + 8*k +: 8];
     for (int k = 0; k < 4; k++) pkt[8*(31 + k) +: 8] = be32(i_price, k);
     for (int k = 0; k < 4; k++) pkt[8*(35 + k) +: 8] = be32(cfg_tif, k);
     for (int k = 0; k < 4; k++) pkt[8*(39 + k) +: 8] = cfg_firm[8*k +: 8];

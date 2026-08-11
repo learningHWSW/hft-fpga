@@ -26,6 +26,7 @@ set srcs [list \
   $repo/step4a-order-table/rtl/otable_mem.sv $repo/step4a-order-table/rtl/order_table.sv \
   $repo/step4b-book/rtl/price_ladder.sv $repo/step4b-book/rtl/fast_bbo.sv \
   $repo/step4b-book/rtl/bbo_merge.sv \
+  $repo/step4b-book/rtl/bbo_arb.sv \
   $root/rtl/drop_fifo.sv \
   $root/rtl/fh_core.sv ]
 

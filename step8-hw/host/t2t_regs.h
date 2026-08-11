@@ -7,6 +7,12 @@
 // at this offset (see step8-hw/rtl/t2t_kernel.sv).
 #define T2T_WINDOW 0x1000u
 
+#define T2T_SYM_BASE       0x0C0u
+#define T2T_SYM_STRIDE     16u
+#define T2T_SYM_MAX        5u
+// symbol k >= 1: +0 locate, +4 band base, +8 stock lo, +12 stock hi
+#define T2T_SYM(k) (T2T_SYM_BASE + T2T_SYM_STRIDE * ((k) - 1u))
+
 #define T2T_CTRL           0x0A8u
 #define T2T_CTRL_LOAD      0x1u
 #define T2T_CTRL_ORDER_ACK 0x2u
@@ -95,6 +101,11 @@
 #define ST_RB_RESENT         0x174u
 #define ST_RB_DROP           0x178u
 #define ST_BLK_QTY           0x17Cu
+#define ST_POSITION_1        0x180u
+#define ST_POSITION_2        0x184u
+#define ST_POSITION_3        0x188u
+#define ST_POSITION_4        0x18Cu
+#define ST_BBO_ARB_DROP      0x190u
 
 // ---- harness registers, from step8-hw/rtl/t2t_kernel.sv ----
 #define K_ID                 0x040u

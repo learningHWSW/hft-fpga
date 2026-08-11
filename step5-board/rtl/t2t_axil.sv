@@ -24,7 +24,11 @@ module t2t_axil #(
   parameter int DATA_W        = 512,
   parameter int OT_SETS_BITS  = 13,
   parameter int OT_WAYS       = 16,
-  parameter int AXIL_AW       = 12
+  parameter int AXIL_AW       = 12,
+  // Tracked symbols. Only the per-symbol config widens with it; the status word
+  // does not, because the per-symbol position block in axil_regfile is a fixed
+  // four entries whatever NSYM is.
+  parameter int NSYM          = 1
 )(
   // ---- CMAC domain ----
   input  logic                cmac_clk,
@@ -84,22 +88,29 @@ module t2t_axil #(
   output logic                rxs_tvalid,
   output logic                rxs_tlast
 );
-  localparam int CFGW = 968;      // sum of all cfg_* widths (checked at elab)
+  // Sum of all cfg_* widths. Symbols beyond the first add locate(16) +
+  // base(32) + stock(64) = 112 bits each; at NSYM=1 this is the 968 it was.
+  localparam int CFGW = 968 + (NSYM-1)*112;
   // Sum of all st_* widths: 19 words plus st_init_done's single bit, then the
   // thirteen published since. The later ones sit at the TOP of the word rather
   // than beside their neighbours -- the bus is only transport, both ends name
   // the same slice, and renumbering nineteen hand-written slices to keep bus
   // order matching register order would be all risk and no benefit.
-  localparam int STW  = 993;
+  //   [1024:993]  st_bbo_arb_drop
+  //   above that   one 32-bit position per symbol beyond the first
+  localparam int STW  = 1025 + (NSYM-1)*32;
 
   // ================= AXI-Lite register file (axil_clk) =================
-  logic [31:0] a_group_ip, a_band_base, a_max_spread, a_min_qty, a_order_qty;
+  logic [31:0] a_group_ip, a_max_spread, a_min_qty, a_order_qty;
   logic [31:0] a_pos_limit, a_sweep_min_levels, a_firm, a_tif, a_ouch_min_qty;
   logic [31:0] a_src_ip, a_dst_ip, a_init_seq, a_ack_num;
-  logic [15:0] a_udp_port, a_track_locate, a_max_inflight, a_src_port;
+  logic [15:0] a_udp_port, a_max_inflight, a_src_port;
+  // per symbol, packed
+  logic [NSYM*16-1:0] a_track_locate;
+  logic [NSYM*32-1:0] a_band_base;
+  logic [NSYM*64-1:0] a_stock;
   logic [15:0] a_dst_port, a_window, a_init_id;
   logic [47:0] a_sweep_gap, a_token_prefix, a_dst_mac, a_src_mac;
-  logic [63:0] a_stock;
   logic [7:0]  a_display, a_capacity, a_sweep, a_cross, a_cust;
   logic [3:0]  a_ratio_shift;
   logic        a_enable, a_sweep_en, a_load, a_order_ack, a_igmp_en;
@@ -113,7 +124,19 @@ module t2t_axil #(
   // status, resynced into the axil domain for read-back
   logic [STW-1:0] st_bus_axil;
 
-  axil_regfile #(.ADDR_W(AXIL_AW)) u_regs (
+  // Positions, unpacked from the status bus for the register file. Symbol 0
+  // keeps the slice it has always had; symbols 1.. are appended above the
+  // single-symbol word, the same "only ever grow at the top" rule the rest of
+  // this bus follows. The bus is pure transport -- it only has to agree with
+  // itself at the two ends -- so the register-map ORDER and the bus order are
+  // deliberately not the same thing.
+  logic [NSYM*32-1:0] st_pos_axil;
+  assign st_pos_axil[31:0] = st_bus_axil[127:96];
+  for (genvar k = 1; k < NSYM; k++) begin : g_pos_axil
+    assign st_pos_axil[32*k +: 32] = st_bus_axil[1025 + 32*(k-1) +: 32];
+  end
+
+  axil_regfile #(.ADDR_W(AXIL_AW), .NSYM(NSYM)) u_regs (
     .aclk(axil_clk), .aresetn(axil_rst_n),
     .s_axil_awaddr(s_axil_awaddr), .s_axil_awvalid(s_axil_awvalid), .s_axil_awready(s_axil_awready),
     .s_axil_wdata(s_axil_wdata), .s_axil_wstrb(s_axil_wstrb), .s_axil_wvalid(s_axil_wvalid), .s_axil_wready(s_axil_wready),
@@ -144,7 +167,7 @@ module t2t_axil #(
     .st_beat_drop(st_bus_axil[351:320]), .st_msg_drop(st_bus_axil[319:288]),
     .st_delta_drop(st_bus_axil[287:256]), .st_sent(st_bus_axil[255:224]),
     .st_blk_pos(st_bus_axil[223:192]), .st_blk_inflight(st_bus_axil[191:160]),
-    .st_blk_txfull(st_bus_axil[159:128]), .st_position(st_bus_axil[127:96]),
+    .st_blk_txfull(st_bus_axil[159:128]), .st_position(st_pos_axil),
     .st_seq_num(st_bus_axil[95:64]), .st_frame_cnt(st_bus_axil[63:32]),
     .st_tx_drop(st_bus_axil[31:0]),
     .st_bbo_early(st_bus_axil[800:769]), .st_bbo_late(st_bus_axil[768:737]),
@@ -153,7 +176,8 @@ module t2t_axil #(
     .st_rx_dup(st_bus_axil[640:609]), .st_rx_sess_frames(st_bus_axil[608:577]),
     .st_rto_fired(st_bus_axil[864:833]), .st_rto_gaveup(st_bus_axil[832:801]),
     .st_rb_stored(st_bus_axil[896:865]), .st_rb_resent(st_bus_axil[928:897]),
-    .st_rb_drop(st_bus_axil[960:929]),   .st_blk_qty(st_bus_axil[992:961])
+    .st_rb_drop(st_bus_axil[960:929]),   .st_blk_qty(st_bus_axil[992:961]),
+    .st_bbo_arb_drop(st_bus_axil[1024:993])
   );
 
   // pack every config word into one bus (order is the contract with the unpack)
@@ -187,13 +211,15 @@ module t2t_axil #(
   );
 
   // unpack in the SAME order -> core-domain config
-  logic [31:0] c_group_ip, c_band_base, c_max_spread, c_min_qty, c_order_qty;
+  logic [31:0] c_group_ip, c_max_spread, c_min_qty, c_order_qty;
   logic [31:0] c_pos_limit, c_sweep_min_levels, c_firm, c_tif, c_ouch_min_qty;
   logic [31:0] c_src_ip, c_dst_ip, c_init_seq, c_ack_num;
-  logic [15:0] c_udp_port, c_track_locate, c_max_inflight, c_src_port;
+  logic [15:0] c_udp_port, c_max_inflight, c_src_port;
+  logic [NSYM*16-1:0] c_track_locate;
+  logic [NSYM*32-1:0] c_band_base;
   logic [15:0] c_dst_port, c_window, c_init_id;
   logic [47:0] c_sweep_gap, c_token_prefix, c_dst_mac, c_src_mac;
-  logic [63:0] c_stock;
+  logic [NSYM*64-1:0] c_stock;
   logic [7:0]  c_display, c_capacity, c_sweep, c_cross, c_cust;
   logic [3:0]  c_ratio_shift;
   logic        c_enable, c_sweep_en, c_igmp_en;
@@ -225,7 +251,15 @@ module t2t_axil #(
   logic                igmp_query_core;
   logic [STW-1:0]      st_bus_core;
 
-  t2t_top #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS)) u_t2t (
+  // the core-side half of the same mapping (see st_pos_axil above)
+  logic [NSYM*32-1:0] st_pos_core;
+  assign st_bus_core[127:96] = st_pos_core[31:0];
+  for (genvar k = 1; k < NSYM; k++) begin : g_pos_core
+    assign st_bus_core[1025 + 32*(k-1) +: 32] = st_pos_core[32*k +: 32];
+  end
+
+  t2t_top #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS),
+           .NSYM(NSYM)) u_t2t (
     .cmac_clk(cmac_clk), .cmac_rst_n(cmac_rst_n),
     .rx_tdata(rx_tdata), .rx_tkeep(rx_tkeep), .rx_tvalid(rx_tvalid), .rx_tlast(rx_tlast),
     .tx_tdata(ord_tdata), .tx_tkeep(ord_tkeep), .tx_tvalid(ord_tvalid), .tx_tlast(ord_tlast),
@@ -256,6 +290,7 @@ module t2t_axil #(
     .st_rx_dup(st_bus_core[640:609]), .st_rx_sess_frames(st_bus_core[608:577]),
     .st_bbo_early(st_bus_core[800:769]), .st_bbo_late(st_bus_core[768:737]),
     .st_bbo_mismatch(st_bus_core[736:705]),
+    .st_bbo_arb_drop(st_bus_core[1024:993]),
     .cfg_sweep_en(c_sweep_en), .cfg_sweep_min_levels(c_sweep_min_levels), .cfg_sweep_gap(c_sweep_gap),
     .cfg_token_prefix(c_token_prefix), .cfg_stock(c_stock), .cfg_firm(c_firm), .cfg_tif(c_tif),
     .cfg_ouch_min_qty(c_ouch_min_qty), .cfg_display(c_display), .cfg_capacity(c_capacity),
@@ -270,7 +305,7 @@ module t2t_axil #(
     .st_beat_drop(st_bus_core[351:320]), .st_msg_drop(st_bus_core[319:288]),
     .st_delta_drop(st_bus_core[287:256]), .st_sent(st_bus_core[255:224]),
     .st_blk_pos(st_bus_core[223:192]), .st_blk_inflight(st_bus_core[191:160]),
-    .st_blk_txfull(st_bus_core[159:128]), .st_position(st_bus_core[127:96]),
+    .st_blk_txfull(st_bus_core[159:128]), .st_position(st_pos_core),
     .st_seq_num(st_bus_core[95:64]), .st_frame_cnt(st_bus_core[63:32]),
     .st_tx_drop(st_bus_core[31:0]),
     .o_igmp_query(igmp_query_core),

@@ -46,6 +46,7 @@ module tb_axil_regfile;
   logic [31:0] st_rx_peer_ack, st_rx_ooo, st_rx_dup, st_rx_sess_frames;
   logic [31:0] st_rto_fired, st_rto_gaveup;
   logic [31:0] st_rb_stored, st_rb_resent, st_rb_drop, st_blk_qty;
+  logic [31:0] st_bbo_arb_drop;
   logic        cfg_rto_en;
   logic [31:0] cfg_rto_cycles;
   logic [3:0]  cfg_rto_retries;
@@ -94,6 +95,7 @@ module tb_axil_regfile;
     .st_rto_fired(st_rto_fired), .st_rto_gaveup(st_rto_gaveup),
     .st_rb_stored(st_rb_stored), .st_rb_resent(st_rb_resent),
     .st_rb_drop(st_rb_drop), .st_blk_qty(st_blk_qty),
+    .st_bbo_arb_drop(st_bbo_arb_drop),
     .cfg_rto_en(cfg_rto_en), .cfg_rto_cycles(cfg_rto_cycles),
     .cfg_rto_retries(cfg_rto_retries)
   );
@@ -145,7 +147,8 @@ module tb_axil_regfile;
      st_bbo_early,st_bbo_late,st_bbo_mismatch,
      st_rx_peer_ack,st_rx_ooo,st_rx_dup,st_rx_sess_frames,
      st_rto_fired,st_rto_gaveup,
-     st_rb_stored,st_rb_resent,st_rb_drop,st_blk_qty} = '0;
+     st_rb_stored,st_rb_resent,st_rb_drop,st_blk_qty,
+     st_bbo_arb_drop} = '0;
     st_init_done = 0;
 
     repeat (4) @(negedge aclk);
@@ -229,6 +232,19 @@ module tb_axil_regfile;
     axi_read('h174, rb); check_eq("st_rb_resent", rb, 32'hBB00_001D);
     axi_read('h178, rb); check_eq("st_rb_drop",   rb, 32'hBB00_001E);
     axi_read('h17C, rb); check_eq("st_blk_qty",   rb, 32'hBB00_001F);
+
+    // 4b'') the per-symbol block. This build is NSYM=1, so symbols 1..4 do not
+    // exist -- and the point of the four entries existing anyway is that the
+    // address map is the same whatever NSYM the build has. A symbol that is not
+    // there reads zero, which is also its position, rather than aliasing onto
+    // another register or returning the read-mux default.
+    axi_read('h180, rb); check_eq("st_position_1 (absent)", rb, 32'd0);
+    axi_read('h184, rb); check_eq("st_position_2 (absent)", rb, 32'd0);
+    axi_read('h188, rb); check_eq("st_position_3 (absent)", rb, 32'd0);
+    axi_read('h18C, rb); check_eq("st_position_4 (absent)", rb, 32'd0);
+    st_bbo_arb_drop = 32'hBB00_0020;
+    @(negedge aclk);
+    axi_read('h190, rb); check_eq("st_bbo_arb_drop", rb, 32'hBB00_0020);
 
     // 4c) the retransmission config, which lives ABOVE ctrl rather than in the
     // config block, so this also proves adding it did not move ctrl or the

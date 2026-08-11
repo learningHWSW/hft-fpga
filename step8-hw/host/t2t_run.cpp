@@ -64,6 +64,11 @@ struct Options {
   // the card, which would make publishing them a decoration.
   unsigned    rto     = 0;                // cfg_rto_cycles, 0 = disabled
   unsigned    rto_retries = 3;            // attempts per unacknowledged frame
+  // Extra tracked symbols, "<locate>:<band_base>:<STOCK>", repeatable. Symbol 0
+  // is --loc/--base and always AAPL; these are symbols 1.. in the per-symbol
+  // register block. A bitstream built with NSYM=1 has nowhere to put them, so
+  // supplying any is checked against what the build actually has.
+  std::vector<std::string> syms;
 };
 
 void usage() {
@@ -83,7 +88,9 @@ void usage() {
     "  --clk-mhz <f>  ap_clk in MHz, for the cycles->ns report (default 300)\n"
     "  --rto <n>      enable automatic retransmission after n idle core\n"
     "                 cycles (default 0 = disabled, host-initiated only)\n"
-    "  --rto-retries <n>  attempts per unacknowledged frame (default 3)\n";
+    "  --rto-retries <n>  attempts per unacknowledged frame (default 3)\n"
+    "  --sym <loc>:<base>:<STOCK>   track another symbol (repeatable, max 4);\n"
+    "                 needs a bitstream built with NSYM > 1\n";
 }
 
 std::vector<char> read_file(const std::string& path) {
@@ -203,6 +210,37 @@ void configure(Device& d, const Options& o) {
   // Retransmission. These three sit above the config block rather than inside
   // it, so they are written directly and are not part of the LOAD commit -- but
   // writing them before the commit keeps the whole setup in one place.
+  // Extra tracked symbols. Symbol 0's locate/base/stock are the registers
+  // above; these are 1.. in the per-symbol block, four words each.
+  for (size_t i = 0; i < o.syms.size(); ++i) {
+    const unsigned k = static_cast<unsigned>(i) + 1u;
+    if (k >= T2T_SYM_MAX)
+      throw std::runtime_error("--sym: the register map holds " +
+                               std::to_string(T2T_SYM_MAX - 1) + " extra symbols");
+    unsigned loc = 0, base = 0;
+    char stock[9] = "        ";               // 8 spaces, OUCH pads with them
+    // "<locate>:<band_base>:<STOCK>"
+    const std::string& t = o.syms[i];
+    const size_t c1 = t.find(':'), c2 = t.find(':', c1 == std::string::npos ? 0 : c1 + 1);
+    if (c1 == std::string::npos || c2 == std::string::npos)
+      throw std::runtime_error("--sym wants <locate>:<band_base>:<STOCK>, got " + t);
+    loc  = std::stoul(t.substr(0, c1));
+    base = std::stoul(t.substr(c1 + 1, c2 - c1 - 1));
+    const std::string nm = t.substr(c2 + 1);
+    if (nm.empty() || nm.size() > 8)
+      throw std::runtime_error("--sym: stock symbol must be 1..8 characters: " + nm);
+    std::memcpy(stock, nm.data(), nm.size());
+    // byte 0 in the low byte, matching cfg_stock's declaration and ascii_le()
+    uint32_t lo = 0, hi = 0;
+    for (int b = 0; b < 4; ++b) lo |= static_cast<uint32_t>(stock[b])     << (8 * b);
+    for (int b = 0; b < 4; ++b) hi |= static_cast<uint32_t>(stock[4 + b]) << (8 * b);
+    d.wr_t2t(T2T_SYM(k) + 0,  loc);
+    d.wr_t2t(T2T_SYM(k) + 4,  base);
+    d.wr_t2t(T2T_SYM(k) + 8,  lo);
+    d.wr_t2t(T2T_SYM(k) + 12, hi);
+    std::printf("symbol %u: locate=%u band=%u stock='%s'\n", k, loc, base, stock);
+  }
+
   d.wr_t2t(T2T_RTO_CYCLES,       o.rto);
   d.wr_t2t(T2T_RTO_RETRIES,      o.rto_retries);
   d.wr_t2t(T2T_RTO_EN,           o.rto ? 1u : 0u);
@@ -345,6 +383,18 @@ int run(Options o) {
   // is the last one to reach the register map, and the only one that indicates a
   // bug rather than a limit: pos/inflight/txfull are the gate doing its job,
   // while qty means the strategy computed a share count OUCH cannot carry.
+  // Per-symbol positions, printed only when there is more than one book: at
+  // NSYM=1 they are all zero and would just be noise. A summed net position is
+  // deliberately not offered -- long one name and short another is not flat, so
+  // the only honest summary is the list.
+  if (!o.syms.empty()) {
+    static const uint32_t POS[] = {ST_POSITION, ST_POSITION_1, ST_POSITION_2,
+                                   ST_POSITION_3, ST_POSITION_4};
+    std::printf("position:");
+    for (size_t k = 0; k <= o.syms.size() && k < 5; ++k)
+      std::printf(" sym%zu=%d", k, static_cast<int32_t>(d.rd_t2t(POS[k])));
+    std::printf("\n");
+  }
   const uint32_t blk_q = d.rd_t2t(ST_BLK_QTY);
   std::printf("strategy: sent=%u pos=%d blocked(pos=%u inflight=%u txfull=%u qty=%u)%s\n",
               d.rd_t2t(ST_SENT),
@@ -494,6 +544,11 @@ int run(Options o) {
               << " frames but the replay buffer stored " << rb_s
               << " -- the difference cannot be re-sent\n";      rc = 1;
   }
+  if (!o.syms.empty() && d.rd_t2t(ST_BBO_ARB_DROP) != 0) {
+    std::cerr << "FAIL: the per-symbol BBO merge dropped "
+              << d.rd_t2t(ST_BBO_ARB_DROP)
+              << " record(s) -- one book's stream has a hole\n";      rc = 1;
+  }
   if (rb_d != 0) {
     std::cerr << "FAIL: " << rb_d << " resend request(s) refused by the replay"
                  " buffer -- a slot was asked for that it never held\n"; rc = 1;
@@ -541,6 +596,7 @@ int main(int argc, char** argv) {
       else if (a == "--records") o.records = std::stoul(next());
       else if (a == "--rto") o.rto = std::stoul(next());
       else if (a == "--rto-retries") o.rto_retries = std::stoul(next());
+      else if (a == "--sym") o.syms.push_back(next());
       else if (a == "--sweep")   o.sweep   = true;
       else if (a == "--quiet")   o.quiet   = std::stoul(next());
       else if (a == "--clk-mhz") { o.clk_mhz = std::stod(next()); o.clk_mhz_set = true; }

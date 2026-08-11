@@ -191,6 +191,54 @@ three of the four ladder-only builds. The splitter path that was blamed is not
 the critical path in any of the eight. `data/FINDINGS.md` §7.7 has the full
 table and the method.
 
+## `bbo_arb` — merging K books into one tagged stream
+
+With `NSYM` tracked symbols there are `NSYM` price ladders, each with its own
+occupancy bitmaps and its own pipeline. `bbo_arb` turns their outputs into the
+single tagged stream the strategy consumes.
+
+**The ladders run concurrently on purpose.** They are fed from one serialized
+delta FIFO, and the demux pops as soon as the ladder that OWNS the delta is
+ready — so a delta for symbol B is issued while symbol A's ladder is still
+working. The ladder is the slowest stage in the chain (5–7 cycles per delta
+against the order table's 2–3 per message), so serializing them would divide the
+feed rate the design can absorb by `NSYM`. The price is that two ladders can
+finish on the same cycle, which is what this module is for.
+
+**What is ordered and what is not**, because this is the part that is easy to
+assume wrongly:
+
+- **Per symbol, order is exact.** One ladder is an in-order pipeline and its
+  records enter one queue and leave in the same order. This is the invariant the
+  strategy depends on — its edge detector, latched BBO and position are all per
+  symbol, so per-symbol order is the whole of what correctness needs.
+- **Across symbols, order is not preserved**, and no consumer may assume it.
+  Ladder pipelines are not fixed-length (a record touching one level skips a
+  state that a two-level record does not), so symbol B's later delta can produce
+  an earlier record than symbol A's. The merged stream's timestamps are therefore
+  **not monotonic**. Nothing downstream compares timestamps across symbols; a
+  consumer that wanted to would need a reorder buffer here and a bound on how
+  long to wait.
+
+**Depth is two, and that is a proof rather than a guess.** A ladder cannot
+produce two records closer together than its pipeline is long — five cycles at
+the very least — and the arbiter drains one per cycle, so with `NSYM ≤ 2 × 5` a
+queue can never be asked to hold more than two. The overflow is counted anyway
+(`st_bbo_arb_drop`, in the register map): a dropped BBO record would otherwise be
+a silent hole in one symbol's stream.
+
+**`NSYM = 1` is a wire**, not a one-deep queue that happens to be transparent.
+The strategy's sweep path reads a *registered* BBO, so inserting a cycle here
+would re-time sweep against imbalance and change which orders fire. Every
+existing golden is a single-symbol golden, so that has to cost nothing.
+
+**Verified at `NSYM = 2` against the single-symbol goldens** (`make -C
+step5-board test-msym`): AAPL at locate 1 and MSFT at locate 2, from the same
+stimulus, split by tag and diffed against `dump_bbo.py` for each locate
+separately. 10 records and 4 records, both exact, `mismatch = 0`,
+`arb_drop = 0`. Using the existing per-locate goldens is the point — a
+two-symbol golden written beside this RTL could share a mistake with it.
+
 End to end, on the step-8 kernel's synthetic chain, the loaded-latency probe's four
 samples read **min 33 → 24 core cycles** (`USE_FAST_BBO = 0` against the default),
 mean 51 → 47, with the max moving 73 → 74: the rejoin is a registered stage, so a

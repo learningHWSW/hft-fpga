@@ -33,7 +33,12 @@ module t2t_top #(
   // Answer the common book delta from fast_bbo instead of waiting for the
   // ladder's scan. The emitted BBO stream is identical either way -- bbo_merge
   // is what guarantees that -- so 0 exists to bisect, not to trade off.
-  parameter bit USE_FAST_BBO  = 1
+  parameter bit USE_FAST_BBO  = 1,
+  // Tracked symbols. One order table holds all of them; everything downstream
+  // of it is replicated per name (fh_core's header, FINDINGS §4.4). NSYM moves
+  // together with OT_SETS_BITS -- raising it alone is a choice to drop orders.
+  parameter int NSYM          = 1,
+  parameter int SYMW          = (NSYM > 1) ? $clog2(NSYM) : 1
 )(
   // ---- CMAC domain ----
   input  logic                cmac_clk,
@@ -56,8 +61,10 @@ module t2t_top #(
   input  logic [31:0]         cfg_group_ip,
   input  logic [31:0]         cfg_group_ip_b,   // B line (A/B gap recovery); =A for single feed
   input  logic [15:0]         cfg_udp_port,
-  input  logic [15:0]         cfg_track_locate,
-  input  logic [31:0]         cfg_band_base,
+  // packed per symbol: symbol k is [W*k +: W]. The band base is per name
+  // because two stocks do not trade near the same price.
+  input  logic [NSYM*16-1:0]  cfg_track_locate,
+  input  logic [NSYM*32-1:0]  cfg_band_base,
 
   // strategy configuration
   input  logic                cfg_enable,
@@ -83,7 +90,7 @@ module t2t_top #(
 
   // OUCH configuration
   input  logic [47:0]         cfg_token_prefix,
-  input  logic [63:0]         cfg_stock,
+  input  logic [NSYM*64-1:0]  cfg_stock,       // 8 ASCII bytes per symbol
   input  logic [31:0]         cfg_firm,
   input  logic [31:0]         cfg_tif,
   input  logic [31:0]         cfg_ouch_min_qty,
@@ -120,6 +127,7 @@ module t2t_top #(
   output logic [31:0]         st_bbo_early,
   output logic [31:0]         st_bbo_late,
   output logic [31:0]         st_bbo_mismatch,
+  output logic [31:0]         st_bbo_arb_drop,   // BBO records lost in the merge
   output logic [31:0]         st_beat_drop,
   output logic [31:0]         st_msg_drop,
   output logic [31:0]         st_delta_drop,
@@ -128,7 +136,11 @@ module t2t_top #(
   output logic [31:0]         st_blk_inflight,
   output logic [31:0]         st_blk_txfull,
   output logic [31:0]         st_blk_qty,
-  output logic signed [31:0]  st_position,
+  // One signed position per symbol, packed. t2t_axil publishes symbol 0 at the
+  // offset st_position always had and the rest in a block above it -- a summed
+  // "net position" across names would be a number with no meaning (long one
+  // name and short another is not flat).
+  output logic [NSYM*32-1:0]  st_position,
   output logic [31:0]         st_seq_num,
   output logic [31:0]         st_frame_cnt,
   output logic [31:0]         st_tx_drop,
@@ -290,6 +302,7 @@ module t2t_top #(
 
   // ---- feed handler: MoldUDP64 -> ITCH -> order table -> book ----
   logic        bbo_valid, bbo_has_bid, bbo_has_ask;
+  logic [SYMW-1:0] bbo_sym, sweep_sym;
   logic [47:0] bbo_ts;
   logic [31:0] bbo_bid_price, bbo_bid_qty, bbo_ask_price, bbo_ask_qty;
   logic        ev_gap, ev_hb, ev_eos;
@@ -298,14 +311,15 @@ module t2t_top #(
   logic        sweep_pulse, sweep_is_buy;
 
   fh_core #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS),
-            .USE_FAST_BBO(USE_FAST_BBO)) u_fh (
+            .USE_FAST_BBO(USE_FAST_BBO), .NSYM(NSYM)) u_fh (
     .clk(core_clk), .rst_n(core_rst_n),
     .track_locate(cfg_track_locate), .cfg_base(cfg_band_base),
     .s_tdata(mrg_tdata), .s_tkeep(mrg_tkeep), .s_tvalid(mrg_tvalid), .s_tlast(mrg_tlast),
     .init_done(st_init_done),
     .cfg_sweep_min_levels(cfg_sweep_min_levels), .cfg_sweep_gap(cfg_sweep_gap),
-    .o_sweep(sweep_pulse), .o_sweep_is_buy(sweep_is_buy), .st_sweep_cnt(st_sweep_cnt),
-    .bbo_valid(bbo_valid), .bbo_ts(bbo_ts),
+    .o_sweep(sweep_pulse), .o_sweep_sym(sweep_sym),
+    .o_sweep_is_buy(sweep_is_buy), .st_sweep_cnt(st_sweep_cnt),
+    .bbo_valid(bbo_valid), .bbo_sym(bbo_sym), .bbo_ts(bbo_ts),
     .bbo_has_bid(bbo_has_bid), .bbo_bid_price(bbo_bid_price), .bbo_bid_qty(bbo_bid_qty),
     .bbo_has_ask(bbo_has_ask), .bbo_ask_price(bbo_ask_price), .bbo_ask_qty(bbo_ask_qty),
     .ev_gap(ev_gap), .ev_hb(ev_hb), .ev_eos(ev_eos),
@@ -315,12 +329,13 @@ module t2t_top #(
     .st_beat_drop(st_beat_drop), .st_msg_drop(st_msg_drop), .st_delta_drop(st_delta_drop),
     .st_beat_level_max(), .st_msg_level_max(), .st_delta_level_max(),
     .st_bbo_early(st_bbo_early), .st_bbo_late(st_bbo_late),
-    .st_bbo_mismatch(st_bbo_mismatch),
+    .st_bbo_mismatch(st_bbo_mismatch), .st_bbo_arb_drop(st_bbo_arb_drop),
     .o_dec_valid(o_dec_valid), .o_dec_ts(o_dec_ts)
   );
 
   // ---- decide ----
   logic        ord_valid, ord_is_buy, ord_ready;
+  logic [SYMW-1:0] ord_sym;
   logic [47:0] ord_ts;
   // the order and the ITCH timestamp it cites, taken straight to the taps
   assign o_ord_valid = ord_valid;
@@ -328,18 +343,19 @@ module t2t_top #(
   logic [31:0] ord_qty, ord_price;
   logic [15:0] inflight;
 
-  strategy u_strat (
+  strategy #(.NSYM(NSYM)) u_strat (
     .clk(core_clk), .rst_n(core_rst_n),
     .cfg_enable(cfg_enable), .cfg_max_spread(cfg_max_spread),
     .cfg_ratio_shift(cfg_ratio_shift), .cfg_min_qty(cfg_min_qty),
     .cfg_order_qty(cfg_order_qty), .cfg_pos_limit(cfg_pos_limit),
     .cfg_max_inflight(cfg_max_inflight),
-    .i_valid(bbo_valid), .i_ts(bbo_ts),
+    .i_valid(bbo_valid), .i_sym(bbo_sym), .i_ts(bbo_ts),
     .i_has_bid(bbo_has_bid), .i_bid_price(bbo_bid_price), .i_bid_qty(bbo_bid_qty),
     .i_has_ask(bbo_has_ask), .i_ask_price(bbo_ask_price), .i_ask_qty(bbo_ask_qty),
-    .cfg_sweep_en(cfg_sweep_en), .i_sweep(sweep_pulse), .i_sweep_is_buy(sweep_is_buy),
+    .cfg_sweep_en(cfg_sweep_en), .i_sweep(sweep_pulse),
+    .i_sweep_sym(sweep_sym), .i_sweep_is_buy(sweep_is_buy),
     .i_ack(cfg_order_ack),
-    .o_valid(ord_valid), .o_ts(ord_ts), .o_is_buy(ord_is_buy),
+    .o_valid(ord_valid), .o_sym(ord_sym), .o_ts(ord_ts), .o_is_buy(ord_is_buy),
     .o_qty(ord_qty), .o_price(ord_price), .o_ready(ord_ready),
     .sent_cnt(st_sent), .blk_pos_cnt(st_blk_pos),
     .blk_inflight_cnt(st_blk_inflight), .blk_txfull_cnt(st_blk_txfull),
@@ -353,13 +369,14 @@ module t2t_top #(
   logic              ouch_tvalid, ouch_tlast, ouch_tready;
   logic [31:0]       pkt_cnt, token_seq;
 
-  ouch_builder #(.DATA_W(DATA_W)) u_ouch (
+  ouch_builder #(.DATA_W(DATA_W), .NSYM(NSYM)) u_ouch (
     .clk(core_clk), .rst_n(core_rst_n),
     .cfg_token_prefix(cfg_token_prefix), .cfg_stock(cfg_stock), .cfg_firm(cfg_firm),
     .cfg_tif(cfg_tif), .cfg_min_qty(cfg_ouch_min_qty),
     .cfg_display(cfg_display), .cfg_capacity(cfg_capacity), .cfg_sweep(cfg_sweep),
     .cfg_cross(cfg_cross), .cfg_cust(cfg_cust),
-    .i_valid(ord_valid), .i_is_buy(ord_is_buy), .i_qty(ord_qty), .i_price(ord_price),
+    .i_valid(ord_valid), .i_sym(ord_sym), .i_is_buy(ord_is_buy),
+    .i_qty(ord_qty), .i_price(ord_price),
     .i_ready(ord_ready),
     .m_tdata(ouch_tdata), .m_tkeep(ouch_tkeep), .m_tvalid(ouch_tvalid),
     .m_tlast(ouch_tlast), .m_tready(ouch_tready),
