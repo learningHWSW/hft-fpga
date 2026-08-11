@@ -1700,6 +1700,13 @@ expensive to rebuild: `ip/` (a Vivado IP generation, `make cmac`) and
 | `0x0200`–`0x0228` | **Phase B only**: MAC status and the loopback paths |
 | `0x1000`–`0x1FFF` | **`t2t_axil`'s own register file, unchanged** |
 
+Inside that window, `+0x1B0`–`+0x1B8` enable the card's automatic
+retransmission (`tx_rto`: on, timeout in core cycles, retry cap) and
+`+0x1168`/`+0x116C` count what it did. `make test-rto` exercises the whole loop
+in simulation — the venue's frame arms the detector, acknowledges nothing, and
+the card re-sends the oldest order by itself; `scripts/check_resend.py` then
+proves the extra frames are byte-identical copies rather than new orders.
+
 The Phase B block is what says whether a run can be believed at all: `0x0200`
 carries `rx_aligned`/`link_up`, and beside it sit the TX underrun count (a frame
 started and then starved — the failure `axis_sf_fifo` exists to prevent), the RX

@@ -233,7 +233,11 @@ Ordered by value, with the measurement that justifies each:
    (1,779 records, 1,174 of them ten cycles early), and the plan was right that
    the ordering was the whole job.
 3. ~~**Integrate `tx_replay_buf`**~~ — **done**, and it was small for the reason
-   given.
+   given. It has since grown the other half: `tx_rto` watches the acknowledgement
+   number and re-sends the oldest unacknowledged frame by itself, which the plan
+   assumed would stay software's. Finishing the inbound path is what changed the
+   answer — the replies reach software through a capture buffer read in batches,
+   so a host-timed resend is a resend some milliseconds late.
 4. ~~**Solve inbound on the card's own TCP connection.**~~ — **done in
    simulation.** `tcp_rx` is wired in, the acknowledgement number the card sends
    is live, and the replies reach the host: merged into the capture area the

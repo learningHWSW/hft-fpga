@@ -99,6 +99,9 @@ module axil_regfile #(
   output logic                cfg_order_ack,
   output logic                cfg_resend_req,     // pulse, A_CTRL bit 2
   output logic [3:0]          cfg_resend_age,
+  output logic                cfg_rto_en,
+  output logic [31:0]         cfg_rto_cycles,
+  output logic [3:0]          cfg_rto_retries,
 
   // ---- status inputs (from t2t_top st_* ports) ----
   input  logic [31:0]         st_rx_drop,
@@ -129,7 +132,9 @@ module axil_regfile #(
   input  logic [31:0]         st_rx_peer_ack,    // last ack the venue sent us
   input  logic [31:0]         st_rx_ooo,
   input  logic [31:0]         st_rx_dup,
-  input  logic [31:0]         st_rx_sess_frames
+  input  logic [31:0]         st_rx_sess_frames,
+  input  logic [31:0]         st_rto_fired,      // resends the card asked for itself
+  input  logic [31:0]         st_rto_gaveup      // frames abandoned at the retry cap
 );
   // ---- config word indices (match regmap.py REG order) ----
   localparam int A_GROUP_IP=0,  A_UDP_PORT=1,  A_TRACK_LOCATE=2, A_BAND_BASE=3,
@@ -143,8 +148,15 @@ module axil_regfile #(
                  A_SRC_IP=31,    A_DST_IP=32,   A_SRC_PORT=33,   A_DST_PORT=34,
                  A_INIT_SEQ=35,  A_ACK_NUM=36,  A_WINDOW=37,     A_INIT_ID=38,
                  A_IGMP_EN=39,   A_IGMP_INTERVAL=40, A_GROUP_IP_B=41;
-  localparam int NCFG   = 44;
+  localparam int NCFG   = 47;
   localparam int A_RESEND_AGE = 43;   // 0xAC  which stored frame to re-send
+  // Automatic retransmission (tx_rto). These sit ABOVE ctrl rather than inside
+  // the config block for the same reason A_RESEND_AGE does: the block is packed
+  // from word 0 and ctrl sits immediately after it, so adding a word there would
+  // move ctrl, the status base and the ID -- offsets that have shipped.
+  localparam int A_RTO_EN      = 44;  // 0xB0  bit0: enable the detector
+  localparam int A_RTO_CYCLES  = 45;  // 0xB4  idle core cycles before a resend
+  localparam int A_RTO_RETRIES = 46;  // 0xB8  attempts per unacknowledged frame
   localparam int A_CTRL = 42;         // 0xA8
   localparam int A_STAT = 64;         // 0x100 status base
   localparam int A_ID   = 127;        // 0x1FC
@@ -230,6 +242,8 @@ module axil_regfile #(
       A_STAT+23: readmux = st_rx_ooo;
       A_STAT+24: readmux = st_rx_dup;
       A_STAT+25: readmux = st_rx_sess_frames;
+      A_STAT+26: readmux = st_rto_fired;
+      A_STAT+27: readmux = st_rto_gaveup;
       default:   readmux = 32'd0;
     endcase
   endfunction
@@ -269,6 +283,9 @@ module axil_regfile #(
   assign cfg_tif              = cfgw[A_TIF];
   assign cfg_ouch_min_qty     = cfgw[A_OUCH_MINQ];
   assign cfg_resend_age       = cfgw[A_RESEND_AGE][3:0];
+  assign cfg_rto_en           = cfgw[A_RTO_EN][0];
+  assign cfg_rto_cycles       = cfgw[A_RTO_CYCLES];
+  assign cfg_rto_retries      = cfgw[A_RTO_RETRIES][3:0];
   assign cfg_display          = cfgw[A_DISPLAY][7:0];
   assign cfg_capacity         = cfgw[A_CAPACITY][7:0];
   assign cfg_sweep            = cfgw[A_SWEEP][7:0];

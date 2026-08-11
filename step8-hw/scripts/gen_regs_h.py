@@ -42,6 +42,9 @@ def main():
     # short of a feature the RTL has is how a feature quietly stays unused.
     out.write(f"#define T2T_CTRL_RESEND    0x{regmap.CTRL_RESEND:X}u\n")
     out.write(f"#define T2T_RESEND_AGE     0x{regmap.RESEND_AGE_OFFSET:03X}u\n")
+    out.write(f"#define T2T_RTO_EN         0x{regmap.RTO_EN_OFFSET:03X}u\n")
+    out.write(f"#define T2T_RTO_CYCLES     0x{regmap.RTO_CYCLES_OFFSET:03X}u\n")
+    out.write(f"#define T2T_RTO_RETRIES    0x{regmap.RTO_RETRIES_OFFSET:03X}u\n")
     out.write(f"#define T2T_ID             0x{regmap.ID_OFFSET:03X}u\n")
     out.write(f"#define T2T_ID_VALUE       0x{regmap.ID_VALUE:08X}u\n\n")
 

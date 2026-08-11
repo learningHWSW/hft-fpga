@@ -309,11 +309,16 @@ the instant the strategy produces one.
 The frame is 106 bytes (14 Ethernet + 20 IPv4 + 20 TCP + 52 payload), emitted
 as two 512-bit beats.
 
-**There is no retransmission.** A dropped segment is a dropped order and
-recovery is the host's problem. That is a deliberate trade — a retransmit
-buffer means holding every sent segment plus a timer each, which is state and
-latency on the one path that exists to be fast — but it is the single biggest
-reason this cannot be pointed at an exchange and left unattended.
+**Retransmission now exists, and it cost less than this section assumed.** The
+worry was that a retransmit buffer means holding every sent segment plus a timer
+each — state and latency on the one path that exists to be fast. Two facts
+removed most of it. The in-flight limiter already bounds what can be outstanding,
+so the ring is 16 frames and not a window; and OUCH's idempotent resend removes
+the dedup protocol, so what remains is one timer, not one per segment.
+`tx_replay_buf` holds the bytes, `tx_rto` decides, and neither is in the live
+path — the replay only goes out when the path is idle. What is still the host's
+problem is *policy*: the timeout and the retry cap are registers, and nothing
+here measures what they should be against a real venue.
 
 **Flow control is satisfied by construction, not by logic.** The strategy's
 in-flight limiter caps outstanding orders at 4, i.e. 4 x 52 = 208 bytes of

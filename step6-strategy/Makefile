@@ -15,7 +15,7 @@ VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv rtl/tx_replay_buf.sv tb
 VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0
 
-.PHONY: test test-combined test-xsim check-frames test-sweep test-replay clean
+.PHONY: test test-combined test-xsim check-frames test-sweep test-replay test-rto clean
 
 # bbo_in.log is the shared stimulus: the golden reads it, and so does the RTL
 bbo_in.log:
@@ -87,3 +87,9 @@ test-replay:
 	xvlog -sv rtl/tx_replay_buf.sv tb/tb_tx_replay_buf.sv
 	xelab -debug typical tb_tx_replay_buf -s tb_tx_replay_buf_sim
 	xsim tb_tx_replay_buf_sim -runall
+
+# the other half of a retransmission: deciding there was one to make
+test-rto:
+	xvlog -sv rtl/tx_rto.sv tb/tb_tx_rto.sv
+	xelab -debug typical tb_tx_rto -s tb_tx_rto_sim
+	xsim tb_tx_rto_sim -runall

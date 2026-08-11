@@ -84,13 +84,13 @@ module t2t_axil #(
   output logic                rxs_tvalid,
   output logic                rxs_tlast
 );
-  localparam int CFGW = 931;      // sum of all cfg_* widths (checked at elab)
+  localparam int CFGW = 968;      // sum of all cfg_* widths (checked at elab)
   // Sum of all st_* widths: 19 words plus st_init_done's single bit, then the
-  // seven published later. Those seven sit at the TOP of the word rather than
+  // nine published since. The later ones sit at the TOP of the word rather than
   // beside their neighbours -- the bus is only transport, both ends name the
   // same slice, and renumbering nineteen hand-written slices to keep bus order
   // matching register order would be all risk and no benefit.
-  localparam int STW  = 801;
+  localparam int STW  = 865;
 
   // ================= AXI-Lite register file (axil_clk) =================
   logic [31:0] a_group_ip, a_band_base, a_max_spread, a_min_qty, a_order_qty;
@@ -105,6 +105,9 @@ module t2t_axil #(
   logic        a_enable, a_sweep_en, a_load, a_order_ack, a_igmp_en;
   logic        a_resend_req;
   logic [3:0]  a_resend_age;
+  logic        a_rto_en;
+  logic [31:0] a_rto_cycles;
+  logic [3:0]  a_rto_retries;
   logic [31:0] a_igmp_interval, a_group_ip_b;
 
   // status, resynced into the axil domain for read-back
@@ -132,6 +135,8 @@ module t2t_axil #(
     .cfg_group_ip_b(a_group_ip_b),
     .cfg_load(a_load), .cfg_order_ack(a_order_ack),
     .cfg_resend_req(a_resend_req), .cfg_resend_age(a_resend_age),
+    .cfg_rto_en(a_rto_en), .cfg_rto_cycles(a_rto_cycles),
+    .cfg_rto_retries(a_rto_retries),
     .st_rx_drop(st_bus_axil[576:545]), .st_rx_hwm(st_bus_axil[544:513]),
     .st_init_done(st_bus_axil[512]), .st_frames_in(st_bus_axil[511:480]),
     .st_frames_kept(st_bus_axil[479:448]), .st_gap_total(st_bus_axil[447:416]),
@@ -145,7 +150,8 @@ module t2t_axil #(
     .st_bbo_early(st_bus_axil[800:769]), .st_bbo_late(st_bus_axil[768:737]),
     .st_bbo_mismatch(st_bus_axil[736:705]),
     .st_rx_peer_ack(st_bus_axil[704:673]), .st_rx_ooo(st_bus_axil[672:641]),
-    .st_rx_dup(st_bus_axil[640:609]), .st_rx_sess_frames(st_bus_axil[608:577])
+    .st_rx_dup(st_bus_axil[640:609]), .st_rx_sess_frames(st_bus_axil[608:577]),
+    .st_rto_fired(st_bus_axil[864:833]), .st_rto_gaveup(st_bus_axil[832:801])
   );
 
   // pack every config word into one bus (order is the contract with the unpack)
@@ -157,7 +163,7 @@ module t2t_axil #(
     a_ouch_min_qty, a_display, a_capacity, a_sweep, a_cross, a_cust,
     a_dst_mac, a_src_mac, a_src_ip, a_dst_ip, a_src_port, a_dst_port,
     a_init_seq, a_ack_num, a_window, a_init_id, a_igmp_en, a_igmp_interval,
-    a_group_ip_b, a_resend_age
+    a_group_ip_b, a_resend_age, a_rto_en, a_rto_cycles, a_rto_retries
   };
 
   // ================= config crossing (axil -> core) =================
@@ -191,6 +197,9 @@ module t2t_axil #(
   logic        c_enable, c_sweep_en, c_igmp_en;
   logic [31:0] c_igmp_interval, c_group_ip_b;
   logic [3:0]  c_resend_age;
+  logic        c_rto_en;
+  logic [31:0] c_rto_cycles;
+  logic [3:0]  c_rto_retries;
   // Still terminated here, and the only counters that are: the replay buffer's
   // three and the strategy's shares-range rejections. They belong in the map for
   // the same reason the session and BBO counters now are -- st_blk_qty in
@@ -213,7 +222,7 @@ module t2t_axil #(
     c_ouch_min_qty, c_display, c_capacity, c_sweep, c_cross, c_cust,
     c_dst_mac, c_src_mac, c_src_ip, c_dst_ip, c_src_port, c_dst_port,
     c_init_seq, c_ack_num, c_window, c_init_id, c_igmp_en, c_igmp_interval,
-    c_group_ip_b, c_resend_age
+    c_group_ip_b, c_resend_age, c_rto_en, c_rto_cycles, c_rto_retries
   } = cfg_bus_core;
 
   // ================= the datapath (t2t_top) =================
@@ -235,6 +244,9 @@ module t2t_axil #(
     .cfg_ratio_shift(c_ratio_shift), .cfg_min_qty(c_min_qty), .cfg_order_qty(c_order_qty),
     .cfg_pos_limit(c_pos_limit), .cfg_max_inflight(c_max_inflight), .cfg_order_ack(ack_core),
     .cfg_resend_req(resend_core), .cfg_resend_age(c_resend_age),
+    .cfg_rto_en(c_rto_en), .cfg_rto_cycles(c_rto_cycles),
+    .cfg_rto_retries(c_rto_retries),
+    .st_rto_fired(st_bus_core[864:833]), .st_rto_gaveup(st_bus_core[832:801]),
     .st_rb_stored(st_rb_stored), .st_rb_resent(st_rb_resent), .st_rb_drop(st_rb_drop),
     .st_blk_qty(st_blk_qty),
     // Order-session inbound. The frames are brought out of the wrapper so the

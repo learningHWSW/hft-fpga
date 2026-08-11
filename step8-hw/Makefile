@@ -15,7 +15,7 @@ DPSRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
         $(STEP5)/rtl/drop_fifo.sv $(STEP5)/rtl/fh_core.sv \
         $(STEP5)/rtl/eth_ip_udp_rx.sv $(STEP5)/rtl/cdc_fifo.sv \
         $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/sweep_detect.sv \
-        $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv \
+        $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv \
         $(STEP5)/rtl/feed_ab_arb.sv $(STEP5)/rtl/igmp_query_detect.sv \
         $(STEP5)/rtl/tcp_rx.sv $(STEP5)/rtl/t2t_top.sv $(STEP5)/rtl/axil_regfile.sv \
         $(STEP5)/rtl/cfg_cdc.sv $(STEP5)/rtl/axis_tx_arb.sv \
@@ -80,7 +80,7 @@ XSETUP = { if [ -n "$(XILINX_SETTINGS)" ]; then \
 PART ?= xcu55c-fsvh2892-2L-e
 XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
 
-.PHONY: help which-tools test-latprobe test test-xsim test-session test-b-session test-latency test-gap-independent test-real test-real-latency \
+.PHONY: help which-tools test-latprobe test test-xsim test-session test-b-session test-rto test-latency test-gap-independent test-real test-real-latency \
         test-b test-b-latency test-b-real test-sffifo cmac gate-license xo-b xclbin-b run-card-b run-card-b-latency \
         golden clean clean-build distclean real-image run-card-real run-card-b-real elab synth xo xclbin host run-card run-card-latency card-info
 
@@ -137,6 +137,34 @@ test-session: golden ## Simulate|the venue's replies: RX -> capture -> host OUCH
 	python3 scripts/dump_session.py session_capture.bin $(RECS) --local-ip $(CARD_IP) > s_rtl.log
 	diff s_gold.log s_rtl.log \
 	  && echo "PASS: the venue's OUCH replies == golden, decoded from the capture"
+
+# ---------- automatic retransmission, in the chain ----------
+# tx_rto's own testbench proves the decision; this proves the wiring, which is
+# the half a unit test cannot reach: detector -> tx_replay_buf -> the wire.
+#
+# The session stimulus is what makes it possible. tx_rto arms only once peer_ack
+# has moved, so it needs the venue's frames to exist -- and those frames
+# acknowledge nothing the card sent, which is exactly the shape of a loss. With a
+# short timeout the card notices and re-sends by itself.
+#
+# The order golden is NOT the check here, because a retransmission legitimately
+# adds frames to the capture. check_resend.py holds the stronger property: the
+# originals are unchanged and in order, and every extra frame is byte-identical
+# to one of them -- same sequence number, same OUCH token, which is what makes
+# the venue discard it rather than fill it twice.
+RTO_CYCLES ?= 2000
+test-rto: golden ## Simulate|the card notices an unacknowledged order and re-sends it
+	python3 scripts/gen_session.py --count 1 --eth session.eth --golden s_gold.log
+	cat $(ETH) session.eth > session_stim.eth
+	python3 scripts/pack_eth.py pack session_stim.eth session_replay.bin
+	@$(XSETUP) xvlog -sv $(SRC) $(TB)
+	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=session_replay.bin \
+	  -testplusarg cap=session_capture.bin -testplusarg rto=$(RTO_CYCLES) \
+	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) \
+	  -testplusarg quiet=$(QUIET)
+	python3 scripts/pack_eth.py unpack session_capture.bin $(RECS) $(CARD_IP) > kr_rtl.log
+	python3 scripts/check_resend.py k_gold.log kr_rtl.log 1
 
 # Latency measurement run. The probe only accepts a sample whose frame arrived
 # into a provably empty pipeline, so the injector gap must exceed the quiet

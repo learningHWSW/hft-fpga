@@ -96,7 +96,7 @@ trade.
      sweep ─┐
             ├─► strategy ─► ouch_builder ─► tcp_tx ─► tx_replay_buf ─► cdc_fifo ─┐
      BBO ───┘   + risk gate  OUCH 4.2 /     TCP/IPv4  last 16 frames    215→322  │
-                             SoupBinTCP      /Eth     host may resend    MHz     │
+                             SoupBinTCP      /Eth     tx_rto re-sends    MHz     │
                                                                                  ▼
     QSFP28 ◄─ CMAC ◄─ axis_tx_arb ◄──────────────────────────────────────────────┘ orders take the
        ▲       TX          ▲                                                       priority port
@@ -134,10 +134,13 @@ trade.
   blocked one.
 - **The order session is maintained on the card.** `tcp_tx` takes its
   acknowledgement number from `tcp_rx`, which advances it as the venue's segments
-  arrive rather than reading a shadow register software has to keep fresh, and
-  `tx_replay_buf` keeps the last 16 assembled frames so one can go back out
-  without the host re-assembling it. Login, heartbeats and OUCH-level feedback
-  stay software's.
+  arrive rather than reading a shadow register software has to keep fresh;
+  `tx_replay_buf` keeps the last 16 assembled frames; and `tx_rto` re-sends the
+  oldest of them when the acknowledgement stops moving, so a lost order is
+  recovered in the fabric rather than after a host has read a capture buffer. A
+  resend is idempotent twice over — same TCP sequence number, same OUCH token,
+  which the venue is required to ignore — which is what makes it safe to do in
+  hardware at all. Login, heartbeats and fill accounting stay software's.
 - **Runs on real silicon** as a Vitis kernel, replaying from HBM, with a real
   `cmac_usplus` and the GT in near-end loopback so MAC, PCS and SerDes are inside
   the measurement.
@@ -231,9 +234,9 @@ cd step4b-book && make test-verilator  # Verilator (no Vivado)
 | 4a | `make test`, `make test-real-xsim` | order table == golden, zero overflow |
 | 4b | `make test`, `make test-real-xsim`, `make test-merge-xsim` | BBO sequence == golden, and the fast/slow rejoin preserves it |
 | 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx` | the whole chain, two clocks, wire frames in and session frames back |
-| 6 | `make test-xsim`, `make test-replay` | orders and OUCH/TCP bytes == golden |
+| 6 | `make test-xsim`, `make test-replay`, `make test-rto` | orders and OUCH/TCP bytes == golden, and when a resend is decided |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
-| 8 | `make test-xsim`, `make test-b`, `make test-session` | the Vitis kernel, HBM to HBM, through the MAC, and the venue's replies back to the host |
+| 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto` | the Vitis kernel, HBM to HBM, through the MAC, the venue's replies back to the host, and the card re-sending an unacknowledged order |
 
 ### Synthesis and place & route
 
@@ -315,10 +318,15 @@ Honest scope, all of it stated in the per-step READMEs.
   `st_blk_qty`, the shares-range rejection, terminate in `t2t_axil`. `st_blk_qty`
   is the one risk-gate rejection a host cannot see, so "every rejection counted
   separately" is true of the RTL and not yet of the register map.
-- **Retransmission is available, not automatic.** `tx_replay_buf` holds the last
-  16 assembled frames and the host can ask for one back (`A_CTRL` bit 2). Nothing
-  detects a loss and re-sends on its own — the hot path stays fire-and-forget by
-  design, and deciding when to resend remains software's.
+- **Retransmission is automatic, and off by default.** `tx_rto` watches the
+  acknowledgement number `tcp_rx` tracks and asks `tx_replay_buf` for the oldest
+  unacknowledged frame when it stops advancing. It arms only after the venue has
+  acknowledged something at least once, caps its attempts, counts both, and drives
+  one pulse — the live stream is untouched and a replay only ever goes out when
+  the path is idle. `cfg_rto_en` starts at 0, so a design that wants the old
+  fire-and-forget behaviour has it. What is still not automatic is *policy*: the
+  timeout and retry count are numbers a host writes, and no measurement here says
+  what they should be on a real venue.
 - **Inbound is complete in simulation and has never met a real venue.** The
   acknowledgement number `tcp_tx` sends is live (`cfg_ack_num` is only the initial
   value from the handshake; hardware advances it as segments arrive), the session

@@ -333,6 +333,7 @@ module tb_t2t_kernel;
   // network/OUCH fields below match step 6's golden script defaults exactly
   // (stock AAPL, firm HFT1, token FPGA01, 10.0.0.2 -> 10.0.0.9). Only the
   // tracked symbol and price band vary between the synthetic and real feeds.
+  logic [31:0] rto = 0;
   logic [31:0] cfg_loc     = 32'd13;
   logic [31:0] cfg_band_px = 32'd2800000;
 
@@ -379,6 +380,11 @@ module tb_t2t_kernel;
     axil_write(T2T + 13'h9C, 32'h0000_0001);    // cfg_igmp_en
     axil_write(T2T + 13'hA0, 32'h4000_0000);    // cfg_igmp_interval (no periodic)
     axil_write(T2T + 13'hA4, GROUP);            // cfg_group_ip_b (single feed)
+    if (rto != 0) begin
+      axil_write(T2T + 13'hB0, 32'h0000_0001); // cfg_rto_en
+      axil_write(T2T + 13'hB4, rto);           // cfg_rto_cycles
+      axil_write(T2T + 13'hB8, 32'h0000_0002); // cfg_rto_retries
+    end
     axil_write(T2T + 13'hA8, 32'h0000_0001);    // CTRL: commit
   endtask
 
@@ -400,6 +406,10 @@ module tb_t2t_kernel;
     gap = 48; void'($value$plusargs("gap=%d", gap));
     quiet = 256; void'($value$plusargs("quiet=%d", quiet));
     rjit = 0; void'($value$plusargs("rjit=%d", rjit));
+    // +rto=<cycles> turns the automatic retransmission on with that timeout.
+    // Zero -- the default -- leaves it off, which is how every other test in
+    // this file runs and why their goldens are unaffected by its existence.
+    rto = 0; void'($value$plusargs("rto=%d", rto));
     void'($value$plusargs("loc=%d", cfg_loc));
     void'($value$plusargs("base=%d", cfg_band_px));
 
@@ -524,6 +534,10 @@ module tb_t2t_kernel;
     axil_read(T2T + 13'h154, v);   $display("TB: st_bbo_mismatch= %0d", v);
     if (v != 0) $display("FAIL: fast_bbo disagreed with the ladder %0d times", v);
     axil_read(T2T + 13'h164, v);   $display("TB: st_rx_sess_frm = %0d", v);
+    axil_read(T2T + 13'h168, v);   $display("TB: st_rto_fired   = %0d", v);
+    if (rto != 0 && v == 0)
+      $display("FAIL: automatic retransmission was enabled and never fired");
+    axil_read(T2T + 13'h16C, v);   $display("TB: st_rto_gaveup  = %0d", v);
     // st_frame_cnt counts the ORDER frames tcp_tx built; capture records
     // everything on the TX port, so the surplus is the IGMP reports (and any
     // ARP replies) the arbiter merged in. Capture may therefore exceed it, but

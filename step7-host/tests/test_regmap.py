@@ -45,7 +45,7 @@ A_TO_REG = {
     "GROUP_IP_B": ("cfg_group_ip_b", 0),
 }
 # anchors that are not per-register config words
-ANCHORS = {"CTRL", "STAT", "ID", "RESEND_AGE"}
+ANCHORS = {"CTRL", "STAT", "ID", "RESEND_AGE", "RTO_EN", "RTO_CYCLES", "RTO_RETRIES"}
 
 fails = 0
 
@@ -97,6 +97,10 @@ def test_rtl_matches_host():
     # RTL, absent from the host map, and the test said so on every run.
     check(a.get("RESEND_AGE", -1) * 4 == regmap.RESEND_AGE_OFFSET,
           f"resend age at 0x{regmap.RESEND_AGE_OFFSET:X}")
+    for key, off in (("RTO_EN", regmap.RTO_EN_OFFSET),
+                     ("RTO_CYCLES", regmap.RTO_CYCLES_OFFSET),
+                     ("RTO_RETRIES", regmap.RTO_RETRIES_OFFSET)):
+        check(a.get(key, -1) * 4 == off, f"A_{key} at 0x{off:X}")
 
 
 def test_status_order_matches_rtl():

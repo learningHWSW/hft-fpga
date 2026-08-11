@@ -55,6 +55,12 @@ CTRL_OFFSET    = 4 * NCFG               # 0xA8: write bit0=load, bit1=order_ack,
 # datapath reads continuously. It is therefore its own anchor: putting it in REGS
 # would grow NCFG and move CTRL, which is a shipped offset.
 RESEND_AGE_OFFSET = CTRL_OFFSET + 4     # 0xAC: which stored frame to re-send
+# Automatic retransmission (tx_rto), above ctrl for the same reason. Off unless
+# RTO_EN is written: with it clear the transmit path is what it was before the
+# detector existed, which is why it is not in REGS with the rest of the setup.
+RTO_EN_OFFSET      = CTRL_OFFSET + 8    # 0xB0: bit0 enables the detector
+RTO_CYCLES_OFFSET  = CTRL_OFFSET + 12   # 0xB4: idle core cycles before a resend
+RTO_RETRIES_OFFSET = CTRL_OFFSET + 16   # 0xB8: attempts per unacknowledged frame
 STATUS_BASE    = 0x100
 ID_OFFSET      = 0x1FC
 ID_VALUE       = 0x54325430            # "T2T0"
@@ -75,6 +81,8 @@ STATUS = [
     # published later: the fast/slow book split, then the order session inbound
     "st_bbo_early", "st_bbo_late", "st_bbo_mismatch",
     "st_rx_peer_ack", "st_rx_ooo", "st_rx_dup", "st_rx_sess_frames",
+    # and the card's own retransmissions
+    "st_rto_fired", "st_rto_gaveup",
 ]
 STATUS_OFFSET = {name: STATUS_BASE + 4 * i for i, name in enumerate(STATUS)}
 

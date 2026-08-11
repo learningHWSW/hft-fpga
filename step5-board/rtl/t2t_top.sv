@@ -72,6 +72,11 @@ module t2t_top #(
   // frame stored) to push a previously sent order frame back onto the wire.
   input  logic                cfg_resend_req,
   input  logic [3:0]          cfg_resend_age,
+  // Automatic retransmission (tx_rto). Off by default: with cfg_rto_en low the
+  // transmit path is exactly what it was before the detector existed.
+  input  logic                cfg_rto_en,
+  input  logic [31:0]         cfg_rto_cycles,   // idle core cycles before a resend
+  input  logic [3:0]          cfg_rto_retries,  // attempts per unacknowledged frame
   input  logic                cfg_sweep_en,
   input  logic [31:0]         cfg_sweep_min_levels,
   input  logic [47:0]         cfg_sweep_gap,
@@ -130,6 +135,8 @@ module t2t_top #(
   output logic [31:0]         st_rb_stored,
   output logic [31:0]         st_rb_resent,
   output logic [31:0]         st_rb_drop,
+  output logic [31:0]         st_rto_fired,     // resends the card asked for itself
+  output logic [31:0]         st_rto_gaveup,    // frames abandoned at the retry cap
 
   // RX-side IGMP query -> drives igmp_join.i_query in the wrapper (RFC 2236)
   output logic                o_igmp_query,
@@ -394,13 +401,43 @@ module t2t_top #(
   logic [KEEP_W-1:0] rb_tkeep;
   logic              rb_tvalid, rb_tlast;
 
+  // ---- who asks for a resend ----
+  // Two sources, and the hardware one exists because the software one turned out
+  // to be theoretical: the venue's replies reach the host through a capture
+  // buffer read in batches, so "the host decides when to resend" means a decision
+  // some milliseconds after the loss, about an order that has stopped being worth
+  // sending. tx_rto watches the acknowledgement number tcp_rx already tracks and
+  // asks for the oldest unacknowledged frame when it stops advancing.
+  //
+  // The host keeps its button. A hardware request is ORed with it rather than
+  // replacing it, because a resend is idempotent -- same TCP sequence number,
+  // same OUCH token -- so two requests for the same frame cost a duplicate
+  // segment the venue discards, and neither source has to know about the other.
+  //
+  // cfg_rto_en defaults to 0. With it low this module drives nothing and the
+  // transmit path is bit-for-bit what it was before it existed.
+  logic       rto_req;
+  logic [3:0] rto_age;
+
+  tx_rto #(.SLOTS(16), .PAYLD_B(52)) u_rto (
+    .clk(core_clk), .rst_n(core_rst_n),
+    .cfg_en(cfg_rto_en), .cfg_rto_cycles(cfg_rto_cycles),
+    .cfg_max_retries(cfg_rto_retries),
+    .seq_num(st_seq_num), .peer_ack(st_rx_peer_ack),
+    .o_resend_req(rto_req), .o_resend_age(rto_age),
+    .st_fired(st_rto_fired), .st_gaveup(st_rto_gaveup)
+  );
+
+  wire       resend_req_any = cfg_resend_req | rto_req;
+  wire [3:0] resend_age_any = rto_req ? rto_age : cfg_resend_age;
+
   tx_replay_buf #(.DATA_W(DATA_W), .SLOTS(16), .BEATS(2)) u_replay (
     .clk(core_clk), .rst_n(core_rst_n),
     .s_tdata(frm_tdata), .s_tkeep(frm_tkeep), .s_tvalid(frm_tvalid),
     .s_tlast(frm_tlast), .s_tready(rb_s_tready),
     .m_tdata(rb_tdata), .m_tkeep(rb_tkeep), .m_tvalid(rb_tvalid),
     .m_tlast(rb_tlast), .m_tready(1'b1),
-    .resend_req(cfg_resend_req), .resend_age(cfg_resend_age),
+    .resend_req(resend_req_any), .resend_age(resend_age_any),
     .stored_cnt(st_rb_stored), .resent_cnt(st_rb_resent),
     .resend_drop(st_rb_drop)
   );

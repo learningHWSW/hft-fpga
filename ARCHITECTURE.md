@@ -383,7 +383,7 @@ timing). The hot path is fire-and-forget, and flow control is satisfied by
 construction because the in-flight limiter caps unacknowledged payload far below
 any TCP window.
 
-**Retransmission is available but not wired in.** The specification makes it far
+**Retransmission is automatic, and off until a host enables it.** The specification makes it far
 smaller than it looks: client-to-host messages are designed to be "benignly
 resent", and an Enter Order carrying a previously used token is *ignored*, so a
 resend cannot double-fill and needs no dedup protocol. `tx_replay_buf` keeps the
@@ -392,6 +392,22 @@ stores the **assembled bytes**, not the order intent: re-deriving a frame would
 mint a new token and a new TCP sequence number, which is a different order and a
 hole in the stream. It adds no latency, since the live frame passes through while
 the ring is written in parallel and a replay only goes out when the path is idle.
+
+`tx_rto` decides when. It compares `tcp_tx`'s next sequence number against the
+acknowledgement number `tcp_rx` maintains, and when that stops advancing for
+`cfg_rto_cycles` it asks for the OLDEST unacknowledged frame -- the one a TCP
+sender retransmits first, located by dividing the outstanding byte count by the
+fixed 52-byte payload. It arms only after the venue has acknowledged something
+once, so a design with no peer never retransmits into the void, and it stops at
+`cfg_max_retries` and counts the give-up rather than emitting a frame per timeout
+at a venue that has gone. Fast retransmit is not used and could not be: three
+duplicate acks need the receiver to keep getting data past the hole, and this
+traffic is a handful of small frames with at most four outstanding.
+
+The reason this can live in hardware at all is that the resend is idempotent
+twice over -- the replayed bytes carry the original sequence number, so the peer's
+stack discards them, and the original token, which the venue must ignore. A
+spurious retransmission costs a discarded segment, not a duplicate fill.
 
 **The card gets its own OUCH session, rather than sharing the host's connection.**
 Two senders on one TCP connection must coordinate sequence numbers and forward
