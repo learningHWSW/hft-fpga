@@ -852,6 +852,45 @@ of the delta across the core-domain path is clock rather than MAC. **That leaves
 about 300 ns for MAC TX, MAC RX, the SerDes round trip, the store-and-forward fill
 and the frame filter.**
 
+### 7.6.0 The same measurement with the fast book path (added later)
+
+Everything above is the ladder-only datapath. `fast_bbo` went in afterwards, and
+the Phase B bitstream was rebuilt and re-run on the identical stimulus (real 5 M
+AAPL, gap 512, same MAC, same loopback), so the two are directly comparable:
+
+| Phase B, real 5 M AAPL | ladder only | with `fast_bbo` | delta |
+|---|---|---|---|
+| wire-to-wire min | 166 cy / 515.1 ns | 152 cy / **471.7 ns** | **−43.4 ns** |
+| wire-to-wire mean | 186.6 cy / 579.1 ns | 177.8 cy / **551.9 ns** | −27.2 ns |
+| wire-to-wire max | 239 cy / 741.6 ns | 241 cy / 747.8 ns | +6.2 ns |
+| loaded (decode→order) min | 23 core cy | **14 core cy** | −9 cycles |
+| samples / excluded | 70 / 0 | 70 / 0 | |
+| `st_bbo_mismatch` | n/a | **0** | |
+| golden | PASS | PASS | |
+
+**The fast path's own claim, checked on silicon.** It was measured in simulation
+to answer 1,174 of 1,779 records "about ten cycles early"; the loaded probe on
+the card puts the floor nine core cycles lower. The card also reports the same
+1,174 / 605 early/late split the simulation did, which is the sharper
+confirmation — the two ran the same book on the same data and agreed on which
+records took the short path.
+
+**The max moved the wrong way, by 2 cycles.** With 70 samples that is noise, and
+saying so is the point: a change that improves the min and the mean and leaves
+the max alone is what a shorter common path looks like, and dressing 6 ns up as
+a regression or explaining it away would both be overreading.
+
+**`st_bbo_mismatch = 0` across 1.13 M frames.** This is the counter that exists
+because the fast path can be wrong in a way a golden diff cannot see — if
+`fast_bbo` claimed certainty and the ladder then disagreed, and the strategy had
+already acted on the early answer, the order stream could still match a golden
+built from the same wrong book. It is zero, on real data, on silicon.
+
+**Not re-measured: Phase A.** The in-fabric numbers in the table above, and the
+99.7 ns front-end/back-end figure derived from them in §7.5.2, are still the
+ladder-only build. The MAC-term subtraction they support is unaffected in kind,
+but the Phase A row would move by roughly the same nine core cycles.
+
 **Simulation was wrong by a factor of two**, as the paragraph above predicted it
 would be: it put the same delta at ~145 ns, because `MAC_LAT = 40` is a constant a
 testbench author chose. This is the clearest case in the project of why a

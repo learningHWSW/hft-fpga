@@ -30,23 +30,36 @@ Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session
 
 | | |
 |---|---|
-| **Wire-to-wire, through a real 100 G MAC** | **518.2 ns** min / 579.4 ns mean, 70 samples |
-| In-fabric only (first RX beat to first TX beat) | 206.7 ns min |
+| **Wire-to-wire, through a real 100 G MAC** | **471.7 ns** min / 551.9 ns mean / 747.8 ns max, 70 samples, none excluded |
+| Decoder-to-order under load | **14 core cycles** min / 27.2 mean / 64 max |
+| Fast book path vs. the ladder | 1,174 of 1,779 BBO records answered early, **`st_bbo_mismatch = 0`** |
+| In-fabric only (first RX beat to first TX beat) | 206.7 ns min — *ladder-only build, not yet re-measured* |
 | Order frames vs. the software golden | **70 / 70 byte-identical**, zero drops |
 | MAC frames passed | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |
 | Full chain post-route (out of context) | **225.5 MHz** best of four directive sets (221.7 worst), above the 195.3 MHz a 100 Gb/s wire demands |
 
-Under load the floor never moves (23 core cycles, 107 ns), but from 25.1 to
-40.6 M msg/s the mean grows 1.49× while the **max grows 2.21×, to 730 ns** —
+Under load the floor never moves (**14 core cycles**, down from 23 before the
+fast path), but from 25.1 to 40.6 M msg/s the mean grows 1.49× while the **max
+grows 2.21×, to 730 ns** —
 quoting a mean for this design would mislead. Saturation is a knee rather than a
 shoulder, between 40.6 and 46.3 M msg/s, which is 20–40× the real NASDAQ peak.
 Every non-saturated point is byte-identical to the golden: the pipeline degrades
 by **dropping and counting**, never by emitting a wrong order.
 
-Every figure above was measured **before `fast_bbo` was wired in**, so it describes
-the ladder-only book path. That path is still what a deferred delta takes; most
-deltas now take a shorter one, and the order frames are unchanged either way. The
-card has not been re-measured, and the MAC half — the larger half — cannot move.
+**The wire-to-wire and loaded figures are now measured with `fast_bbo` in the
+datapath**, on the same real 5 M AAPL replay through the same MAC, so they are
+directly comparable with what the ladder-only build gave: **515.1 → 471.7 ns at
+the minimum** (−43.4 ns) and 579.1 → 551.9 ns at the mean, with the loaded floor
+going **23 → 14 core cycles**. That last number is the fast path's own claim
+landing on silicon — it was predicted to deliver most records "about ten cycles
+early", and it delivers nine. The max moved the wrong way by 2 cycles, which is
+70 samples of noise, not a finding. `st_bbo_mismatch = 0` over the whole replay:
+the fast path never contradicted the ladder on real data.
+
+The in-fabric row is still the ladder-only measurement — it needs the Phase A
+bitstream, which has not been rebuilt. The MAC half, the larger half, cannot
+move.
+
 This section used to add that the fast path costs 9.5 MHz of post-route frequency.
 It does not: that was one build against one build, and across four implementation
 directive sets per configuration the fast path is 3.0 MHz *faster* best-to-best
@@ -340,12 +353,14 @@ Honest scope, all of it stated in the per-step READMEs.
   `mold_stripper`, and that is on purpose — it is step 3a's 64-bit reference,
   superseded by `mold_splitter` at CMAC width and kept because the two are
   diffed against the same golden.
-- **The fast path has not run on the card.** Its evidence is simulation: the BBO
-  sequence over the real 5 M replay, and the order frames HBM-to-HBM and through
-  the MAC model. What a card run would now say for itself is readable —
-  `st_bbo_mismatch` counts the one thing that could break quietly (`fast_bbo`
-  certain and wrong) and is in the register map, printed by `t2t_run` and a
-  failing condition for the run — but nobody has taken that run.
+- **The fast path has run on the card; the Phase A bitstream has not been
+  rebuilt.** Phase B — through a real `cmac_usplus` with the GT in near-end
+  loopback — was rebuilt with `fast_bbo` and re-run on the real 5 M AAPL replay:
+  70/70 order frames byte-identical, `st_bbo_mismatch = 0` across 1.13 M frames,
+  and wire-to-wire down from 515.1 to 471.7 ns at the minimum (`FINDINGS`
+  §7.6.0). What is still ladder-only is the *in-fabric* half of the latency
+  budget: that number comes from the Phase A bitstream, which has not been
+  rebuilt, so §7.5.2's front-end/back-end decomposition rests on a mixed pair.
 - **Retransmission is automatic, and off by default.** `tx_rto` watches the
   acknowledgement number `tcp_rx` tracks and asks `tx_replay_buf` for the oldest
   unacknowledged frame when it stops advancing. It arms only after the venue has

@@ -1,0 +1,42 @@
+python3 scripts/pack_eth.py pack ../step5-board/real.eth real_replay.bin
+frames=1127057 beats=5110000
+./host/t2t_run --xclbin t2t_b.xclbin --replay real_replay.bin \
+  --capture real_capture.bin --device 0000:08:00.1 --gap 512 \
+  --loc 13 --base 2800000 --records 8192 --quiet 256 \
+  --clk-mhz 322.265625 \
+  --core-mhz 200
+harness id  = 54324b32 (T2K2, Phase B: through the CMAC)
+datapath id = 54325430 (expect 54325430)
+replay  : 327040000 bytes (5110000 beats) at 0x0
+capture : 16777216 bytes (8192 records) at 0x20000000
+order table initialised
+CMAC link   : aligned=1 link_up=1
+
+harness : injected=1127057 captured=70 overflow=0 stalls=0
+rx      : frames_in=1127130 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=465 drops(beat=0 msg=0 delta=0)
+strategy: sent=70 pos=800 blocked(pos=36 inflight=0 txfull=0 qty=0)
+tx      : frames=70 next_seq=10000e38 cdc_drop=0
+replay  : stored=70 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=1174 late=605 (65% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+mac     : tx=1127130 rx=1127130 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=70 dropped=1127060 cap_cdc_drop=0 hwm(feed=7 ord=3)
+
+latency : samples=70 excluded=0 orphans=0 (quiet=256 gap=512)
+          min=152 cyc (471.7 ns)  avg=177.8 cyc (551.9 ns)  max=241 cyc (747.8 ns)
+          hist[2^7..] = 70
+
+loaded  : samples=70 misses=0
+          decode->order  min=14 cyc (70.0 ns)  avg=27.2 cyc (135.8 ns)  max=64 cyc (320.0 ns)
+          hist[2^3..] = 16
+          hist[2^4..] = 29
+          hist[2^5..] = 24
+          hist[2^6..] = 1
+capture image written to real_capture.bin
+python3 scripts/pack_eth.py unpack real_capture.bin 8192 10.0.0.2 > real_hw.log
+orders=70 replies=0 igmp=0 arp=0 other=0
+diff real_gold.log real_hw.log \
+  && echo "PASS: ON CARD, THROUGH THE MAC, real 5M AAPL == golden"
+PASS: ON CARD, THROUGH THE MAC, real 5M AAPL == golden
+session: 70 frames in, 0 inbound, 0 payload bytes, 0 messages
