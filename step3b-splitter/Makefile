@@ -17,12 +17,6 @@ test: golden
 	xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD)
 	diff splitter_gold.log splitter_rtl.log && echo "PASS: RTL == golden ($(MOLD))"
 
-# ---------- verilator (no Vivado needed) ----------
-test-verilator: golden
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -j 0 -o tbsim --top-module $(TOP) $(SRC) $(TB)
-	./obj_dir/tbsim +mold=$(MOLD)
-	diff splitter_gold.log splitter_rtl.log && echo "PASS: RTL == golden ($(MOLD))"
-
 golden: $(MOLD)
 	python3 $(GOLD) $(MOLD) > splitter_gold.log
 
@@ -36,12 +30,12 @@ real.mold:
 	python3 $(STEP1)/itch2mold.py $(RCAP) real.mold $(RMSGS)
 
 test-real:
-	$(MAKE) test-verilator MOLD=real.mold
+	$(MAKE)  MOLD=real.mold
 
 test-real-xsim:
 	$(MAKE) test MOLD=real.mold
 
 clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb splitter_*.log real*.mold *.out
+	rm -rf xsim.dir *.log *.jou *.pb *.wdb splitter_*.log real*.mold *.out
 
-.PHONY: test test-verilator golden test-real test-real-xsim clean
+.PHONY: test golden test-real test-real-xsim clean

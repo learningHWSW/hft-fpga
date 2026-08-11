@@ -9,7 +9,6 @@ actually chains the decoder for an integration check.
 
 ```sh
 make test            # xsim (Vivado/Vitis environment)
-make test-verilator  # environment without Vivado
 ```
 
 If test.mold is missing it is generated automatically by step 1's

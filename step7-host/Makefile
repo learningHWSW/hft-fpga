@@ -12,7 +12,7 @@ test:
 	python3 -m tests.test_regmap
 	python3 -m tests.test_session
 
-# regenerate the FPGA OUCH bytes the interop test replays (needs Verilator).
+# regenerate the FPGA OUCH bytes the interop test replays (runs step 6's sim).
 # The test SKIPs gracefully if this has not been run.
 fpga-fixture:
 	$(MAKE) -C $(STEP6) test-combined >/dev/null

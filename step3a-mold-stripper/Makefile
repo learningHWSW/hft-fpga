@@ -11,12 +11,6 @@ test: golden
 	xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD)
 	diff mold_gold.log mold_rtl.log && echo "PASS: RTL == golden"
 
-# ---------- verilator (no Vivado needed) ----------
-test-verilator: golden
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -j 0 -o tbsim --top-module $(TOP) $(SRC) $(TB)
-	./obj_dir/tbsim +mold=$(MOLD)
-	diff mold_gold.log mold_rtl.log && echo "PASS: RTL == golden"
-
 golden: $(MOLD)
 	python3 scripts/dump_mold.py $(MOLD) > mold_gold.log
 
@@ -24,6 +18,6 @@ $(MOLD):
 	cd $(dir $(MOLD)) && python3 gen_itch.py test.itch --mold $(notdir $(MOLD))
 
 clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb mold_*.log
+	rm -rf xsim.dir *.log *.jou *.pb *.wdb mold_*.log
 
-.PHONY: test test-verilator golden clean
+.PHONY: test golden clean

@@ -12,8 +12,6 @@ ITCH ?= $(STEP5)/real.itch
 LOC  ?= 13
 
 VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv rtl/tx_replay_buf.sv tb/tb_strategy.sv
-VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
-         -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0
 
 .PHONY: test test-combined test-xsim test-msym check-frames test-sweep test-replay test-rto imbalance-edge clean
 
@@ -21,24 +19,18 @@ VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
 bbo_in.log:
 	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > bbo_in.log
 
-test: bbo_in.log
-	python3 scripts/dump_orders.py bbo_in.log > orders_gold.log
-	verilator $(VFLAGS) -o stratsim --top-module tb_strategy $(VSRC)
-	./obj_dir/stratsim +bbo=bbo_in.log +out=orders_rtl.log +pkt=ouch_rtl.log +frm=frames_rtl.log
-	diff orders_gold.log orders_rtl.log && echo "PASS: orders == golden ($(ITCH) loc=$(LOC))"
-	python3 scripts/dump_ouch.py orders_gold.log > ouch_gold.log
-	diff ouch_gold.log ouch_rtl.log && echo "PASS: OUCH packets == golden"
-	python3 scripts/dump_tcp.py ouch_gold.log > frames_gold.log
-	diff frames_gold.log frames_rtl.log && echo "PASS: TCP frames == golden"
-	python3 scripts/check_frames.py frames_rtl.log
+# alias: the xsim recipe is the only one now.
+test: test-xsim
 
 # combined strategy: imbalance (BBO) + sweep, one risk gate. The golden merges
 # both trigger streams by timestamp; the TB drives the same merged order.
 test-combined: bbo_in.log
 	python3 scripts/dump_sweep.py $(SWITCH) $(SWLOC) $(SWMIN) $(SWGAP) > sweep_in.log 2>/dev/null
 	python3 scripts/dump_orders.py bbo_in.log 2000 1 100 100 1000 4 50 sweep_in.log > orders_gold.log
-	verilator $(VFLAGS) -o stratsim --top-module tb_strategy $(VSRC)
-	./obj_dir/stratsim +bbo=bbo_in.log +sweep=sweep_in.log +out=orders_rtl.log +pkt=ouch_rtl.log +frm=frames_rtl.log
+	xvlog -sv $(VSRC)
+	xelab -debug typical tb_strategy -s tb_strategy_sim
+	xsim tb_strategy_sim -runall -testplusarg bbo=bbo_in.log -testplusarg sweep=sweep_in.log \
+	     -testplusarg out=orders_rtl.log -testplusarg pkt=ouch_rtl.log -testplusarg frm=frames_rtl.log
 	diff orders_gold.log orders_rtl.log && echo "PASS: combined orders == golden ($(SWITCH) loc=$(SWLOC))"
 	python3 scripts/dump_ouch.py orders_gold.log > ouch_gold.log
 	diff ouch_gold.log ouch_rtl.log && echo "PASS: combined OUCH == golden"
@@ -89,8 +81,10 @@ SWSRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
         $(STEP5)/rtl/drop_fifo.sv rtl/sweep_detect.sv tb/tb_sweep.sv
 test-sweep:
 	python3 scripts/dump_sweep.py $(SWITCH) $(SWLOC) $(SWMIN) $(SWGAP) > sweep_gold.log 2>sweep_sum.txt
-	verilator $(VFLAGS) -o swsim --top-module tb_sweep $(SWSRC)
-	./obj_dir/swsim +itch=$(SWITCH) +loc=$(SWLOC) +min=$(SWMIN) +gap=$(SWGAP)
+	xvlog -sv $(SWSRC)
+	xelab -debug typical tb_sweep -s tb_sweep_sim
+	xsim tb_sweep_sim -runall -testplusarg itch=$(SWITCH) -testplusarg loc=$(SWLOC) \
+	     -testplusarg min=$(SWMIN) -testplusarg gap=$(SWGAP)
 	diff sweep_gold.log sweep_rtl.log && echo "PASS: sweeps == golden ($(SWITCH) loc=$(SWLOC) min=$(SWMIN))"
 	@cat sweep_sum.txt
 
@@ -115,7 +109,7 @@ imbalance-edge: aapl_bbo.txt
 	python3 scripts/imbalance_edge.py $< $(IMARGS)
 
 clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb
+	rm -rf xsim.dir *.log *.jou *.pb *.wdb
 	# not aapl_bbo.txt: 40 s of the full capture to rebuild, and nothing else
 	# in this directory depends on being able to delete it quickly
 

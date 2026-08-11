@@ -1,7 +1,6 @@
 # Step 2 — SystemVerilog ITCH decoder + self-checking simulation
 
-xsim (Vivado/Vitis) is the primary flow. Verilator is the fallback for
-environments without Vivado.
+xsim (Vivado/Vitis) is the flow.
 
 ## Run
 
@@ -9,8 +8,6 @@ environments without Vivado.
 # Vivado/Vitis environment (after sourcing settings64.sh)
 make test
 
-# environment without Vivado
-make test-verilator
 ```
 
 Both flows: the TB injects the test.itch made by step 1's `gen_itch.py` as an

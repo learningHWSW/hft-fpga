@@ -202,7 +202,6 @@ trade.
 | XRT | 2.18.179 (2024.2) | only for running on the card |
 | Python | 3.8+ | goldens and packing scripts; standard library only |
 | GCC | C++17 | host runner and the step-1 C model |
-| Verilator | 5.036 | **optional** — a no-Vivado fallback for most testbenches |
 | OS | Ubuntu 22.04, kernel 5.15 | the machine this was measured on |
 | Locale | `en_US.UTF-8` present | Vivado's launcher hard-codes it; if absent, xsim aborts with a `std::locale` error. `sudo locale-gen en_US.UTF-8` |
 
@@ -241,8 +240,7 @@ Every step's `make test` regenerates its software golden, runs the RTL, and
 passes only if the two logs are byte-identical.
 
 ```sh
-cd step4b-book && make test            # xsim (primary)
-cd step4b-book && make test-verilator  # Verilator (no Vivado)
+cd step4b-book && make test            # xsim
 ```
 
 | Step | Command | What it proves |
@@ -379,12 +377,14 @@ Honest scope, all of it stated in the per-step READMEs.
   `0x180`–`0x18C`, while symbol 0 keeps the registers it always had, because
   moving it would repoint offsets that shipped. A real multi-symbol build is a
   sizing decision now, not a rebuild.
-- **The multi-symbol tests are xsim-only.** Every other stage has both an xsim
-  and a Verilator path, deliberately — the two disagree about races, and one
-  such disagreement (a testbench driving stimulus on the sampling edge) was
-  caught precisely because both were run. `test-msym` in steps 5 and 6 has no
-  Verilator twin yet, so that particular cross-check is not protecting the
-  newest RTL.
+- **One simulator, so no second opinion.** Everything now runs under xsim; the
+  Verilator paths are gone, and with them a cross-check that had already earned
+  its keep once. A testbench driving stimulus on the edge the DUT samples is a
+  race the two tools resolve differently, and exactly that bug was caught
+  because both were run — Verilator passed it, xsim failed, and neither was
+  reporting a design fault (`step6-strategy`). The negedge-stimulus convention
+  every testbench here follows is now the only thing standing in for that
+  check, which makes it a rule rather than a style.
 - **Inbound is complete in simulation and has never met a real venue.** The
   acknowledgement number `tcp_tx` sends is live (`cfg_ack_num` is only the initial
   value from the handshake; hardware advances it as segments arrive), the session

@@ -59,7 +59,7 @@ microsecond, and the input FIFO's high-water mark on a 5 M-message replay is
 
 ```sh
 make test              # synthetic .mold -> BBO, diffed vs golden (xsim)
-make test-verilator    # same under Verilator
+make test-msym         # two tracked books, each vs its own golden
 make test-real         # 5 M real AAPL messages end-to-end
 make stress            # same at gap=0 (synthetic over-drive; see below)
 make synth             # out-of-context synthesis for xcu55c

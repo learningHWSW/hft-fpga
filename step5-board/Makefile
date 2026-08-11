@@ -27,11 +27,6 @@ test: golden
 	     -testplusarg base=$(BASE) -testplusarg gap=$(GAP)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(MOLD) loc=$(LOC) gap=$(GAP))"
 
-test-verilator: golden
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o tbsim --top-module $(TOP) $(SRC) $(TB)
-	./obj_dir/tbsim +mold=$(MOLD) +loc=$(LOC) +base=$(BASE) +gap=$(GAP)
-	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(MOLD) loc=$(LOC) gap=$(GAP))"
-
 golden: $(ITCH)
 	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > bbo_gold.log
 
@@ -99,11 +94,11 @@ realsmall-%.eth: realsmall-%.mold
 .SECONDARY: realsmall-%.itch realsmall-%.mold
 
 test-real: real.mold
-	$(MAKE) test-verilator MOLD=real.mold ITCH=real.itch LOC=13 BASE=2800000
+	$(MAKE) test MOLD=real.mold ITCH=real.itch LOC=13 BASE=2800000
 
 # full-line-rate stress: shows where the correctness-first FSMs saturate
 stress: real.mold
-	$(MAKE) test-verilator MOLD=real.mold ITCH=real.itch LOC=13 BASE=2800000 GAP=0
+	$(MAKE) test MOLD=real.mold ITCH=real.itch LOC=13 BASE=2800000 GAP=0
 
 # ---------- synthesis / implementation for the real U55C device ----------
 PART ?= xcu55c-fsvh2892-2L-e
@@ -127,8 +122,10 @@ test-t2t: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o t2tsim --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
-	./obj_dir/t2tsim +eth=real.eth +loc=13 +base=2800000 +gap=48 +frm=t2t_rtl.log
+	xvlog -sv $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	xelab -debug typical tb_t2t -s tb_t2t_sim
+	xsim tb_t2t_sim -runall -testplusarg eth=real.eth -testplusarg loc=13 \
+	     -testplusarg base=2800000 -testplusarg gap=48 -testplusarg frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: wire -> order frames == golden"
 
 # full chain with the II=1 pipelined order table
@@ -137,8 +134,10 @@ test-t2t-pipe: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -DOT_PIPE -o t2tpipe --top-module tb_t2t $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
-	./obj_dir/t2tpipe +eth=real.eth +loc=13 +base=2800000 +gap=48 +frm=t2t_rtl.log
+	xvlog -sv -d OT_PIPE $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	xelab -debug typical -d OT_PIPE tb_t2t -s tb_t2t_pipe_sim
+	xsim tb_t2t_pipe_sim -runall -testplusarg eth=real.eth -testplusarg loc=13 \
+	     -testplusarg base=2800000 -testplusarg gap=48 -testplusarg frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: pipe wire -> order frames == golden"
 
 # full tick-to-trade chain (t2t_top): two clocks, wire in -> order frame out
@@ -186,28 +185,28 @@ impl-axil:
 	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000 $(NSYM)
 
 clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
+	rm -rf xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 	rm -f  realsmall-*.itch realsmall-*.mold realsmall-*.eth
 
-.PHONY: test-msym test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
+.PHONY: test-msym test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
 
-# xsim twins for the self-checking unit tests. Verilator is not installed
-# everywhere -- it is absent on the machine with the actual U55C, which made most
-# of this suite unrunnable exactly where the hardware is. These testbenches check
-# themselves, so no golden is needed and the xsim form is three lines.
-# (The claim below that a two-clock TB must be Verilator-only is not true; xsim
-# runs multiple clocks fine -- step8-hw/tb/tb_t2t_kernel.sv uses two.)
+# The self-checking unit tests. These began as xsim twins of Verilator targets,
+# written because Verilator was absent on the machine with the actual U55C --
+# which had made most of the suite unrunnable exactly where the hardware is.
+# They are now the only form: the project runs on xsim alone. The testbenches
+# check themselves, so no golden is needed and each is three lines.
+#
+# A two-clock testbench is not a reason to reach for another simulator, whatever
+# the old comments here implied: xsim runs multiple clocks fine, and
+# step8-hw/tb/tb_t2t_kernel.sv uses two.
 define XSIM_UNIT
 	xvlog -sv $(2)
 	xelab -debug typical $(1) -s $(1)_xsim
 	xsim $(1)_xsim -runall
 endef
 
-# ---------- AXI4-Lite register file (host config surface) ----------
-# Self-checking, no golden file needed: writes then reads back every register.
-test-axil:
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o axilsim --top-module tb_axil_regfile rtl/axil_regfile.sv tb/tb_axil_regfile.sv
-	./obj_dir/axilsim
+# alias: the xsim recipe is the only one now.
+test-axil: test-axil-xsim
 
 test-axil-xsim:
 	$(call XSIM_UNIT,tb_axil_regfile,rtl/axil_regfile.sv tb/tb_axil_regfile.sv)
@@ -221,20 +220,15 @@ test-txarb-xsim:
 test-cdc-xsim:
 	$(call XSIM_UNIT,tb_cdc_fifo,rtl/cdc_fifo.sv tb/tb_cdc_fifo.sv)
 
-# every self-checking unit test, on a machine with no Verilator
+# every self-checking unit test
 test-units-xsim: test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim
 	@echo "PASS: all self-checking unit tests ran under xsim"
 
-# ---------- t2t_axil wrapper: AXI-Lite control plane + CDC + TX arbiter ------
-# Unit checks for the new crossing/arbiter logic, then a wrapper smoke test that
-# drives AXI config across three async clocks and catches the IGMP report on tx.
-test-cfgcdc:
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o cfgcdcsim --top-module tb_cfg_cdc rtl/cfg_cdc.sv tb/tb_cfg_cdc.sv
-	./obj_dir/cfgcdcsim
+# alias: the xsim recipe is the only one now.
+test-cfgcdc: test-cfgcdc-xsim
 
-test-txarb:
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o txarbsim --top-module tb_axis_tx_arb rtl/axis_tx_arb.sv tb/tb_axis_tx_arb.sv
-	./obj_dir/txarbsim
+# alias: the xsim recipe is the only one now.
+test-txarb: test-txarb-xsim
 
 TAXIL_SRC = ../step2-rtl-decoder/rtl/itch5_pkg.sv ../step2-rtl-decoder/rtl/itch_decoder.sv \
   ../step3b-splitter/rtl/mold_splitter.sv ../step4a-order-table/rtl/otable_mem.sv \
@@ -248,8 +242,9 @@ TAXIL_SRC = ../step2-rtl-decoder/rtl/itch5_pkg.sv ../step2-rtl-decoder/rtl/itch_
   rtl/axil_regfile.sv rtl/cfg_cdc.sv rtl/axis_tx_arb.sv rtl/igmp_join.sv rtl/arp_responder.sv rtl/t2t_axil.sv
 test-axil-top:
 	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o taxilsim --top-module tb_t2t_axil $(TAXIL_SRC) tb/tb_t2t_axil.sv
-	./obj_dir/taxilsim
+	xvlog -sv $(TAXIL_SRC) tb/tb_t2t_axil.sv
+	xelab -debug typical tb_t2t_axil -s tb_t2t_axil_sim
+	xsim tb_t2t_axil_sim -runall
 
 # full datapath THROUGH the wrapper: real replay + AXI config, order frames
 # diffed against step 6's golden; IGMP reports (incl. a query-triggered one)
@@ -259,53 +254,60 @@ test-axil-full: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o taxilfull --top-module tb_t2t_axil_full $(TAXIL_SRC) tb/tb_t2t_axil_full.sv
-	./obj_dir/taxilfull +eth=real.eth +frm=t2t_axil_rtl.log
+	xvlog -sv $(TAXIL_SRC) tb/tb_t2t_axil_full.sv
+	xelab -debug typical tb_t2t_axil_full -s tb_t2t_axil_full_sim
+	xsim tb_t2t_axil_full_sim -runall -testplusarg eth=real.eth \
+	     -testplusarg frm=t2t_axil_rtl.log
 	diff t2t_gold.log t2t_axil_rtl.log && echo "PASS: wrapper AXI-config -> order frames == golden"
 
 # ---------- OpenNIC integration: elaborate the box adapter ----------
 # Proves t2t_user_322mhz wires t2t_axil to the box interface correctly, using a
 # stub for the core-clock MMCM (the real IP is a Vivado clk_wiz; see opennic/).
+# Elaboration, not lint: xsim has no --lint-only, so this builds a snapshot and
+# throws it away. It proves the same thing the lint did -- that every port of
+# t2t_axil is connected and every width agrees -- which is the only question a
+# box adapter with no behaviour of its own can get wrong.
 lint-opennic:
-	verilator --lint-only -sv -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT --top-module t2t_user_322mhz $(TAXIL_SRC) opennic/t2t_core_clk_stub.sv opennic/t2t_user_322mhz.sv
+	xvlog -sv $(TAXIL_SRC) opennic/t2t_core_clk_stub.sv opennic/t2t_user_322mhz.sv
+	xelab -debug typical t2t_user_322mhz -s t2t_user_322mhz_elab
 	@echo "PASS: t2t_user_322mhz elaborates against t2t_axil"
 
 # ---------- A/B line arbiter (redundant-feed gap recovery) ----------
 # Two lines with different drops must merge to the clean golden stream; a
 # double-line gap must be skipped (ev_gap). gen_ab.py builds both cases.
 test-ab:
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o absim --top-module tb_feed_ab rtl/feed_ab_arb.sv tb/tb_feed_ab.sv
+	xvlog -sv rtl/feed_ab_arb.sv tb/tb_feed_ab.sv
+	xelab -debug typical tb_feed_ab -s tb_feed_ab_sim
 	python3 scripts/gen_ab.py recover 30
-	./obj_dir/absim +gap=0
+	xsim tb_feed_ab_sim -runall -testplusarg gap=0
 	diff ab_gold.hex ab_rtl.hex && echo "PASS: A/B recover == golden (single-line drops filled)"
 	python3 scripts/gen_ab.py gap 30
-	./obj_dir/absim +gap=1
+	xsim tb_feed_ab_sim -runall -testplusarg gap=1
 	diff ab_gold.hex ab_rtl.hex && echo "PASS: A/B double-gap skipped == golden"
 
 # ---------- ARP responder (answer who-has our IP) ----------
 test-arp:
 	python3 scripts/gen_arp.py 00:11:22:33:44:55 10.0.0.2 aa:bb:cc:dd:ee:ff 10.0.0.9 > arp_gold.mem
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o arpsim --top-module tb_arp_responder rtl/arp_responder.sv tb/tb_arp_responder.sv
-	./obj_dir/arpsim
+	xvlog -sv rtl/arp_responder.sv tb/tb_arp_responder.sv
+	xelab -debug typical tb_arp_responder -s tb_arp_responder_sim
+	xsim tb_arp_responder_sim -runall
 
 # ---------- IGMPv2 membership report (multicast join) ----------
 # Golden frame from an independent Python build; TB diffs every emitted frame
 # against it byte-for-byte. Group/src match tb_igmp_join.sv defaults.
 test-igmpq:
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o igmpqsim --top-module tb_igmp_query_detect rtl/igmp_query_detect.sv tb/tb_igmp_query_detect.sv
-	./obj_dir/igmpqsim
+	xvlog -sv rtl/igmp_query_detect.sv tb/tb_igmp_query_detect.sv
+	xelab -debug typical tb_igmp_query_detect -s tb_igmp_query_detect_sim
+	xsim tb_igmp_query_detect_sim -runall
 
 test-igmp:
 	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o igmpsim --top-module tb_igmp_join rtl/igmp_join.sv tb/tb_igmp_join.sv
-	./obj_dir/igmpsim
+	xvlog -sv rtl/igmp_join.sv tb/tb_igmp_join.sv
+	xelab -debug typical tb_igmp_join -s tb_igmp_join_sim
+	xsim tb_igmp_join_sim -runall
 
-# ---------- clock crossing (CMAC 322 MHz -> core clock) ----------
-# Two clocks, so this is Verilator-only: the checks are about pointer
-# synchronisation, not about the ITCH golden.
-test-cdc:
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o cdcsim --top-module tb_cdc_fifo rtl/cdc_fifo.sv tb/tb_cdc_fifo.sv
-	./obj_dir/cdcsim
+# alias: the xsim recipe is the only one now.
+test-cdc: test-cdc-xsim
 
 # ---------- wire path: Ethernet frames -> parser -> feed handler -> BBO ----------
 WTB = tb_wire_to_bbo
@@ -320,8 +322,10 @@ test.eth: $(STEP1)/test.mold
 WETH ?= test.eth
 test-wire: $(WETH)
 	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > bbo_gold.log
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -o wtbsim --top-module $(WTB) $(WSRC) tb/tb_wire_to_bbo.sv
-	./obj_dir/wtbsim +eth=$(WETH) +loc=$(LOC) +base=$(BASE) +gap=$(GAP)
+	xvlog -sv $(WSRC) tb/tb_wire_to_bbo.sv
+	xelab -debug typical $(WTB) -s $(WTB)_sim
+	xsim $(WTB)_sim -runall -testplusarg eth=$(WETH) -testplusarg loc=$(LOC) \
+	     -testplusarg base=$(BASE) -testplusarg gap=$(GAP)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: wire->BBO == golden"
 
 real.eth: real.mold

@@ -11,7 +11,7 @@ emits the price levels the book will move on as a book delta (the input to step
 ```sh
 make test              # xsim, synthetic test.itch (all types A/F/E/C/X/D/U), AAPL locate 1
 make test-verilator    # Verilator, same
-make test-real         # real data 500k slice, AAPL locate 13 (Verilator)
+make test-real         # real data 500k slice, AAPL locate 13
 make test-real-xsim    # the above, xsim
 ```
 

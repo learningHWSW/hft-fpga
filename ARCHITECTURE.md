@@ -311,7 +311,7 @@ the emitted frames are re-derived a third time by scapy so a shared mistake in
 the golden and the RTL cannot quietly agree with itself. Finally `t2t_top` runs
 the whole chain wire-to-order-frame with two clocks, because a golden per block
 does not catch two correct blocks wired together wrongly.
-Real-data replays run under Verilator (up to 5 M messages) and under xsim.
+Real-data replays run under xsim, up to 5 M messages.
 
 Each testbench also asserts the invariants that must hold for the measured design
 point: no dropped messages, `overflow_cnt == 0` (table sized for the symbol),

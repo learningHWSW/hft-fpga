@@ -15,12 +15,6 @@ test: golden
 	xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC)
 	diff book_gold.log book_rtl.log && echo "PASS: RTL == golden ($(ITCH) loc=$(LOC))"
 
-# ---------- verilator (no Vivado needed) ----------
-test-verilator: golden
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -j 0 -o tbsim --top-module $(TOP) $(SRC) $(TB)
-	./obj_dir/tbsim +itch=$(ITCH) +loc=$(LOC)
-	diff book_gold.log book_rtl.log && echo "PASS: RTL == golden ($(ITCH) loc=$(LOC))"
-
 golden: $(ITCH)
 	python3 scripts/dump_book.py $(ITCH) $(LOC) > book_gold.log
 
@@ -50,12 +44,12 @@ real.itch:
 	python3 $(STEP1)/itch_slice.py $(RCAP) real.itch $(RMSGS) AAPL
 
 test-real: real.itch
-	$(MAKE) test-verilator ITCH=real.itch LOC=13
+	$(MAKE)  ITCH=real.itch LOC=13
 
 test-real-xsim: real.itch
 	$(MAKE) test ITCH=real.itch LOC=13
 
 clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb book_*.log real.itch
+	rm -rf xsim.dir *.log *.jou *.pb *.wdb book_*.log real.itch
 
-.PHONY: test test-verilator test-multi golden test-real test-real-xsim clean
+.PHONY: test test-multi golden test-real test-real-xsim clean

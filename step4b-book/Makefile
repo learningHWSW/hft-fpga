@@ -19,28 +19,21 @@ test: golden
 	xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(ITCH) loc=$(LOC))"
 
-# ---------- verilator (no Vivado needed) ----------
-test-verilator: golden
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -j 0 -o tbsim --top-module $(TOP) $(SRC) $(TB)
-	./obj_dir/tbsim +itch=$(ITCH) +loc=$(LOC) +base=$(BASE)
-	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(ITCH) loc=$(LOC))"
-
 # II=1 pipelined order table (order_table_pipe) against the SAME golden
+# Same golden, same stimulus, the II=1 pipelined table swapped in by -d OT_PIPE.
+# xelab takes defines with -d, and they have to reach BOTH steps: xvlog parses
+# the `ifdef, xelab elaborates what it selected.
 test-pipe: golden
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 -DOT_PIPE -o tbpipe --top-module $(TOP) $(SRC) $(TB)
-	./obj_dir/tbpipe +itch=$(ITCH) +loc=$(LOC) +base=$(BASE)
+	xvlog -sv -d OT_PIPE $(SRC) $(TB)
+	xelab -debug typical -d OT_PIPE $(TOP) -s $(TOP)_pipe_sim
+	xsim $(TOP)_pipe_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: pipe BBO == golden ($(ITCH) loc=$(LOC))"
 
 test-pipe-real:
 	$(MAKE) test-pipe ITCH=../step5-board/real.itch LOC=13 BASE=2800000
 
-# ---------- the fast/slow rejoin, on its own ----------
-# Unit-level, because the property it has to hold -- the merged stream is the
-# ladder's stream -- is checkable against a reference here and only observable as
-# a byte diff once it is in the chain (step5 test-t2t).
-test-merge:
-	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -j 0 -o mergesim --top-module tb_bbo_merge rtl/bbo_merge.sv tb/tb_bbo_merge.sv
-	./obj_dir/mergesim
+# alias: the xsim recipe is the only one now.
+test-merge: test-merge-xsim
 
 test-merge-xsim:
 	xvlog -sv rtl/bbo_merge.sv tb/tb_bbo_merge.sv
@@ -60,12 +53,12 @@ real.itch:
 	python3 $(STEP1)/itch_slice.py $(RCAP) real.itch $(RMSGS) AAPL
 
 test-real: real.itch
-	$(MAKE) test-verilator ITCH=real.itch LOC=13 BASE=2800000
+	$(MAKE)  ITCH=real.itch LOC=13 BASE=2800000
 
 test-real-xsim: real.itch
 	$(MAKE) test ITCH=real.itch LOC=13 BASE=2800000
 
 clean:
-	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch
+	rm -rf xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch
 
-.PHONY: test test-verilator test-merge test-merge-xsim golden test-real test-real-xsim clean
+.PHONY: test test-merge test-merge-xsim golden test-real test-real-xsim clean

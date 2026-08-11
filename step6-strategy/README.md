@@ -225,7 +225,9 @@ simulators now agree.
 
 The lesson is not "use negedge" but that a golden-diff regression is only as
 trustworthy as the stimulus timing beneath it: this test passed for as long as it
-was only ever run under Verilator.
+was only ever run under Verilator. The project runs on xsim alone now, which
+removes the second opinion that caught this one — so the negedge convention is
+no longer a style preference, it is the thing standing in for it.
 
 ## The OUCH builder
 

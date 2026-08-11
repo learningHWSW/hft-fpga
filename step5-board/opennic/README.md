@@ -41,7 +41,7 @@ status still reach the host over AXI-Lite.
 | `t2t_user_322mhz.sv`          | adapter: box interface ⇄ `t2t_axil`, MMCM, resets |
 | `user_plugin_322mhz_inst.vh`  | plugin include — instantiates the adapter in box_322mhz |
 | `create_t2t_core_clk.tcl`     | creates the `t2t_core_clk` MMCM IP (322.27 → 200 MHz) |
-| `t2t_core_clk_stub.sv`        | Verilator stub for the MMCM (lint only, not built) |
+| `t2t_core_clk_stub.sv`        | MMCM stub for `make lint-opennic` (elaboration only, not built) |
 
 ## Integrate (from a clean open-nic-shell checkout)
 
