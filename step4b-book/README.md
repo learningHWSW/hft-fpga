@@ -172,10 +172,21 @@ against `1`:
 
 **209.1 MHz still clears the 195.3 MHz that 100 Gb/s demands**, with 13.8 MHz of
 margin instead of 23.3. The synthesis number is *identical* between the two, so the
-9.5 MHz is not a longer logic chain — it appears in place & route, where ~900 more
-LUTs and 700 more flops in the middle of the book path cost routing. Whether it is
-recoverable by floorplanning or is simply the price of the second book engine is
-not yet answered.
+9.5 MHz is not a longer logic chain, and the post-route critical path says where it
+went — it is not in `bbo_merge` or `fast_bbo` at all:
+
+```
+Slack (VIOLATED) : -0.164ns
+  Source:      u_fh/u_split/vcnt_reg[4]_replica/C
+  Destination: u_fh/u_split/vcnt_reg[6]_replica/D
+  Data Path Delay: 4.764ns (logic 1.456ns 30.6%, route 3.308ns 69.4%)
+  Logic Levels: 15 (CARRY8=4 LUT3=2 LUT4=4 LUT5=2 LUT6=3)
+```
+
+That is `mold_splitter`'s valid-count carry chain, an existing path that was
+already the region's longest and is 69 % route. Adding ~900 LUTs and ~700 flops
+beside it moved its placement, not its logic. So the lever, if the margin is ever
+wanted back, is that counter or a floorplan constraint — not the rejoin.
 
 End to end, on the step-8 kernel's synthetic chain, the loaded-latency probe's four
 samples read **min 33 → 24 core cycles** (`USE_FAST_BBO = 0` against the default),
