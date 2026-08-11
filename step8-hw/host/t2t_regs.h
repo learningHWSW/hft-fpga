@@ -113,6 +113,8 @@
 #define K_L_SAMPLES          0x098u
 #define K_L_EXCLUDED         0x09Cu
 #define K_L_ORPHANS          0x0A0u
+#define K_SP_FRAMES          0x0A4u
+#define K_SP_DROP            0x0A8u
 #define K_L_HIST             0x0C0u
 #define K_M_MIN              0x100u
 #define K_M_MAX              0x104u

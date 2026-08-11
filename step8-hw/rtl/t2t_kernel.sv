@@ -143,6 +143,9 @@ module t2t_kernel #(
   localparam logic [12:0] R_CP_BEATS  = 13'h074;
   localparam logic [12:0] R_CP_OVF    = 13'h078;
   localparam logic [12:0] R_CP_STALL  = 13'h07C;
+  // order-session inbound, merged into the same capture area
+  localparam logic [12:0] R_SP_FRAMES = 13'h0A4;
+  localparam logic [12:0] R_SP_DROP   = 13'h0A8;
   // latency probe (see rtl/lat_probe.sv)
   localparam logic [12:0] R_L_QUIET   = 13'h080;
   localparam logic [12:0] R_L_MIN     = 13'h084;
@@ -179,6 +182,7 @@ module t2t_kernel #(
   logic        rp_busy, rp_done;
   logic [31:0] rp_frames, rp_beats_out;
   logic [31:0] cp_frames, cp_beats, cp_ovf, cp_stall;
+  logic [31:0] sp_frames, sp_drop;   // session frames captured / dropped
 
   logic [15:0] l_quiet;                         // idle cycles a sample requires
   logic        l_clear;
@@ -356,6 +360,8 @@ module t2t_kernel #(
               R_CP_BEATS:  rd_data <= cp_beats;
               R_CP_OVF:    rd_data <= cp_ovf;
               R_CP_STALL:  rd_data <= cp_stall;
+              R_SP_FRAMES: rd_data <= sp_frames;
+              R_SP_DROP:   rd_data <= sp_drop;
               R_L_QUIET:   rd_data <= {16'b0, l_quiet};
               R_L_MIN:     rd_data <= l_min;
               R_L_MAX:     rd_data <= l_max;
@@ -448,6 +454,11 @@ module t2t_kernel #(
   logic [KEEP_W-1:0] tx_tkeep;
   logic              tx_tvalid, tx_tlast, tx_tready;
 
+  // the order session's inbound frames, core domain -- see the capture merge below
+  logic [DATA_W-1:0] sx_tdata;
+  logic [KEEP_W-1:0] sx_tkeep;
+  logic              sx_tvalid, sx_tlast;
+
   t2t_axil #(
     .DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS), .AXIL_AW(12)
   ) u_t2t (
@@ -465,8 +476,64 @@ module t2t_kernel #(
     .s_axil_rdata(t_rdata), .s_axil_rresp(t_rresp), .s_axil_rvalid(t_rvalid),
     .s_axil_rready(t_rready),
     .o_dec_valid(dec_valid_c), .o_dec_ts(dec_ts_c),
-    .o_ord_valid(ord_valid_c), .o_ord_ts(ord_ts_c)
+    .o_ord_valid(ord_valid_c), .o_ord_ts(ord_ts_c),
+    .rxs_tdata(sx_tdata), .rxs_tkeep(sx_tkeep),
+    .rxs_tvalid(sx_tvalid), .rxs_tlast(sx_tlast)
   );
+
+  // ================= order-session inbound -> the capture buffer =============
+  // The venue's replies have nowhere to go inside the FPGA: the transmit side
+  // already took what it needed (the acknowledgement number) straight from
+  // tcp_rx, and the OUCH payload is for software. So they take the path the
+  // order frames take -- into the same capture area, out through the same DMA,
+  // and the host tells the two apart by direction, which it can do because an
+  // inbound frame is addressed to us and an outbound one is not.
+  //
+  // ONE BUFFER, not two. A second eth_capture would need a second AXI write
+  // master, a second kernel argument and an arbiter between them, to separate
+  // two streams the host can separate with an IP-address compare.
+  //
+  // The crossing is a cdc_fifo, in its drop-and-count mode: tcp_rx's output has
+  // no tready (it is the RX side, which cannot be stalled), so something here
+  // has to absorb a burst and say so when it cannot. Replies are one per order
+  // and orders are microseconds apart, so this should never fill -- and if it
+  // does, sp_drop is a number the host prints rather than a hole in the capture
+  // nobody notices.
+  logic [DATA_W-1:0] sess_tdata;                  // ap_clk
+  logic [KEEP_W-1:0] sess_tkeep;
+  logic              sess_tvalid, sess_tlast, sess_tready;
+
+  cdc_fifo #(.DATA_W(DATA_W), .DEPTH(64)) u_sess_cdc (
+    .w_clk(ap_clk_2), .w_rst_n(core_rst_n),
+    .s_tdata(sx_tdata), .s_tkeep(sx_tkeep),
+    .s_tvalid(sx_tvalid), .s_tlast(sx_tlast),
+    .drop_cnt(sp_drop), .hwm(),
+    .r_clk(ap_clk), .r_rst_n(dp_rst_n),
+    .m_tdata(sess_tdata), .m_tkeep(sess_tkeep), .m_tvalid(sess_tvalid),
+    .m_tlast(sess_tlast), .m_tready(sess_tready)
+  );
+
+  // Orders on the priority port. Nothing about the capture is latency-critical,
+  // but an order frame that waits behind a reply is an order frame whose capture
+  // timestamp no longer means what it did, and the arbiter costs nothing to get
+  // the right way round.
+  logic [DATA_W-1:0] cap_tdata;
+  logic [KEEP_W-1:0] cap_tkeep;
+  logic              cap_tvalid, cap_tlast, cap_tready;
+
+  axis_tx_arb #(.DATA_W(DATA_W)) u_cap_arb (
+    .clk(ap_clk), .rst_n(dp_rst_n),
+    .s0_tdata(tx_tdata), .s0_tkeep(tx_tkeep), .s0_tvalid(tx_tvalid),
+    .s0_tlast(tx_tlast), .s0_tready(tx_tready),
+    .s1_tdata(sess_tdata), .s1_tkeep(sess_tkeep), .s1_tvalid(sess_tvalid),
+    .s1_tlast(sess_tlast), .s1_tready(sess_tready),
+    .m_tdata(cap_tdata), .m_tkeep(cap_tkeep), .m_tvalid(cap_tvalid),
+    .m_tlast(cap_tlast), .m_tready(cap_tready)
+  );
+
+  always_ff @(posedge ap_clk)
+    if (!dp_rst_n)                                     sp_frames <= '0;
+    else if (sess_tvalid && sess_tready && sess_tlast) sp_frames <= sp_frames + 1'b1;
 
   // ================= loaded-latency probe (core domain) =================
   // Correlates a decoded message with the order that later cites its ITCH
@@ -516,8 +583,8 @@ module t2t_kernel #(
     .cfg_base(cp_base), .cfg_records(cp_recs), .clear(cp_clear),
     .frames_out(cp_frames), .beats_out(cp_beats),
     .overflow(cp_ovf), .stall_cnt(cp_stall),
-    .s_tdata(tx_tdata), .s_tkeep(tx_tkeep), .s_tvalid(tx_tvalid),
-    .s_tlast(tx_tlast), .s_tready(tx_tready),
+    .s_tdata(cap_tdata), .s_tkeep(cap_tkeep), .s_tvalid(cap_tvalid),
+    .s_tlast(cap_tlast), .s_tready(cap_tready),
     .m_axi_awaddr(m_axi_gmem1_AWADDR), .m_axi_awlen(m_axi_gmem1_AWLEN),
     .m_axi_awvalid(m_axi_gmem1_AWVALID), .m_axi_awready(m_axi_gmem1_AWREADY),
     .m_axi_wdata(m_axi_gmem1_WDATA), .m_axi_wstrb(m_axi_gmem1_WSTRB),

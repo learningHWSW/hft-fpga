@@ -22,9 +22,10 @@ QSFP28 ─► CMAC ─► cdc_fifo ─┤   MAC/IP/UDP filter            ├─�
   RX      100G    322→215   │   + header strip               │   A/B redundant   realign to
          322 MHz   MHz      └─► eth_ip_udp_rx B ─► drop_fifo ─┘   gap recovery    message
                             │                                                     boundaries
-                            └─► igmp_query_detect                                      │
-                                arms a membership report                               ▼
-                                on the TX side                                   itch_decoder
+                            ├─► igmp_query_detect  arms a report on TX                 │
+                            └─► tcp_rx             the order session's                 ▼
+                                inbound half, to the harness's capture
+                                                                                 itch_decoder
                                                                                  field extract
                                                                                        │
                                                             ┌──────────────────────────┤ book
@@ -396,9 +397,15 @@ the ring is written in parallel and a replay only goes out when the path is idle
 Two senders on one TCP connection must coordinate sequence numbers and forward
 inbound segments — genuinely hard, and unnecessary: OUCH scopes order identity to
 *(account, token)* and binds each account to a physical port, so a second port
-deletes the problem instead of managing it (`step7-host`). What still needs
-solving is the inbound direction on the card's own connection: acks and fills
-arrive at the card's MAC, and the FPGA does not parse TCP.
+deletes the problem instead of managing it (`step7-host`). The inbound direction
+on that connection is now handled too: `tcp_rx` filters the venue's segments out
+of the RX stream by 4-tuple, maintains `rcv_nxt` as the acknowledgement number
+`tcp_tx` sends, and passes the frames whole to the step-8 harness, which merges
+them into the same capture area the orders use. The host reassembles them by
+sequence number and decodes the OUCH (`scripts/dump_session.py`). The FPGA still
+does not *terminate* TCP -- no reordering buffer, no retransmission logic, no
+window management -- because a receiver that only has to recognise in-order
+segments and count the rest does not need to.
 
 ## 10. Results, measured on silicon
 
@@ -453,9 +460,10 @@ attacks the smaller term.
   recovered, aligned and FCS-checked, so it is the same `D + T_tx + T_rx` a real
   wire gives. A cabled two-port measurement against a live feed is still the
   honest end state.
-- **Inbound on the card's own TCP connection** is unsolved: acks and fills arrive
-  at the card's MAC and the FPGA does not parse TCP. Splitting the sessions
-  removed the sender-side problem only.
+- **Inbound on the card's own TCP connection** works end to end in simulation --
+  RX to capture to a decoded OUCH message -- and has never met a real venue. The
+  generator that produced the replies is Python, so what is proven is the
+  transport, not interoperability with an exchange.
 - **Nothing proven is left unintegrated.** `fast_bbo`, `tx_replay_buf` and
   `tcp_rx` were the three modules with a self-checking testbench and no
   instantiation (§6, §9); all three are now in `t2t_top`, and the goldens are

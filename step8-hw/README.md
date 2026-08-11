@@ -135,6 +135,39 @@ boundary, and a burst of at most 2 KB starting on a 2 KB boundary provably canno
 Only the beats actually used are written, so the padding costs address space, not
 bandwidth.
 
+### The order session's replies share the capture
+
+The venue's OUCH replies have nowhere to go inside the FPGA — `tcp_tx` already
+took the only thing hardware needs from them, the acknowledgement number, straight
+from `tcp_rx` — so they take the path the order frames take. In Phase A a
+`cdc_fifo` lifts them from the core clock and `axis_tx_arb` merges them into the
+capture stream with the orders on the priority port; in Phase B nothing was needed
+at all, because the loopback already puts both directions on RX and the capture
+filter already takes every TCP frame off it.
+
+**One buffer, not two.** A second `eth_capture` would mean a second AXI write
+master, a second kernel argument and an arbiter between them, to separate two
+streams the host can separate with one address compare: an inbound frame is
+addressed *to* the card. `pack_eth.py unpack` takes the card's IP and counts those
+as `replies` instead of `orders`, so the golden diff sees exactly what it saw
+before, and `scripts/dump_session.py` reassembles them **by sequence number**,
+trims overlaps, de-frames SoupBinTCP and decodes the OUCH with step 7's decoder.
+Sorting by sequence rather than arrival is what makes a retransmission harmless.
+
+`make test-session` (and `test-b-session`) generate the venue's side with
+`scripts/gen_session.py`, append it to the feed stimulus, and diff twice: the
+decoded replies against what was generated, **and the order frames against the
+unchanged golden**. The second diff is the one that could fail quietly — inbound
+data advances `rcv_nxt`, which is the acknowledgement number every subsequent
+order carries, so a reply that overtook the feed would rewrite the orders. The
+replies are appended after it for that reason, and the diff is what proves it.
+
+```
+session: 11 frames in, 4 inbound, 172 payload bytes, 4 messages
+PASS: order frames unchanged by inbound session traffic
+PASS: the venue's OUCH replies == golden, decoded from the capture
+```
+
 ## Status
 
 | Task | Status |
@@ -1660,7 +1693,9 @@ expensive to rebuild: `ip/` (a Vivado IP generation, `make cmac`) and
 | Range | Contents |
 |---|---|
 | `0x0040`–`0x007F` | harness: replay/capture base, beats, gap, start, counters |
-| `0x0080`–`0x00FF` | unloaded latency probe (`lat_probe`), wire cycles |
+| `0x0080`–`0x00A0` | unloaded latency probe (`lat_probe`), wire cycles |
+| `0x00A4`–`0x00A8` | Phase A only: session frames merged into the capture, and dropped |
+| `0x00C0`–`0x00FC` | the latency probe's histogram |
 | `0x0100`–`0x01DC` | loaded latency probe (`lat_loaded`), core cycles |
 | `0x0200`–`0x0228` | **Phase B only**: MAC status and the loopback paths |
 | `0x1000`–`0x1FFF` | **`t2t_axil`'s own register file, unchanged** |

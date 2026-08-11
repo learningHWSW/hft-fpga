@@ -80,7 +80,7 @@ XSETUP = { if [ -n "$(XILINX_SETTINGS)" ]; then \
 PART ?= xcu55c-fsvh2892-2L-e
 XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
 
-.PHONY: help which-tools test-latprobe test test-xsim test-latency test-gap-independent test-real test-real-latency \
+.PHONY: help which-tools test-latprobe test test-xsim test-session test-b-session test-latency test-gap-independent test-real test-real-latency \
         test-b test-b-latency test-b-real test-sffifo cmac gate-license xo-b xclbin-b run-card-b run-card-b-latency \
         golden clean clean-build distclean real-image run-card-real run-card-b-real elab synth xo xclbin host run-card run-card-latency card-info
 
@@ -102,6 +102,41 @@ test-xsim: golden replay.bin ## Simulate|same, in xsim -- the flow that works wh
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) -testplusarg quiet=$(QUIET)
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > k_rtl.log
 	diff k_gold.log k_rtl.log && echo "PASS: kernel HBM->HBM order frames == golden"
+
+# ---------- the order session's inbound half ----------
+# Everything else the card receives is market data. This appends the venue's own
+# frames -- TCP, addressed to the card, carrying SoupBinTCP-framed OUCH replies --
+# to the feed stimulus, and checks the two things that can break:
+#
+#   1. the orders are UNCHANGED. Inbound traffic advances tcp_rx's rcv_nxt, which
+#      is the acknowledgement number tcp_tx puts on the wire, so a reply that
+#      lands mid-flow would legitimately change every order after it. The replies
+#      are appended AFTER the feed for exactly that reason, and this diff is what
+#      proves they did not overtake it.
+#   2. the replies come back out of host memory intact, in order, and decode to
+#      the messages that went in -- through the same capture image and the same
+#      parser the card run uses.
+#
+# The image has its own name rather than reusing replay.bin: same stimulus file,
+# different contents, and make cannot tell those apart by timestamp.
+CARD_IP ?= 10.0.0.2
+SESS_N  ?= 4
+test-session: golden ## Simulate|the venue's replies: RX -> capture -> host OUCH decode
+	python3 scripts/gen_session.py --count $(SESS_N) --eth session.eth --golden s_gold.log
+	cat $(ETH) session.eth > session_stim.eth
+	python3 scripts/pack_eth.py pack session_stim.eth session_replay.bin
+	@$(XSETUP) xvlog -sv $(SRC) $(TB)
+	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=session_replay.bin \
+	  -testplusarg cap=session_capture.bin \
+	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) \
+	  -testplusarg quiet=$(QUIET)
+	python3 scripts/pack_eth.py unpack session_capture.bin $(RECS) $(CARD_IP) > ks_rtl.log
+	diff k_gold.log ks_rtl.log \
+	  && echo "PASS: order frames unchanged by inbound session traffic"
+	python3 scripts/dump_session.py session_capture.bin $(RECS) --local-ip $(CARD_IP) > s_rtl.log
+	diff s_gold.log s_rtl.log \
+	  && echo "PASS: the venue's OUCH replies == golden, decoded from the capture"
 
 # Latency measurement run. The probe only accepts a sample whose frame arrived
 # into a provably empty pipeline, so the injector gap must exceed the quiet
@@ -140,6 +175,29 @@ test-b: golden replay.bin ## Simulate|Phase B: the same golden, through the MAC 
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) -testplusarg quiet=$(QUIET)
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > kb_rtl.log
 	diff k_gold.log kb_rtl.log && echo "PASS: Phase B (through the MAC) order frames == golden"
+
+# The same session test, through the MAC. Phase B needs no capture merge at all:
+# the GT loopback puts everything transmitted back on RX, the capture filter
+# already takes every TCP frame off that stream, and the venue's replies are TCP.
+# So this exercises the inbound path over a route the Phase A test cannot -- the
+# frames go out through the MAC, come back through PCS and SerDes, and are
+# reassembled from the capture by the same parser.
+test-b-session: golden ## Simulate|Phase B: the venue's replies, through the MAC
+	python3 scripts/gen_session.py --count $(SESS_N) --eth session.eth --golden s_gold.log
+	cat $(ETH) session.eth > session_stim.eth
+	python3 scripts/pack_eth.py pack session_stim.eth session_replay.bin
+	@$(XSETUP) xvlog -sv $(DEFS_B) $(SRC_B) $(TB)
+	@$(XSETUP) xelab -debug typical -L xpm $(TOP_B) -s $(TOP_B)_sim
+	@$(XSETUP) xsim $(TOP_B)_sim -runall -testplusarg eth=session_replay.bin \
+	  -testplusarg cap=session_capture.bin \
+	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) \
+	  -testplusarg quiet=$(QUIET)
+	python3 scripts/pack_eth.py unpack session_capture.bin $(RECS) $(CARD_IP) > ksb_rtl.log
+	diff k_gold.log ksb_rtl.log \
+	  && echo "PASS: Phase B order frames unchanged by inbound session traffic"
+	python3 scripts/dump_session.py session_capture.bin $(RECS) --local-ip $(CARD_IP) > sb_rtl.log
+	diff s_gold.log sb_rtl.log \
+	  && echo "PASS: Phase B OUCH replies == golden, decoded from the capture"
 
 test-b-latency: ## Simulate|Phase B at gap 512
 	$(MAKE) test-b GAP=512 QUIET=$(QUIET)
@@ -210,8 +268,9 @@ run-card-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase A, real 
 	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
 	  --clk-mhz $(shell echo $(AP_CLK) | awk '{print $$1/1000000}') \
 	  --core-mhz $(shell echo $(CORE_CLK) | awk '{print $$1/1000000}')
-	python3 scripts/pack_eth.py unpack real_capture.bin 8192 > real_hw.log
+	python3 scripts/pack_eth.py unpack real_capture.bin 8192 $(CARD_IP) > real_hw.log
 	diff real_gold.log real_hw.log && echo "PASS: ON CARD, real 5M AAPL == golden"
+	@python3 scripts/dump_session.py real_capture.bin 8192 --local-ip $(CARD_IP) || true
 
 # Phase B: the same replay through the real MAC. Wire cycles are counted at the
 # CMAC's clock, not ap_clk, so the host has to be told which one the probe used.
@@ -222,9 +281,10 @@ run-card-b-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase B, rea
 	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
 	  --clk-mhz 322.265625 \
 	  --core-mhz $(shell echo $(CORE_CLK_B) | awk '{print $$1/1000000}')
-	python3 scripts/pack_eth.py unpack real_capture.bin 8192 > real_hw.log
+	python3 scripts/pack_eth.py unpack real_capture.bin 8192 $(CARD_IP) > real_hw.log
 	diff real_gold.log real_hw.log \
 	  && echo "PASS: ON CARD, THROUGH THE MAC, real 5M AAPL == golden"
+	@python3 scripts/dump_session.py real_capture.bin 8192 --local-ip $(CARD_IP) || true
 
 # Real-data latency: many more orders than the synthetic feed's four, so the
 # histogram and the min/mean/max actually mean something.
@@ -443,8 +503,9 @@ run-card: host/t2t_run golden replay.bin ## Card|Phase A, synthetic feed
 	  --device $(BDF) --gap $(GAP) --loc $(LOC) --base $(BASE) --records $(RECS) \
 	  --quiet $(QUIET) --clk-mhz $(shell echo $(AP_CLK) | awk '{print $$1/1000000}') \
 	  --core-mhz $(shell echo $(CORE_CLK) | awk '{print $$1/1000000}')
-	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > k_hw.log
+	python3 scripts/pack_eth.py unpack capture.bin $(RECS) $(CARD_IP) > k_hw.log
 	diff k_gold.log k_hw.log && echo "PASS: ON CARD order frames == golden"
+	@python3 scripts/dump_session.py capture.bin $(RECS) --local-ip $(CARD_IP) || true
 
 # Latency on silicon: the gap must exceed the quiet window for samples to be
 # attributable, so this runs the same replay with the injector spaced out.
@@ -481,7 +542,8 @@ clean: ## Clean|logs, sim scratch, small captures        (seconds)
 	# metadata that is meaningless once its .xclbin is gone; the .xclbin itself
 	# is NOT removed here -- see distclean
 	rm -f  *.ltx *.xclbin.info *.xclbin.link_summary
-	rm -f  k_*.log kb_*.log real_*.log rh_*.log
+	rm -f  k_*.log kb_*.log real_*.log rh_*.log s_*.log ks_*.log
+	rm -f  session.eth session_stim.eth session_replay.bin session_capture.bin
 	@echo "clean: logs, simulator scratch and small captures removed"
 	@echo "       bitstreams, ip/ and real_replay.bin kept (see clean-build, distclean)"
 

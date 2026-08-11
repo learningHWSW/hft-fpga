@@ -71,6 +71,8 @@ def main():
         ("K_L_QUIET", 0x080), ("K_L_MIN", 0x084), ("K_L_MAX", 0x088),
         ("K_L_LAST", 0x08C), ("K_L_SUM_LO", 0x090), ("K_L_SUM_HI", 0x094),
         ("K_L_SAMPLES", 0x098), ("K_L_EXCLUDED", 0x09C), ("K_L_ORPHANS", 0x0A0),
+        # order-session inbound, merged into the same capture area
+        ("K_SP_FRAMES", 0x0A4), ("K_SP_DROP", 0x0A8),
         ("K_L_HIST", 0x0C0),           # 16 consecutive words
         # loaded-latency probe (step8-hw/rtl/lat_loaded.sv), core-clock cycles
         ("K_M_MIN", 0x100), ("K_M_MAX", 0x104), ("K_M_LAST", 0x108),

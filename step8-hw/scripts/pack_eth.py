@@ -93,17 +93,35 @@ def unpack(cap_path, n_records):
     return out
 
 
-def classify(frame):
-    """'arp' | 'tcp' | 'igmp' | 'other' -- the same test tb_t2t_axil_full uses."""
+def classify(frame, local_ip=None):
+    """'arp' | 'tcp' | 'reply' | 'igmp' | 'other' -- the test tb_t2t_axil_full uses,
+    plus a direction split for TCP.
+
+    Both directions of the order session are TCP frames between the same two
+    addresses, and since the session's inbound frames are captured into the same
+    area as the orders, 'tcp' would otherwise mean "an order we sent OR a reply we
+    received". The golden covers only what the card TRANSMITTED, so a frame
+    addressed to the card is 'reply' and never reaches the order log. With
+    local_ip unset the split is off and this behaves exactly as it did before.
+    """
     if len(frame) < 24:
         return "other"
     if frame[12] == 0x08 and frame[13] == 0x06:
         return "arp"
     if frame[23] == 6:
+        if local_ip is not None and len(frame) >= 34:
+            dst = (frame[30] << 24) | (frame[31] << 16) | (frame[32] << 8) | frame[33]
+            if dst == local_ip:
+                return "reply"
         return "tcp"
     if frame[23] == 2:
         return "igmp"
     return "other"
+
+
+def ip2int(s):
+    a, b, c, d = (int(x) for x in s.split("."))
+    return (a << 24) | (b << 16) | (c << 8) | d
 
 
 def main(argv):
@@ -115,19 +133,25 @@ def main(argv):
 
     if len(argv) >= 4 and argv[1] == "unpack":
         cap, n = argv[2], int(argv[3])
-        counts = {"tcp": 0, "igmp": 0, "arp": 0, "other": 0}
+        # Optional 4th argument: the card's own IP. Given it, frames addressed to
+        # the card are the venue's replies rather than our orders, and are counted
+        # apart instead of contaminating the golden diff.
+        local_ip = ip2int(argv[4]) if len(argv) >= 5 else None
+        counts = {"tcp": 0, "reply": 0, "igmp": 0, "arp": 0, "other": 0}
         for frame in unpack(cap, n):
-            kind = classify(frame)
+            kind = classify(frame, local_ip)
             counts[kind] += 1
             if kind == "tcp":                 # the order frames the golden covers
                 print(frame.hex())
         sys.stderr.write(
-            "orders={tcp} igmp={igmp} arp={arp} other={other}\n".format(**counts))
+            "orders={tcp} replies={reply} igmp={igmp} arp={arp} other={other}\n"
+            .format(**counts))
         return 0
 
     sys.stderr.write(
         "usage: pack_eth.py pack <in.eth> <out.bin>\n"
-        "       pack_eth.py unpack <capture.bin> <n_records>   # orders to stdout\n")
+        "       pack_eth.py unpack <capture.bin> <n_records> [local_ip]\n"
+        "                                                    # orders to stdout\n")
     return 2
 
 

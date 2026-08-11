@@ -345,10 +345,26 @@ int run(Options o) {
               bbo_m, bbo_m ? "   <-- FAST PATH DISAGREED WITH THE LADDER" : "");
   // session: whether the venue is talking back at all. peer_ack is the last
   // acknowledgement number it sent us, so a peer_ack that never moves means the
-  // orders are leaving and nothing is answering.
-  std::printf("session : frames=%u peer_ack=%08x ooo=%u dup=%u\n",
+  // orders are leaving and nothing is answering. captured/dropped is the other
+  // half of the story -- the replies share the capture area with the orders, and
+  // sp_drop counts any the crossing into it could not absorb.
+  // Phase A merges the session stream into the capture and counts what it
+  // merged; Phase B needs no merge -- the loopback already puts both directions
+  // on RX and the capture filter takes all of it -- so those two registers do
+  // not exist there and reading them would print a decoy.
+  const uint32_t sp_f = phase_b ? 0 : d.rd(K_SP_FRAMES);
+  const uint32_t sp_d = phase_b ? 0 : d.rd(K_SP_DROP);
+  std::printf("session : frames=%u peer_ack=%08x ooo=%u dup=%u",
               d.rd_t2t(ST_RX_SESS_FRAMES), d.rd_t2t(ST_RX_PEER_ACK),
               d.rd_t2t(ST_RX_OOO), d.rd_t2t(ST_RX_DUP));
+  if (phase_b) std::printf("\n");
+  else         std::printf(" captured=%u dropped=%u\n", sp_f, sp_d);
+  if (sp_d)
+    std::cerr << "WARN: " << sp_d << " session frames dropped before the"
+                 " capture -- the decoded stream will have a hole\n";
+  if (d.rd_t2t(ST_RX_SESS_FRAMES))
+    std::printf("          decode with: scripts/dump_session.py %s %u"
+                " --local-ip 10.0.0.2\n", o.capture.c_str(), o.records);
 
   if (phase_b) {
     const uint32_t unf = d.rd(K_C_UNF);

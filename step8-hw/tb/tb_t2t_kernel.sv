@@ -386,7 +386,7 @@ module tb_t2t_kernel;
   int      fd, fo, c, nbytes;
   string   fname, capname;
   int      gap, quiet;
-  logic [31:0] v, id, st, ncap, ntx;
+  logic [31:0] v, id, st, ncap, ntx, nsess;
   logic [31:0] nlat, lexcl, lmin, lmax, lsum;
   logic [31:0] nload, lmiss, lmax2, lsum2;
   int      guard;
@@ -548,12 +548,16 @@ module tb_t2t_kernel;
     axil_read(R_C_FLT_D, v);   $display("TB: filter dropped = %0d (feed + IGMP/ARP)", v);
     axil_read(R_C_CAPDROP, v); $display("TB: capture CDC drops = %0d", v);
     if (v != 0) $display("FAIL: capture CDC dropped %0d beats", v);
-    // In Phase B the capture path is protocol-filtered, so only order frames
-    // reach it -- unlike Phase A, where IGMP and ARP were captured too. The
-    // counts must therefore match exactly, not merely not fall short.
-    if (ncap != ntx)
-      $display("FAIL: %0d order frames built, %0d captured (filter should leave only orders)",
-               ntx, ncap);
+    // In Phase B the capture path is protocol-filtered, so only TCP reaches it --
+    // unlike Phase A, where IGMP and ARP were captured too. TCP is BOTH
+    // directions of the order session, though: the loopback returns the frames
+    // the card sent, and the venue's replies are TCP arriving the other way. So
+    // the exact count is the orders built plus the session frames tcp_rx kept,
+    // and a stimulus with no replies still gives the old ncap == ntx.
+    axil_read(T2T + 13'h164, nsess);
+    if (ncap != ntx + nsess)
+      $display("FAIL: %0d order frames + %0d session frames, %0d captured",
+               ntx, nsess, ncap);
 `endif
 
     // ---- latency probe: the measurement that replaces FINDINGS 7.1's sum ----

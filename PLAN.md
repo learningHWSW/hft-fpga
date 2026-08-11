@@ -234,10 +234,12 @@ Ordered by value, with the measurement that justifies each:
    the ordering was the whole job.
 3. ~~**Integrate `tx_replay_buf`**~~ — **done**, and it was small for the reason
    given.
-4. **Solve inbound on the card's own TCP connection.** Half done: `tcp_rx` is
-   wired in and the acknowledgement number the card sends is live. Acks and fills
-   still do not reach the host — the session stream stops inside `t2t_axil` for
-   want of a capture path.
+4. ~~**Solve inbound on the card's own TCP connection.**~~ — **done in
+   simulation.** `tcp_rx` is wired in, the acknowledgement number the card sends
+   is live, and the replies reach the host: merged into the capture area the
+   orders use and decoded from it (`step8-hw/scripts/dump_session.py`). Both
+   phases pass, with the order frames byte-identical either way. What remains is
+   not code — it is a venue to answer the orders.
 5. **A cabled two-port measurement** against a live feed, replacing near-end
    loopback. Needs optics and a feed source.
 6. **Re-derive the strategy parameters from a full trading day.** The current

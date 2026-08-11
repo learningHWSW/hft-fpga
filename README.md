@@ -72,8 +72,8 @@ QSFP28 ─► CMAC ─► cdc_fifo ─┤   filter + strip             ├─►
                             │   (arms a report on TX)                          itch_decoder
                             │                                                  field extract
                             └─► tcp_rx                                               │
-                                order-session inbound         ┌──────────────────────┤ book delta
-                                the live ack for tcp_tx       ▼                      ▼
+                                the live ack for tcp_tx,      ┌──────────────────────┤ book delta
+                                replies to the capture        ▼                      ▼
                                                         sweep_detect            order_table
                                                         momentum, skips         ref→{px,qty}
                                                         the ladder             ┌─────┴─────┐
@@ -233,7 +233,7 @@ cd step4b-book && make test-verilator  # Verilator (no Vivado)
 | 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx` | the whole chain, two clocks, wire frames in and session frames back |
 | 6 | `make test-xsim`, `make test-replay` | orders and OUCH/TCP bytes == golden |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
-| 8 | `make test-xsim`, `make test-b` | the Vitis kernel, HBM to HBM, and through the MAC |
+| 8 | `make test-xsim`, `make test-b`, `make test-session` | the Vitis kernel, HBM to HBM, through the MAC, and the venue's replies back to the host |
 
 ### Synthesis and place & route
 
@@ -319,17 +319,16 @@ Honest scope, all of it stated in the per-step READMEs.
   16 assembled frames and the host can ask for one back (`A_CTRL` bit 2). Nothing
   detects a loss and re-sends on its own — the hot path stays fire-and-forget by
   design, and deciding when to resend remains software's.
-- **Inbound reaches the fabric, not yet the host.** With `tcp_rx` wired, the
-  acknowledgement number `tcp_tx` puts on the wire is live: `cfg_ack_num` is now
-  only the *initial* value software hands over from the handshake, and the hardware
-  advances it as segments arrive. A static shadow register could never track a
-  connection whose replies land at the card, which was the real defect. Software
-  can now see *that* the venue is talking — `peer_ack`, out-of-order, duplicate
-  and session-frame count are in the register map and `t2t_run` prints them — but
-  not *what* it said: the session stream itself still terminates inside `t2t_axil`
-  with no capture path, so the OUCH replies never reach the host's decoder.
-  `tcp_rx` reports where each payload sits (`o_rx_pay_off` / `o_rx_pay_len`) and
-  does not realign it; the capture path belongs in the step-8 harness.
+- **Inbound is complete in simulation and has never met a real venue.** The
+  acknowledgement number `tcp_tx` sends is live (`cfg_ack_num` is only the initial
+  value from the handshake; hardware advances it as segments arrive), the session
+  counters are in the register map, and the replies now reach the host: the
+  frames `tcp_rx` keeps are merged into the same capture area the order frames
+  use, and `scripts/dump_session.py` reassembles them by sequence number and
+  decodes the OUCH. Verified both ways — HBM-to-HBM and through the MAC model —
+  against generated replies, with the order frames byte-identical either way. What
+  has not happened is a card run: nothing has answered these orders except a
+  Python generator, and the QSFP cages are empty.
 
 ### Signal
 

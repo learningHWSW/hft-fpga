@@ -70,7 +70,19 @@ module t2t_axil #(
   output logic                o_dec_valid,
   output logic [47:0]         o_dec_ts,
   output logic                o_ord_valid,
-  output logic [47:0]         o_ord_ts
+  output logic [47:0]         o_ord_ts,
+
+  // ---- order-session inbound, core domain ----
+  // The venue's own frames, tuple-filtered by tcp_rx and nothing else. They leave
+  // the wrapper because the only thing that can do anything with them is a
+  // capture path into host memory, and that lives in the step-8 harness -- this
+  // block has no way to reach DRAM. Fire-and-forget, like the RX side it comes
+  // from: there is no tready, so whatever consumes this must be able to take a
+  // beat every cycle or buffer with a drop counter.
+  output logic [DATA_W-1:0]   rxs_tdata,
+  output logic [DATA_W/8-1:0] rxs_tkeep,
+  output logic                rxs_tvalid,
+  output logic                rxs_tlast
 );
   localparam int CFGW = 931;      // sum of all cfg_* widths (checked at elab)
   // Sum of all st_* widths: 19 words plus st_init_done's single bit, then the
@@ -188,14 +200,11 @@ module t2t_axil #(
   // nothing that doing it now would save.
   logic [31:0] st_rb_stored, st_rb_resent, st_rb_drop;
   logic [31:0] st_blk_qty;
-  // Session-inbound STREAM. Still terminated here: getting these OUCH bytes to
-  // the host needs a capture path, which lives in the step-8 harness, not in
-  // t2t_axil. Its counters are no longer terminated -- they go onto the status
-  // bus below, so software can see whether the venue is talking to us at all
-  // long before it can read what the venue said.
-  logic [DATA_W-1:0]   rxs_tdata;
-  logic [DATA_W/8-1:0] rxs_tkeep;
-  logic                rxs_tvalid, rxs_tlast;
+  // Where the payload sits inside the frame. Terminated here on purpose: the
+  // frame goes to the harness whole, and a host that has the bytes can find the
+  // payload the same way tcp_rx did, from the IHL and data-offset fields. Passing
+  // a side-band offset alongside a stream would mean keeping the two in step
+  // through a FIFO, an arbiter and a DMA, to save the host an addition.
   logic [15:0] o_rx_pay_off, o_rx_pay_len;
   assign {
     c_group_ip, c_udp_port, c_track_locate, c_band_base, c_enable, c_max_spread,
