@@ -73,7 +73,12 @@ module t2t_axil #(
   output logic [47:0]         o_ord_ts
 );
   localparam int CFGW = 931;      // sum of all cfg_* widths (checked at elab)
-  localparam int STW  = 577;      // sum of all st_* widths
+  // Sum of all st_* widths: 19 words plus st_init_done's single bit, then the
+  // seven published later. Those seven sit at the TOP of the word rather than
+  // beside their neighbours -- the bus is only transport, both ends name the
+  // same slice, and renumbering nineteen hand-written slices to keep bus order
+  // matching register order would be all risk and no benefit.
+  localparam int STW  = 801;
 
   // ================= AXI-Lite register file (axil_clk) =================
   logic [31:0] a_group_ip, a_band_base, a_max_spread, a_min_qty, a_order_qty;
@@ -124,7 +129,11 @@ module t2t_axil #(
     .st_blk_pos(st_bus_axil[223:192]), .st_blk_inflight(st_bus_axil[191:160]),
     .st_blk_txfull(st_bus_axil[159:128]), .st_position(st_bus_axil[127:96]),
     .st_seq_num(st_bus_axil[95:64]), .st_frame_cnt(st_bus_axil[63:32]),
-    .st_tx_drop(st_bus_axil[31:0])
+    .st_tx_drop(st_bus_axil[31:0]),
+    .st_bbo_early(st_bus_axil[800:769]), .st_bbo_late(st_bus_axil[768:737]),
+    .st_bbo_mismatch(st_bus_axil[736:705]),
+    .st_rx_peer_ack(st_bus_axil[704:673]), .st_rx_ooo(st_bus_axil[672:641]),
+    .st_rx_dup(st_bus_axil[640:609]), .st_rx_sess_frames(st_bus_axil[608:577])
   );
 
   // pack every config word into one bus (order is the contract with the unpack)
@@ -170,25 +179,24 @@ module t2t_axil #(
   logic        c_enable, c_sweep_en, c_igmp_en;
   logic [31:0] c_igmp_interval, c_group_ip_b;
   logic [3:0]  c_resend_age;
+  // Still terminated here, and the only counters that are: the replay buffer's
+  // three and the strategy's shares-range rejections. They belong in the map for
+  // the same reason the session and BBO counters now are -- st_blk_qty in
+  // particular is the one risk-gate rejection a host cannot currently see, which
+  // makes "every rejection counted separately" true of the RTL and not yet of
+  // the register map. The map only grows at the end, so adding them later costs
+  // nothing that doing it now would save.
   logic [31:0] st_rb_stored, st_rb_resent, st_rb_drop;
   logic [31:0] st_blk_qty;
-  // Session-inbound stream. Terminated here rather than brought out of the
-  // wrapper: getting these OUCH bytes to the host needs a capture path, which
-  // lives in the step-8 harness, not in t2t_axil. The counters below are what the
-  // register map can already report, and they are what says whether the venue is
-  // talking to us at all.
+  // Session-inbound STREAM. Still terminated here: getting these OUCH bytes to
+  // the host needs a capture path, which lives in the step-8 harness, not in
+  // t2t_axil. Its counters are no longer terminated -- they go onto the status
+  // bus below, so software can see whether the venue is talking to us at all
+  // long before it can read what the venue said.
   logic [DATA_W-1:0]   rxs_tdata;
   logic [DATA_W/8-1:0] rxs_tkeep;
   logic                rxs_tvalid, rxs_tlast;
-  logic [31:0] st_rx_peer_ack, st_rx_ooo, st_rx_dup, st_rx_sess_frames;
   logic [15:0] o_rx_pay_off, o_rx_pay_len;
-  // Fast-BBO accounting, terminated here for the same reason as the session
-  // counters above: the status bus is a fixed-width packed word (STW) mirrored by
-  // the register map, so publishing a counter is a register-map change and those
-  // three want to be made together rather than one module at a time. The
-  // simulation harnesses read these hierarchically, which is where the numbers in
-  // step4b's README come from.
-  logic [31:0] st_bbo_early, st_bbo_late, st_bbo_mismatch;
   assign {
     c_group_ip, c_udp_port, c_track_locate, c_band_base, c_enable, c_max_spread,
     c_ratio_shift, c_min_qty, c_order_qty, c_pos_limit, c_max_inflight, c_sweep_en,
@@ -226,10 +234,10 @@ module t2t_axil #(
     .rxs_tdata(rxs_tdata), .rxs_tkeep(rxs_tkeep),
     .rxs_tvalid(rxs_tvalid), .rxs_tlast(rxs_tlast),
     .o_rx_pay_off(o_rx_pay_off), .o_rx_pay_len(o_rx_pay_len),
-    .st_rx_peer_ack(st_rx_peer_ack), .st_rx_ooo(st_rx_ooo),
-    .st_rx_dup(st_rx_dup), .st_rx_sess_frames(st_rx_sess_frames),
-    .st_bbo_early(st_bbo_early), .st_bbo_late(st_bbo_late),
-    .st_bbo_mismatch(st_bbo_mismatch),
+    .st_rx_peer_ack(st_bus_core[704:673]), .st_rx_ooo(st_bus_core[672:641]),
+    .st_rx_dup(st_bus_core[640:609]), .st_rx_sess_frames(st_bus_core[608:577]),
+    .st_bbo_early(st_bus_core[800:769]), .st_bbo_late(st_bus_core[768:737]),
+    .st_bbo_mismatch(st_bus_core[736:705]),
     .cfg_sweep_en(c_sweep_en), .cfg_sweep_min_levels(c_sweep_min_levels), .cfg_sweep_gap(c_sweep_gap),
     .cfg_token_prefix(c_token_prefix), .cfg_stock(c_stock), .cfg_firm(c_firm), .cfg_tif(c_tif),
     .cfg_ouch_min_qty(c_ouch_min_qty), .cfg_display(c_display), .cfg_capacity(c_capacity),

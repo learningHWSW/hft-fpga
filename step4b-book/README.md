@@ -139,11 +139,11 @@ and is dropped; no per-delta tag is needed, and no change can be lost, because
 dropping only ever happens on equality.
 
 `mismatch_cnt` counts the ladder contradicting an early answer, which `fast_bbo`'s
-contract forbids. It comes out of `fh_core` and `t2t_top` as `st_bbo_mismatch`, and
-today it stops in `t2t_axil` alongside the `tcp_rx` session counters: the status
-bus is a fixed-width word mirrored by the register map, so publishing a counter is
-a register-map change and those want doing together. Simulation reads it directly
-(`tb_fh_core` prints it), which is where the numbers below come from.
+contract forbids. It comes out of `fh_core` and `t2t_top` as `st_bbo_mismatch` and
+is in the AXI-Lite register map at `0x154`, beside `st_bbo_early` (`0x14C`) and
+`st_bbo_late` (`0x150`). `t2t_run` prints all three and **fails the run** if
+mismatch is nonzero, so the property is enforced on hardware rather than inferred
+from a frame diff whose golden could share the same wrong book.
 
 **Measured on the real 5 M AAPL replay**, `fh_core` with the fast path in the
 datapath, BBO stream diffed against the software golden:

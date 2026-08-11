@@ -42,6 +42,8 @@ module tb_axil_regfile;
   logic [31:0] st_tx_drop;
   logic signed [31:0] st_position;
   logic        st_init_done;
+  logic [31:0] st_bbo_early, st_bbo_late, st_bbo_mismatch;
+  logic [31:0] st_rx_peer_ack, st_rx_ooo, st_rx_dup, st_rx_sess_frames;
 
   int errors = 0;
   int load_cycles = 0, ack_cycles = 0;
@@ -79,7 +81,11 @@ module tb_axil_regfile;
     .st_delta_drop(st_delta_drop), .st_sent(st_sent), .st_blk_pos(st_blk_pos),
     .st_blk_inflight(st_blk_inflight), .st_blk_txfull(st_blk_txfull),
     .st_position(st_position), .st_seq_num(st_seq_num),
-    .st_frame_cnt(st_frame_cnt), .st_tx_drop(st_tx_drop)
+    .st_frame_cnt(st_frame_cnt), .st_tx_drop(st_tx_drop),
+    .st_bbo_early(st_bbo_early), .st_bbo_late(st_bbo_late),
+    .st_bbo_mismatch(st_bbo_mismatch),
+    .st_rx_peer_ack(st_rx_peer_ack), .st_rx_ooo(st_rx_ooo),
+    .st_rx_dup(st_rx_dup), .st_rx_sess_frames(st_rx_sess_frames)
   );
 
   // count the config-commit pulses over the whole run
@@ -125,7 +131,9 @@ module tb_axil_regfile;
     {st_rx_drop,st_rx_hwm,st_frames_in,st_frames_kept,st_gap_total,
      st_ot_overflow,st_pl_oob,st_beat_drop,st_msg_drop,st_delta_drop,
      st_sent,st_blk_pos,st_blk_inflight,st_blk_txfull,st_seq_num,
-     st_frame_cnt,st_tx_drop,st_position} = '0;
+     st_frame_cnt,st_tx_drop,st_position,
+     st_bbo_early,st_bbo_late,st_bbo_mismatch,
+     st_rx_peer_ack,st_rx_ooo,st_rx_dup,st_rx_sess_frames} = '0;
     st_init_done = 0;
 
     repeat (4) @(negedge aclk);
@@ -177,6 +185,20 @@ module tb_axil_regfile;
     axi_read('h13C, rb); check_eq("st_position",    rb, 32'hFFFF_FFF9);  // -7 as u32
     axi_read('h108, rb); check_eq("st_init_done",   rb, 32'h1);
     axi_read('h148, rb); check_eq("st_tx_drop",     rb, 32'hDEAD_0012);
+
+    // 4b) the counters appended after st_tx_drop. Read at the far end of the
+    // block as well as the near end, because an off-by-one in the read mux shows
+    // up at the boundary or at the last entry and nowhere in between.
+    st_bbo_early      = 32'hBB00_0013;
+    st_bbo_mismatch   = 32'hBB00_0015;
+    st_rx_peer_ack    = 32'hBB00_0016;
+    st_rx_sess_frames = 32'hBB00_0019;
+    @(negedge aclk);
+    axi_read('h14C, rb); check_eq("st_bbo_early",      rb, 32'hBB00_0013);
+    axi_read('h150, rb); check_eq("st_bbo_late",       rb, 32'h0);
+    axi_read('h154, rb); check_eq("st_bbo_mismatch",   rb, 32'hBB00_0015);
+    axi_read('h158, rb); check_eq("st_rx_peer_ack",    rb, 32'hBB00_0016);
+    axi_read('h164, rb); check_eq("st_rx_sess_frames", rb, 32'hBB00_0019);
 
     // 5) ID sanity read
     axi_read('h1FC, rb); check_eq("ID", rb, 32'h5432_5430);

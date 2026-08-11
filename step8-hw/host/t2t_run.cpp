@@ -332,6 +332,23 @@ int run(Options o) {
               d.rd_t2t(ST_BLK_TXFULL));
   std::printf("tx      : frames=%u next_seq=%08x cdc_drop=%u\n",
               d.rd_t2t(ST_FRAME_CNT), d.rd_t2t(ST_SEQ_NUM), d.rd_t2t(ST_TX_DROP));
+  // book: how the BBO stream was answered. early+late is the whole stream, so
+  // their ratio is the realized saving from fast_bbo -- and mismatch is the one
+  // number here that is not a statistic. It counts fast_bbo claiming certainty
+  // and the ladder then disagreeing, which its contract forbids; nonzero means
+  // the fast path is wrong on this data and the run's orders are suspect.
+  const uint32_t bbo_e = d.rd_t2t(ST_BBO_EARLY);
+  const uint32_t bbo_l = d.rd_t2t(ST_BBO_LATE);
+  const uint32_t bbo_m = d.rd_t2t(ST_BBO_MISMATCH);
+  std::printf("book    : bbo early=%u late=%u (%u%% early) mismatch=%u%s\n",
+              bbo_e, bbo_l, (bbo_e + bbo_l) ? 100 * bbo_e / (bbo_e + bbo_l) : 0,
+              bbo_m, bbo_m ? "   <-- FAST PATH DISAGREED WITH THE LADDER" : "");
+  // session: whether the venue is talking back at all. peer_ack is the last
+  // acknowledgement number it sent us, so a peer_ack that never moves means the
+  // orders are leaving and nothing is answering.
+  std::printf("session : frames=%u peer_ack=%08x ooo=%u dup=%u\n",
+              d.rd_t2t(ST_RX_SESS_FRAMES), d.rd_t2t(ST_RX_PEER_ACK),
+              d.rd_t2t(ST_RX_OOO), d.rd_t2t(ST_RX_DUP));
 
   if (phase_b) {
     const uint32_t unf = d.rd(K_C_UNF);
@@ -426,6 +443,15 @@ int run(Options o) {
   }
   if (ncap < d.rd_t2t(ST_FRAME_CNT)) {
     std::cerr << "FAIL: fewer frames captured than the engine built\n"; rc = 1;
+  }
+  // Printing this one is not enough. fast_bbo answering a delta wrongly while
+  // claiming certainty is the single failure that could change which orders the
+  // card sends without changing anything a frame diff would notice on a run
+  // whose golden was generated from the same wrong book. Now that the counter is
+  // readable, a nonzero value ends the run.
+  if (d.rd_t2t(ST_BBO_MISMATCH) != 0) {
+    std::cerr << "FAIL: fast_bbo and price_ladder disagreed "
+              << d.rd_t2t(ST_BBO_MISMATCH) << " times\n";              rc = 1;
   }
   return rc;
 }

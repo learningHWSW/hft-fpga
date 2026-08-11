@@ -45,7 +45,7 @@ A_TO_REG = {
     "GROUP_IP_B": ("cfg_group_ip_b", 0),
 }
 # anchors that are not per-register config words
-ANCHORS = {"CTRL", "STAT", "ID"}
+ANCHORS = {"CTRL", "STAT", "ID", "RESEND_AGE"}
 
 fails = 0
 
@@ -92,6 +92,30 @@ def test_rtl_matches_host():
           f"status base at 0x{regmap.STATUS_BASE:X}")
     check(a.get("ID", -1) * 4 == regmap.ID_OFFSET,
           f"ID at 0x{regmap.ID_OFFSET:X}")
+    # RESEND_AGE arrived with tx_replay_buf and was never added here, so this
+    # check failed from that commit until the counters were published: A_* in the
+    # RTL, absent from the host map, and the test said so on every run.
+    check(a.get("RESEND_AGE", -1) * 4 == regmap.RESEND_AGE_OFFSET,
+          f"resend age at 0x{regmap.RESEND_AGE_OFFSET:X}")
+
+
+def test_status_order_matches_rtl():
+    """The config words were diffed against the RTL from the start; the STATUS
+    list was not, and it is the half that grows. Every counter published since
+    has been an append to two files that nothing forced to agree -- so parse the
+    read mux and diff the order, which is the whole contract for a read-only
+    register: word N of the map must be the counter the RTL returns at A_STAT+N.
+    """
+    text = open(RTL).read()
+    mux = {int(m.group(1)): m.group(2)
+           for m in re.finditer(r"A_STAT\+(\d+):\s*readmux\s*=\s*\{?[^;]*?"
+                                r"\b(st_[a-z0-9_]+)\b", text)}
+    check(len(mux) > 0, f"parsed the status read mux ({len(mux)} entries)")
+    check(len(mux) == len(regmap.STATUS),
+          f"RTL returns {len(mux)} status words, host maps {len(regmap.STATUS)}")
+    for i, name in enumerate(regmap.STATUS):
+        check(mux.get(i) == name,
+              f"A_STAT+{i} is {name} (RTL: {mux.get(i)}) @ 0x{regmap.STATUS_OFFSET[name]:X}")
 
 
 def test_reg_words_roundtrip():
@@ -130,6 +154,7 @@ def test_axil_writes_cover_config():
 
 if __name__ == "__main__":
     test_rtl_matches_host()
+    test_status_order_matches_rtl()
     test_reg_words_roundtrip()
     test_axil_writes_cover_config()
     print(f"\n{'ALL PASS' if fails == 0 else str(fails) + ' FAILED'}")

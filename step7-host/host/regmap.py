@@ -48,19 +48,33 @@ def _word_offsets():
 
 
 WORD_OFFSET, NCFG = _word_offsets()
-CTRL_OFFSET    = 4 * NCFG               # 0x9C: write bit0=load, bit1=order_ack
+CTRL_OFFSET    = 4 * NCFG               # 0xA8: write bit0=load, bit1=order_ack,
+                                        #       bit2=resend_req
+# The replay buffer's age selector sits one word ABOVE ctrl rather than inside
+# the config block, because it is an argument to a pulse and not state the
+# datapath reads continuously. It is therefore its own anchor: putting it in REGS
+# would grow NCFG and move CTRL, which is a shipped offset.
+RESEND_AGE_OFFSET = CTRL_OFFSET + 4     # 0xAC: which stored frame to re-send
 STATUS_BASE    = 0x100
 ID_OFFSET      = 0x1FC
 ID_VALUE       = 0x54325430            # "T2T0"
 CTRL_LOAD      = 0x1
 CTRL_ORDER_ACK = 0x2
+CTRL_RESEND    = 0x4
 
-# status counters, read-only, in t2t_top st_* order (offset = STATUS_BASE+4*i)
+# Status counters, read-only (offset = STATUS_BASE + 4*i), and the list is
+# APPEND-ONLY. The first nineteen are in t2t_top st_* order; anything published
+# later goes at the end, because an offset that has shipped in t2t_regs.h cannot
+# move without silently repointing a host that was not rebuilt.
+# tests/test_regmap.py diffs this order against the RTL read mux.
 STATUS = [
     "st_rx_drop", "st_rx_hwm", "st_init_done", "st_frames_in", "st_frames_kept",
     "st_gap_total", "st_ot_overflow", "st_pl_oob", "st_beat_drop", "st_msg_drop",
     "st_delta_drop", "st_sent", "st_blk_pos", "st_blk_inflight", "st_blk_txfull",
     "st_position", "st_seq_num", "st_frame_cnt", "st_tx_drop",
+    # published later: the fast/slow book split, then the order session inbound
+    "st_bbo_early", "st_bbo_late", "st_bbo_mismatch",
+    "st_rx_peer_ack", "st_rx_ooo", "st_rx_dup", "st_rx_sess_frames",
 ]
 STATUS_OFFSET = {name: STATUS_BASE + 4 * i for i, name in enumerate(STATUS)}
 

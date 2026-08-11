@@ -514,6 +514,16 @@ module tb_t2t_kernel;
     axil_read(T2T + 13'h144, ntx); $display("TB: st_frame_cnt   = %0d", ntx);
     axil_read(T2T + 13'h148, v); $display("TB: st_tx_drop     = %0d", v);
     if (v != 0) $display("FAIL: TX CDC dropped %0d beats", v);
+    // The counters published after st_tx_drop, read the same way -- through the
+    // AXI window rather than hierarchically, which is what proves the register
+    // map and not just the RTL. st_bbo_mismatch must be zero: it counts fast_bbo
+    // claiming certainty and price_ladder then disagreeing, and a nonzero value
+    // means the book the orders came from was not the book the ladder computed.
+    axil_read(T2T + 13'h14C, v);   $display("TB: st_bbo_early   = %0d", v);
+    axil_read(T2T + 13'h150, v);   $display("TB: st_bbo_late    = %0d", v);
+    axil_read(T2T + 13'h154, v);   $display("TB: st_bbo_mismatch= %0d", v);
+    if (v != 0) $display("FAIL: fast_bbo disagreed with the ladder %0d times", v);
+    axil_read(T2T + 13'h164, v);   $display("TB: st_rx_sess_frm = %0d", v);
     // st_frame_cnt counts the ORDER frames tcp_tx built; capture records
     // everything on the TX port, so the surplus is the IGMP reports (and any
     // ARP replies) the arbiter merged in. Capture may therefore exceed it, but

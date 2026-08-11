@@ -10,6 +10,8 @@
 #define T2T_CTRL           0x0A8u
 #define T2T_CTRL_LOAD      0x1u
 #define T2T_CTRL_ORDER_ACK 0x2u
+#define T2T_CTRL_RESEND    0x4u
+#define T2T_RESEND_AGE     0x0ACu
 #define T2T_ID             0x1FCu
 #define T2T_ID_VALUE       0x54325430u
 
@@ -77,6 +79,13 @@
 #define ST_SEQ_NUM           0x140u
 #define ST_FRAME_CNT         0x144u
 #define ST_TX_DROP           0x148u
+#define ST_BBO_EARLY         0x14Cu
+#define ST_BBO_LATE          0x150u
+#define ST_BBO_MISMATCH      0x154u
+#define ST_RX_PEER_ACK       0x158u
+#define ST_RX_OOO            0x15Cu
+#define ST_RX_DUP            0x160u
+#define ST_RX_SESS_FRAMES    0x164u
 
 // ---- harness registers, from step8-hw/rtl/t2t_kernel.sv ----
 #define K_ID                 0x040u

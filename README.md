@@ -307,10 +307,14 @@ Honest scope, all of it stated in the per-step READMEs.
   same change-detection the ladder already does.
 - **The fast path has not run on the card.** Its evidence is simulation: the BBO
   sequence over the real 5 M replay, and the order frames HBM-to-HBM and through
-  the MAC model. `st_bbo_mismatch` counts the one thing that could break quietly —
-  `fast_bbo` certain and wrong — but it stops at `t2t_axil` with the `tcp_rx`
-  counters and is not in the register map yet, so on hardware it is not readable
-  at all. Publishing those counters is one register-map change for both.
+  the MAC model. What a card run would now say for itself is readable —
+  `st_bbo_mismatch` counts the one thing that could break quietly (`fast_bbo`
+  certain and wrong) and is in the register map, printed by `t2t_run` and a
+  failing condition for the run — but nobody has taken that run.
+- **Four counters are still off the map.** The replay buffer's three and
+  `st_blk_qty`, the shares-range rejection, terminate in `t2t_axil`. `st_blk_qty`
+  is the one risk-gate rejection a host cannot see, so "every rejection counted
+  separately" is true of the RTL and not yet of the register map.
 - **Retransmission is available, not automatic.** `tx_replay_buf` holds the last
   16 assembled frames and the host can ask for one back (`A_CTRL` bit 2). Nothing
   detects a loss and re-sends on its own — the hot path stays fire-and-forget by
@@ -319,13 +323,13 @@ Honest scope, all of it stated in the per-step READMEs.
   acknowledgement number `tcp_tx` puts on the wire is live: `cfg_ack_num` is now
   only the *initial* value software hands over from the handshake, and the hardware
   advances it as segments arrive. A static shadow register could never track a
-  connection whose replies land at the card, which was the real defect. What is
-  still missing sits above that: the session stream and its counters
-  (`peer_ack`, out-of-order, duplicate, session-frame count) terminate inside
-  `t2t_axil` with no register readback and no capture path, so the OUCH replies
-  never reach the host's decoder. `tcp_rx` reports where each payload sits
-  (`o_rx_pay_off` / `o_rx_pay_len`) and does not realign it; the capture path
-  belongs in the step-8 harness.
+  connection whose replies land at the card, which was the real defect. Software
+  can now see *that* the venue is talking — `peer_ack`, out-of-order, duplicate
+  and session-frame count are in the register map and `t2t_run` prints them — but
+  not *what* it said: the session stream itself still terminates inside `t2t_axil`
+  with no capture path, so the OUCH replies never reach the host's decoder.
+  `tcp_rx` reports where each payload sits (`o_rx_pay_off` / `o_rx_pay_len`) and
+  does not realign it; the capture path belongs in the step-8 harness.
 
 ### Signal
 

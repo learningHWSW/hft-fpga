@@ -15,7 +15,9 @@
 //   0x00..0xA4  configuration, one word each, in regmap.py REG order
 //               (48/64-bit fields split into _lo then _hi words)
 //   0xA8        CTRL  -- write bit0 pulses cfg_load, bit1 pulses cfg_order_ack
-//   0x100..     status counters (read-only), in t2t_top st_* order
+//   0x100..     status counters (read-only), append-only: the first 19 are in
+//               t2t_top st_* order, later ones are appended in the order they
+//               were published, because an offset once shipped cannot move
 //   0x1FC       ID = "T2T0" (read-only), a bring-up sanity read
 //
 // Config words read back the value written, so a host -- or the testbench --
@@ -117,7 +119,17 @@ module axil_regfile #(
   input  logic signed [31:0]  st_position,
   input  logic [31:0]         st_seq_num,
   input  logic [31:0]         st_frame_cnt,
-  input  logic [31:0]         st_tx_drop
+  input  logic [31:0]         st_tx_drop,
+  // Appended after st_tx_drop, not slotted in beside the counters they belong
+  // with: a status offset is a published contract (regmap.py, t2t_regs.h, any
+  // script a run left behind), so the list only ever grows at the end.
+  input  logic [31:0]         st_bbo_early,      // BBO records answered by fast_bbo
+  input  logic [31:0]         st_bbo_late,       // ... and by price_ladder
+  input  logic [31:0]         st_bbo_mismatch,   // the two disagreeing: must be 0
+  input  logic [31:0]         st_rx_peer_ack,    // last ack the venue sent us
+  input  logic [31:0]         st_rx_ooo,
+  input  logic [31:0]         st_rx_dup,
+  input  logic [31:0]         st_rx_sess_frames
 );
   // ---- config word indices (match regmap.py REG order) ----
   localparam int A_GROUP_IP=0,  A_UDP_PORT=1,  A_TRACK_LOCATE=2, A_BAND_BASE=3,
@@ -211,6 +223,13 @@ module axil_regfile #(
       A_STAT+16: readmux = st_seq_num;
       A_STAT+17: readmux = st_frame_cnt;
       A_STAT+18: readmux = st_tx_drop;
+      A_STAT+19: readmux = st_bbo_early;
+      A_STAT+20: readmux = st_bbo_late;
+      A_STAT+21: readmux = st_bbo_mismatch;
+      A_STAT+22: readmux = st_rx_peer_ack;
+      A_STAT+23: readmux = st_rx_ooo;
+      A_STAT+24: readmux = st_rx_dup;
+      A_STAT+25: readmux = st_rx_sess_frames;
       default:   readmux = 32'd0;
     endcase
   endfunction

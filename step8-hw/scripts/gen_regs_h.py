@@ -38,6 +38,10 @@ def main():
     out.write(f"#define T2T_CTRL           0x{regmap.CTRL_OFFSET:03X}u\n")
     out.write(f"#define T2T_CTRL_LOAD      0x{regmap.CTRL_LOAD:X}u\n")
     out.write(f"#define T2T_CTRL_ORDER_ACK 0x{regmap.CTRL_ORDER_ACK:X}u\n")
+    # The resend pulse and its argument. Emitted because a header that stops
+    # short of a feature the RTL has is how a feature quietly stays unused.
+    out.write(f"#define T2T_CTRL_RESEND    0x{regmap.CTRL_RESEND:X}u\n")
+    out.write(f"#define T2T_RESEND_AGE     0x{regmap.RESEND_AGE_OFFSET:03X}u\n")
     out.write(f"#define T2T_ID             0x{regmap.ID_OFFSET:03X}u\n")
     out.write(f"#define T2T_ID_VALUE       0x{regmap.ID_VALUE:08X}u\n\n")
 

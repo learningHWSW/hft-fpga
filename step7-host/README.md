@@ -15,7 +15,7 @@ path, so Python is the right tool and the tests run anywhere.
 |---|---|
 | `host/soupbin.py` | SoupBinTCP 3.00 framing — login, sequenced/unsequenced data, heartbeats |
 | `host/ouch.py` | OUCH 4.2 encode/decode — the **exact** Enter Order layout the FPGA emits |
-| `host/regmap.py` | every `cfg_*` register of `t2t_top`, and how the host builds its value |
+| `host/regmap.py` | every `cfg_*` register of `t2t_top` and how the host builds its value, plus the read-only status offsets — the map `axil_regfile.sv` and `t2t_regs.h` are both diffed against |
 | `host/session.py` | connect, log in, configure the device, process acks/fills, drive `cfg_order_ack` |
 | `host/mock_exchange.py` | a stub NASDAQ venue to test against over loopback TCP |
 
@@ -50,7 +50,15 @@ PASS: refuses to send orders on the card's session
 PASS: same token accepted on both accounts (2)
 ```
 
-The last two are the ones that matter most. The mock exchange **parses** OUCH;
+`test_regmap` runs first and is the boring half that matters: it parses the RTL's
+`A_*` localparams and its status read mux and diffs both against this map. The
+config half caught nothing for months and then caught `A_RESEND_AGE`, a register
+`tx_replay_buf` added to the RTL and to neither host file — the test had been
+saying so on every run. The status half was added when the fast-BBO and session
+counters were published, because a read-only offset that drifts is the same silent
+mismatch as a config one, and until then nothing compared them at all.
+
+The last two session checks are the ones that matter most. The mock exchange **parses** OUCH;
 the host and FPGA **encode** it. So feeding the exchange the bytes the RTL
 actually emitted (`step6-strategy/ouch_rtl.log`, captured by `make
 fpga-fixture`) and having it decode all 67 orders proves the hardware's OUCH
