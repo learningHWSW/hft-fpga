@@ -252,8 +252,8 @@ cd step4b-book && make test-verilator  # Verilator (no Vivado)
 | 3a / 3b | `make test`, `make test-real-xsim` | MoldUDP64 strip and 512-bit realignment |
 | 4a | `make test`, `make test-real-xsim`, `make test-multi` | order table == golden, zero overflow, and two symbols share one table |
 | 4b | `make test`, `make test-real-xsim`, `make test-merge-xsim` | BBO sequence == golden, and the fast/slow rejoin preserves it |
-| 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx` | the whole chain, two clocks, wire frames in and session frames back |
-| 6 | `make test-xsim`, `make test-replay`, `make test-rto` | orders and OUCH/TCP bytes == golden, and when a resend is decided |
+| 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx`, `make test-msym` | the whole chain, two clocks, wire frames in and session frames back, and two tracked books each reproducing its own single-symbol golden |
+| 6 | `make test-xsim`, `make test-replay`, `make test-rto`, `make test-msym` | orders and OUCH/TCP bytes == golden, when a resend is decided, and that no per-book strategy state is shared between symbols |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
 | 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto`, `make test-real` | the Vitis kernel, HBM to HBM, through the MAC, the venue's replies back to the host, the card re-sending an unacknowledged order, and the real feed as far as the memory model holds |
 
@@ -311,6 +311,16 @@ Honest scope, all of it stated in the per-step READMEs.
   on four lanes, recovered, aligned and FCS-checked. That is the same
   `D + T_tx + T_rx` a real wire gives, but a cabled two-port measurement against a
   live feed is still the honest end state, and the QSFP cages here are empty.
+- **Post-route frequency is only sweep-backed at one design point.** The fMAX
+  figures here are the best of four implementation directive sets, because one
+  build against one build cannot measure place & route — that lesson cost a
+  wrong claim in this README, which asserted a 9.5 MHz penalty for `fast_bbo`
+  that a sweep does not reproduce and attributed it to a specific carry chain
+  that is not critical in any of the eight builds (`FINDINGS` §7.7). What is
+  swept is `NSYM = 1`, both `USE_FAST_BBO` settings. `NSYM = 2` has been
+  synthesised but not placed and routed, so its area cost is measured and its
+  timing cost is not — and by the standard this project now holds itself to,
+  that means no timing claim is made about it at all.
 - **The MAC is the larger half of the latency, and untouched.** ~207 ns in the
   fabric against **~300 ns** in MAC, SerDes and framing. It is close to
   irreducible: ~285 ns sits inside `cmac_usplus` and the GT, already generated with
@@ -319,14 +329,19 @@ Honest scope, all of it stated in the per-step READMEs.
 
 ### Integration
 
-- **Nothing proven is left unwired.** `tx_replay_buf`, `tcp_rx` and now `fast_bbo`
+- **Nothing proven is left unwired.** `tx_replay_buf`, `tcp_rx` and `fast_bbo`
   were the three modules with a self-checking testbench and no instantiation; all
-  three are in `t2t_top`, each verified byte-identical against every existing
-  golden. The rejoin `fast_bbo` needed is `bbo_merge`, and what makes it safe is
-  documented where it lives ([step4b-book](step4b-book/)): drive the fast path from
-  the ladder's accept so a record cannot overtake a deferred one, and merge on
-  value against a shared baseline so the duplicate suppression falls out of the
-  same change-detection the ladder already does.
+  three are in `t2t_top`, along with `tx_rto` and `bbo_arb` since, each verified
+  byte-identical against every existing golden. The rejoin `fast_bbo` needed is
+  `bbo_merge`, and what makes it safe is documented where it lives
+  ([step4b-book](step4b-book/)): drive the fast path from the ladder's accept so
+  a record cannot overtake a deferred one, and merge on value against a shared
+  baseline so the duplicate suppression falls out of the same change-detection
+  the ladder already does. Setting aside the design tops (`t2t_kernel`,
+  `t2t_kernel_b`), the only module with a testbench and no instantiation is
+  `mold_stripper`, and that is on purpose — it is step 3a's 64-bit reference,
+  superseded by `mold_splitter` at CMAC width and kept because the two are
+  diffed against the same golden.
 - **The fast path has not run on the card.** Its evidence is simulation: the BBO
   sequence over the real 5 M replay, and the order frames HBM-to-HBM and through
   the MAC model. What a card run would now say for itself is readable —
@@ -342,6 +357,34 @@ Honest scope, all of it stated in the per-step READMEs.
   fire-and-forget behaviour has it. What is still not automatic is *policy*: the
   timeout and retry count are numbers a host writes, and no measurement here says
   what they should be on a real venue.
+- **Multi-symbol is wired end to end and has never been built for the card.**
+  `NSYM` runs the whole chain, not just the table: one order table tags each
+  delta with its book, a demux feeds `NSYM` price ladders, `bbo_arb` merges
+  their streams back with a symbol tag, and the strategy's edge detector,
+  latched BBO and position are per name while the in-flight limit stays shared
+  — it counts orders on one TCP session, and the resource it limits is the wire,
+  not the book. The OUCH Stock field is per symbol; nothing else in an Enter
+  Order is. Verified two ways at `NSYM = 2`, both against the *single*-symbol
+  goldens rather than one written beside the new RTL: two genuinely different
+  books each reproduce their own locate's golden, and the same BBO log driven
+  into both symbols reproduces the order golden twice over — the worst case for
+  shared state, and confirmed sensitive by temporarily sharing the edge detector
+  and watching symbol 1 fall to zero orders. What has not happened is a
+  bitstream. `NSYM = 1` is what every card measurement in this README describes,
+  and both halves of the cost are measured (`FINDINGS` §4.4): a second symbol is
+  **+32,687 LUTs (+58 %) and +2 DSP** with no BRAM change, and the table it
+  feeds has to grow from 64 URAM to 128, because 2¹³ × 16 holds exactly one
+  name. Four symbols would be ~12 % of the device's LUTs. The register map holds
+  five: symbols 1–4 have a config block at `0x0C0`–`0x0FF` and positions at
+  `0x180`–`0x18C`, while symbol 0 keeps the registers it always had, because
+  moving it would repoint offsets that shipped. A real multi-symbol build is a
+  sizing decision now, not a rebuild.
+- **The multi-symbol tests are xsim-only.** Every other stage has both an xsim
+  and a Verilator path, deliberately — the two disagree about races, and one
+  such disagreement (a testbench driving stimulus on the sampling edge) was
+  caught precisely because both were run. `test-msym` in steps 5 and 6 has no
+  Verilator twin yet, so that particular cross-check is not protecting the
+  newest RTL.
 - **Inbound is complete in simulation and has never met a real venue.** The
   acknowledgement number `tcp_tx` sends is live (`cfg_ack_num` is only the initial
   value from the handshake; hardware advances it as segments arrive), the session
@@ -369,31 +412,6 @@ Honest scope, all of it stated in the per-step READMEs.
   `max_spread = 2000` selected nothing where AAPL's real regular-hours spread is
   3 cents. Test parameters stay as they are on purpose — the goldens run on that
   pre-market slice, where a tight threshold would never exercise the risk gates.
-- **Multi-symbol is wired end to end and has never been built for the card.**
-  `NSYM` now runs the whole chain, not just the table: one order table tags each
-  delta with its book, a demux feeds `NSYM` price ladders, `bbo_arb` merges their
-  streams back with a symbol tag, and the strategy's edge detector, latched BBO
-  and position are per name while the in-flight limit stays shared — it counts
-  orders on one TCP session, and the resource it limits is the wire, not the
-  book. The OUCH Stock field is per symbol; nothing else in an Enter Order is.
-  Verified two ways at `NSYM = 2`, in both cases against the *single*-symbol
-  goldens rather than a new one written beside the new RTL: two genuinely
-  different books each reproduce their own locate's golden, and the same BBO log
-  driven into both symbols reproduces the order golden twice over — the worst
-  case for shared state, and confirmed sensitive by temporarily sharing the edge
-  detector and watching symbol 1 fall to zero orders. What has not happened is a
-  bitstream: `NSYM = 1` is what every card measurement in this README describes,
-  and both halves of the cost are now measured (`FINDINGS` §4.4): a second symbol
-  is **+32,687 LUTs (+58 %) and +2 DSP** with no BRAM change and no synthesis
-  timing cost, and the table it feeds has to grow from 64 URAM to 128, because
-  2^13 × 16 holds exactly one name. Four symbols would be ~12 % of the device's
-  LUTs. A real multi-symbol build is a sizing decision now, not a rebuild.
-- **The register map holds five symbols, and the order table would need
-  resizing before that.** Symbols 1–4 have a per-symbol config block at
-  `0x0C0`–`0x0FF` and per-symbol positions at `0x180`–`0x18C`; symbol 0 keeps the
-  registers it always had, because moving it would repoint offsets that shipped.
-  Beyond five the map needs extending. That is a smaller job than the table it
-  would sit in front of.
 
 ## License
 
