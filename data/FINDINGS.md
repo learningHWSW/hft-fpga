@@ -276,6 +276,81 @@ the gates are exercised; venue parameters are chosen from the data above. Those
 are different jobs and conflating them is what produced this finding in the first
 place.
 
+### 5.3 Does the imbalance signal have an edge? Predictive, and not tradeable
+
+§5.2 fixed the calibration and said what was still missing: the forward-return
+treatment §5 gave the sweep. Same method, full day, regular hours only
+([imbalance_edge.py](../step6-strategy/scripts/imbalance_edge.py),
+`make -C step6-strategy imbalance-edge`).
+
+The rule is taken from `strategy.sv` including the **rising-edge detector**,
+which is not a detail: the condition holds across long runs of BBO records and
+the hardware sends one order per run, so measuring the condition rather than the
+edge would count one opportunity thousands of times.
+
+A continuation rate means nothing on its own, so each cohort is measured against
+the population it is drawn from:
+
+| cohort | what it is | events (RTH) |
+|---|---|---|
+| `fired` | rising edges at the venue point (`max_spread=100`, `shift=2`) | 2,411 |
+| `leaning` | the size ratio alone — no spread filter, no edge detector | 110,396 |
+| `all` | every two-sided record, direction = the bigger side | 374,800 |
+
+Signed mid move, +1 ms, AAPL 2019-12-30, 1e-4 units:
+
+| cohort | n | up | flat | down | of moves, continued | mean | net of half-spread |
+|---|---|---|---|---|---|---|---|
+| `fired` | 1,600 | 40.1 % | 46.6 % | 13.4 % | **75.0 %** | **+22.7** | **−27.3** |
+| `leaning` | 68,257 | 42.2 % | 37.0 % | 20.9 % | 66.9 % | +21.8 | −118.6 |
+| `all` | 233,622 | 38.6 % | 37.9 % | 23.4 % | 62.3 % | +15.2 | −138.6 |
+
+**The signal is real.** Three of four resolved moves continue in the direction
+the order was pointed, against 62 % for the population — 642 up against 214 down,
+about 7.7 standard deviations from the population rate, so not a small-sample
+artefact. It holds at longer horizons too: 70.4 % at +10 ms and 69.6 % at +100 ms,
+against 60.8 % and 59.9 %.
+
+**And it does not pay.** The conditional mean move is **+22.7**, i.e. 0.23 cents.
+Entry costs half the spread, and `max_spread = 100` admits only one-tick markets,
+so **50 is the floor** — the predicted move is under half the cost of acting on
+it before any exit, fee or queue effect. Net of that half-spread the mean is
+**−27.3** and only 23 % of events clear it. No horizon changes this: −31.2 at
++10 ms, −28.6 at +100 ms.
+
+**Selectivity makes it worse, which is the opposite of the sweep.** §5 found the
+momentum signal strengthened monotonically with size (58.5 % → 75.0 % → 76.9 %).
+Imbalance decays:
+
+| `ratio_shift` | 1 (2:1) | 2 (4:1) | 3 (8:1) | 4 (16:1) | 5 (32:1) |
+|---|---|---|---|---|---|
+| fired (RTH) | 8,772 | 2,411 | 507 | 242 | 125 |
+| of moves, continued | 73.3 % | 75.0 % | 67.6 % | 62.8 % | 63.9 % |
+| mean move | +24.4 | +22.7 | +8.5 | **+0.3** | +5.7 |
+
+At 16:1 the signal is gone. An extreme queue imbalance is not a stronger version
+of a mild one — a mild lean predicts the next tick, an extreme one at a one-tick
+spread is a book about to be replenished or a queue nobody will cross. Whatever
+the mechanism, the data says do not look for the edge by tightening the ratio.
+
+**What the spread filter is actually for.** `leaning` predicts almost as well as
+`fired` (+21.8 against +22.7): the direction lives in the size ratio, and
+tightness adds nothing to prediction. What it does is cut the cost — net −118.6
+to −27.3 — because it refuses to cross a wide market. It earns its place
+economically, not predictively.
+
+**Conclusion.** The imbalance signal has measurable predictive content and no
+tradeable edge as a spread-crossing taker on this symbol-day. That is a real
+answer to the question §5.2 left open, and it does not generalise past one
+symbol and one day. Making it pay needs a bigger move (the sweep signal, which
+has one) or an entry that does not cross — and this design is a taker by
+construction, so the second is a different machine, not a parameter.
+
+**The deployed parameters do not change.** `shift=1` and `shift=2` are a wash for
+prediction (73.3 % against 75.0 %, means within 2), so the choice between them
+still rests on order rate as §5.2 said, and the test configuration stays on the
+pre-market slice for the reason given there.
+
 ## 6. Is II=1 needed — measurement answers (order table throughput vs latency)
 
 The order table is a correctness-first FSM at 6 cycles per message (11 for U),
@@ -756,4 +831,9 @@ cd step1-sw-parser && make itch_hist && ./itch_hist ../data/12302019.NASDAQ_ITCH
 # Sweep signal (§5): needs a large slice — sweeps are rare
 python3 step1-sw-parser/itch_slice.py data/12302019.NASDAQ_ITCH50.gz aapl_big.itch 40000000 AAPL
 python3 step6-strategy/scripts/dump_sweep.py aapl_big.itch 13 3 1000000 >/dev/null   # summary on stderr
+
+# Imbalance edge (§5.3): the FULL day, regular hours only -- the point of §5.2 is
+# that a slice is pre-market. ~40 s for the book, ~2 min for the statistics.
+make -C step6-strategy imbalance-edge
+make -C step6-strategy imbalance-edge IMARGS="--ratio-shift 4"   # the decay
 ```

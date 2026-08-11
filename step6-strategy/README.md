@@ -110,11 +110,16 @@ all. Sweeping it against the 422,301 RTH records:
 operating point taken from this data is `max_spread=100` (one tick, the tightest
 11.9 % of quotes) with `ratio_shift=2`, giving 1,734 orders across the session.
 
-Two things this does and does not settle. It fixes the **calibration** — the
-threshold now describes a genuinely tight market. It does **not** establish an
-edge: that needs the forward-return treatment §5 gave the sweep signal, and until
-that exists the imbalance signal still tests the mechanism only. The sweep is the
-signal with measured forward returns behind it.
+That fixed the **calibration**. The edge was measured separately, and the answer
+is that there is predictive content and no tradeable edge
+(`make imbalance-edge`, `data/FINDINGS.md` §5.3): over the full day's regular
+hours, 75 % of resolved +1 ms moves continue in the direction the order was
+pointed against 62 % for the population, which is real and about 7.7σ — but the
+move averages **+22.7** in 1e-4 units and crossing a one-tick spread costs **50**,
+so acting on it loses 27 before any exit or fee. Tightening the ratio makes it
+worse rather than stronger (+22.7 at 4:1, +0.3 at 16:1), the opposite of the
+sweep, so there is no knob here that turns prediction into profit. The sweep
+remains the signal whose forward return is worth what it costs to take.
 
 **The test parameters below are deliberately unchanged.** Every golden here is
 generated from the pre-market slice, where a 100-unit threshold fires almost

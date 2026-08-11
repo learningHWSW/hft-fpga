@@ -120,7 +120,9 @@ trade.
   mixer at lower cost (`FINDINGS §4`).
 - **Two signals, one risk gate.** Order-book imbalance, and sweep / momentum
   ignition. The sweep path taps the order-table delta and skips the ladder
-  entirely — 19 core cycles against imbalance's 28.
+  entirely — 19 core cycles against imbalance's 28. Only one of the two has a
+  forward return that beats the cost of acting on it, and the measurements say
+  which (`FINDINGS` §5, §5.3).
 - **Most book updates skip the ladder scan too.** `fast_bbo` answers a delta from
   two registers when it can prove the answer (91 % of real deltas) and says "ask
   the ladder" when it cannot; `bbo_merge` rejoins the two so the record stream is
@@ -340,17 +342,20 @@ Honest scope, all of it stated in the per-step READMEs.
 
 ### Signal
 
-- **The imbalance signal has no measured edge, though its calibration is now
-  fixed.** Re-deriving the spread threshold from the full trading day found the
-  5 M-message slice was *entirely pre-market*: its 17-cent median is the pre-market
-  distribution, while real AAPL during regular hours is **3 cents** across 422,301
-  quotes. The deployed `max_spread = 2000` therefore selected nothing — every RTH
-  quote sits inside it — and a venue operating point derived from the data is
-  `max_spread = 100` with `ratio_shift = 2` (`data/FINDINGS.md` §5.2). That fixes
-  the *calibration*; it does not establish an edge, which needs the forward-return
-  treatment the sweep signal already has. Test parameters stay as they are on
-  purpose, since the goldens run on the pre-market slice where a tight threshold
-  would never exercise the risk gates.
+- **The imbalance signal predicts, and does not pay.** It has now had the
+  forward-return treatment the sweep signal got, over the full day's regular
+  hours (`data/FINDINGS.md` §5.3). Three of four resolved 1 ms moves continue in
+  the direction the order was pointed — 75 % against 62 % for the population it is
+  drawn from, ~7.7σ, and it holds at 10 ms and 100 ms. But the move is **+22.7**
+  (0.23 cents) and entry costs half the spread, which at a one-tick threshold is
+  **50** — so net of crossing the mean is **−27.3** and 23 % of events clear it.
+  Tightening the ratio destroys it rather than concentrating it (mean +22.7 at
+  4:1, **+0.3** at 16:1), which is the opposite of what the sweep does. The
+  mechanism is real; the economics are not, for a taker. Calibration was fixed
+  earlier (§5.2): the old 5 M slice was *entirely pre-market*, so the deployed
+  `max_spread = 2000` selected nothing where AAPL's real regular-hours spread is
+  3 cents. Test parameters stay as they are on purpose — the goldens run on that
+  pre-market slice, where a tight threshold would never exercise the risk gates.
 - **Only one tracked symbol.** `track_locate` is a single register, not a bitmap:
   one symbol is what fits URAM at the measured geometry. Multi-symbol needs the
   HBM path, and the filter widens with it.

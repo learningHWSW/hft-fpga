@@ -246,6 +246,10 @@ Ordered by value, with the measurement that justifies each:
    not code — it is a venue to answer the orders.
 5. **A cabled two-port measurement** against a live feed, replacing near-end
    loopback. Needs optics and a feed source.
-6. **Re-derive the strategy parameters from a full trading day.** The current
-   ones are tuned on a thin reconstructed book and test the mechanism, not an
-   edge.
+6. ~~**Re-derive the strategy parameters from a full trading day.**~~ — **done,
+   and it answered more than it was asked.** The calibration was wrong because
+   the slice was pre-market (FINDINGS §5.2), and the forward-return study that
+   followed (§5.3) settled the open question: the imbalance signal predicts
+   direction — 75 % continuation against a 62 % population — and still loses to
+   the half-spread it must cross, at every ratio and horizon measured. The
+   mechanism is real; the economics are not, for a taker.

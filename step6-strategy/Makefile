@@ -15,7 +15,7 @@ VSRC = rtl/strategy.sv rtl/ouch_builder.sv rtl/tcp_tx.sv rtl/tx_replay_buf.sv tb
 VFLAGS = --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
          -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0
 
-.PHONY: test test-combined test-xsim check-frames test-sweep test-replay test-rto clean
+.PHONY: test test-combined test-xsim check-frames test-sweep test-replay test-rto imbalance-edge clean
 
 # bbo_in.log is the shared stimulus: the golden reads it, and so does the RTL
 bbo_in.log:
@@ -77,8 +77,30 @@ test-sweep:
 	diff sweep_gold.log sweep_rtl.log && echo "PASS: sweeps == golden ($(SWITCH) loc=$(SWLOC) min=$(SWMIN))"
 	@cat sweep_sum.txt
 
+# ---------- does the imbalance signal predict anything? ----------
+# FINDINGS 5.2 fixed the imbalance parameters and said the calibration is not an
+# edge; this is the forward-return study that answers the other half. It needs
+# the FULL day, not a slice -- the whole finding in 5.2 was that the slice
+# everything else uses is pre-market -- so it reads the capture directly through
+# the reference parser rather than through a .itch extract.
+#
+# ITCH_BBO_RAW=1 is the parser's integer BBO mode: ns timestamps and 1e-4 prices,
+# because a study over 424k records cannot afford to parse a formatted clock.
+STEP1 = ../step1-sw-parser
+RCAP ?= ../data/12302019.NASDAQ_ITCH50.gz
+IMSYM ?= AAPL
+
+aapl_bbo.txt: $(RCAP)
+	$(MAKE) -C $(STEP1) itch_parser
+	ITCH_BBO_RAW=1 $(STEP1)/itch_parser $(RCAP) $(IMSYM) > $@
+
+imbalance-edge: aapl_bbo.txt
+	python3 scripts/imbalance_edge.py $< $(IMARGS)
+
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb
+	# not aapl_bbo.txt: 40 s of the full capture to rebuild, and nothing else
+	# in this directory depends on being able to delete it quickly
 
 # Self-checking, no golden needed: the replay buffer's contract is that a resent
 # frame is byte-identical to the original and that a resend never delays a live

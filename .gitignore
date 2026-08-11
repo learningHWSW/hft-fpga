@@ -45,6 +45,8 @@ step6-strategy/bbo_in.log
 step6-strategy/orders_*.log
 step6-strategy/ouch_*.log
 step6-strategy/frames_*.log
+# the full-day BBO extract behind FINDINGS 5.3: 16 MB, and one command to rebuild
+step6-strategy/aapl_bbo.txt
 step5-board/t2t_*.log
 
 # generated wire-format replays (derived from licensed NASDAQ ITCH data --

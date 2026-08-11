@@ -8,6 +8,7 @@
  * Usage:
  *   ./itch_parser <file|-> [SYMBOL] [max_messages]
  *   .gz files are decompressed through "gzip -dc" automatically.
+ *   ITCH_BBO_RAW=1 prints BBO records as integers for analysis (see below).
  *
  * Book model:
  *   - orders keyed by 64-bit order reference (hash table)
@@ -153,6 +154,22 @@ static void book_reduce(uint8_t side, uint32_t price, uint32_t qty) {
 /* ---------- output ---------- */
 static uint64_t bbo_updates, trade_count;
 
+/*
+ * Two output formats, because this file has two readers.
+ *
+ * The default is for a person: a clock timestamp and dotted prices, which is
+ * what makes it useful as the reference model it was written to be.
+ *
+ * ITCH_BBO_RAW=1 switches BBO lines to "ts_ns bid_px bid_qty ask_px ask_qty",
+ * integers throughout, and suppresses the trade lines. That exists because the
+ * forward-return studies need the whole day at nanosecond resolution: a
+ * measurement over 424,657 records cannot afford to parse a formatted clock and
+ * re-multiply a decimal price back into 1e-4 units, and doing so would put a
+ * rounding step between the book model and the statistics drawn from it.
+ * Prices stay in the wire's own 1e-4 units for the same reason.
+ */
+static int bbo_raw;
+
 static void fmt_ts(uint64_t ns, char *out) {
     uint64_t s = ns / 1000000000ULL, rem = ns % 1000000000ULL;
     sprintf(out, "%02" PRIu64 ":%02" PRIu64 ":%02" PRIu64 ".%09" PRIu64,
@@ -174,6 +191,11 @@ static void print_bbo(uint64_t ts) {
     lbp = bp; lbq = bq; lap = ap; laq = aq;
     bbo_updates++;
 
+    if (bbo_raw) {
+        printf("%" PRIu64 " %u %" PRIu64 " %u %" PRIu64 "\n", ts, bp, bq, ap, aq);
+        return;
+    }
+
     char t[32], b[16], a[16];
     fmt_ts(ts, t);
     if (nbids) fmt_px(bp, b); else strcpy(b, "-");
@@ -182,6 +204,7 @@ static void print_bbo(uint64_t ts) {
 }
 
 static void print_trade(uint64_t ts, uint8_t side, uint32_t shares, uint32_t px, const char *tag) {
+    if (bbo_raw) { trade_count++; return; }
     char t[32], p[16];
     fmt_ts(ts, t);
     fmt_px(px, p);
@@ -205,6 +228,7 @@ int main(int argc, char **argv) {
         memcpy(target_stock, argv[2], n);
     }
     uint64_t max_msgs = (argc >= 4) ? strtoull(argv[3], NULL, 10) : 0;
+    { const char *e = getenv("ITCH_BBO_RAW"); bbo_raw = (e && *e == '1'); }
 
     FILE *f;
     int piped = 0;
@@ -251,14 +275,14 @@ int main(int argc, char **argv) {
         case 'S': {
             char t[32];
             fmt_ts(ts, t);
-            printf("%s SYSTEM EVENT '%c'\n", t, buf[SYS_OFF_EVENT]);
+            if (!bbo_raw) printf("%s SYSTEM EVENT '%c'\n", t, buf[SYS_OFF_EVENT]);
             break;
         }
         case 'R':
             if (memcmp(buf + DIR_OFF_STOCK, target_stock, 8) == 0) {
                 target_locate = locate;
                 have_locate = 1;
-                printf("-- directory: %.8s locate=%u\n", target_stock, locate);
+                if (!bbo_raw) printf("-- directory: %.8s locate=%u\n", target_stock, locate);
             }
             break;
         case 'A':
@@ -267,7 +291,7 @@ int main(int argc, char **argv) {
             if (!have_locate && memcmp(buf + ADD_OFF_STOCK, target_stock, 8) == 0) {
                 target_locate = locate;
                 have_locate = 1;
-                printf("-- learned locate=%u from add order\n", locate);
+                if (!bbo_raw) printf("-- learned locate=%u from add order\n", locate);
             }
             if (!(have_locate && locate == target_locate)) break;
             uint64_t ref = be64(buf + ADD_OFF_ORDER_REF);
