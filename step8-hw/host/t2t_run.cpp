@@ -57,6 +57,13 @@ struct Options {
   double      clk_mhz = 300.0;            // ap_clk, for the cycles -> ns conversion
   bool        clk_mhz_set = false;        // ...unless the bitstream implies another
   double      core_mhz = 200.0;           // ap_clk_2, for the loaded probe
+  // Automatic retransmission, off unless asked for -- the same default the RTL
+  // ships with. 0 leaves the detector disabled; any other value is the idle
+  // core-cycle timeout. Without this the feature is reachable only from the
+  // simulation, and st_rto_* / st_rb_resent could never be anything but zero on
+  // the card, which would make publishing them a decoration.
+  unsigned    rto     = 0;                // cfg_rto_cycles, 0 = disabled
+  unsigned    rto_retries = 3;            // attempts per unacknowledged frame
 };
 
 void usage() {
@@ -73,7 +80,10 @@ void usage() {
     "  --sweep        enable the sweep signal as well as imbalance\n"
     "  --quiet <n>    idle RX cycles a latency sample requires (default 256);\n"
     "                 --gap must be at least this or samples are excluded\n"
-    "  --clk-mhz <f>  ap_clk in MHz, for the cycles->ns report (default 300)\n";
+    "  --clk-mhz <f>  ap_clk in MHz, for the cycles->ns report (default 300)\n"
+    "  --rto <n>      enable automatic retransmission after n idle core\n"
+    "                 cycles (default 0 = disabled, host-initiated only)\n"
+    "  --rto-retries <n>  attempts per unacknowledged frame (default 3)\n";
 }
 
 std::vector<char> read_file(const std::string& path) {
@@ -190,6 +200,12 @@ void configure(Device& d, const Options& o) {
   d.wr_t2t(CFG_IGMP_EN,          1);
   d.wr_t2t(CFG_IGMP_INTERVAL,    0x40000000u);   // effectively no periodic report
   d.wr_t2t(CFG_GROUP_IP_B,       GROUP);         // B == A: single-feed replay
+  // Retransmission. These three sit above the config block rather than inside
+  // it, so they are written directly and are not part of the LOAD commit -- but
+  // writing them before the commit keeps the whole setup in one place.
+  d.wr_t2t(T2T_RTO_CYCLES,       o.rto);
+  d.wr_t2t(T2T_RTO_RETRIES,      o.rto_retries);
+  d.wr_t2t(T2T_RTO_EN,           o.rto ? 1u : 0u);
   d.wr_t2t(T2T_CTRL,             T2T_CTRL_LOAD); // commit
 }
 
@@ -325,13 +341,32 @@ int run(Options o) {
   // `output logic signed [31:0]`), so it must be printed as one. Read as %u a
   // short position of -200 comes out as 4294967096, which is not merely ugly --
   // it silently reads as a huge long position, the opposite of the truth.
-  std::printf("strategy: sent=%u pos=%d blocked(pos=%u inflight=%u txfull=%u)\n",
+  // Every reason the risk gate refused an order, each counted separately -- qty
+  // is the last one to reach the register map, and the only one that indicates a
+  // bug rather than a limit: pos/inflight/txfull are the gate doing its job,
+  // while qty means the strategy computed a share count OUCH cannot carry.
+  const uint32_t blk_q = d.rd_t2t(ST_BLK_QTY);
+  std::printf("strategy: sent=%u pos=%d blocked(pos=%u inflight=%u txfull=%u qty=%u)%s\n",
               d.rd_t2t(ST_SENT),
               static_cast<int32_t>(d.rd_t2t(ST_POSITION)),
               d.rd_t2t(ST_BLK_POS),    d.rd_t2t(ST_BLK_INFLIGHT),
-              d.rd_t2t(ST_BLK_TXFULL));
+              d.rd_t2t(ST_BLK_TXFULL), blk_q,
+              blk_q ? "   <-- SHARE COUNT OUTSIDE OUCH'S RANGE" : "");
   std::printf("tx      : frames=%u next_seq=%08x cdc_drop=%u\n",
               d.rd_t2t(ST_FRAME_CNT), d.rd_t2t(ST_SEQ_NUM), d.rd_t2t(ST_TX_DROP));
+  // replay buffer + retransmission. stored must equal the frames tx built: the
+  // ring is what makes a re-send possible at all, so a frame that went out
+  // without entering it can never be recovered. refused means the ring was
+  // asked for a slot it never held, and gaveup means a frame was abandoned at
+  // the retry cap -- the venue never acknowledged it, which is the one outcome
+  // here that needs a human.
+  const uint32_t rb_s = d.rd_t2t(ST_RB_STORED);
+  const uint32_t rb_r = d.rd_t2t(ST_RB_RESENT);
+  const uint32_t rb_d = d.rd_t2t(ST_RB_DROP);
+  const uint32_t rto_f = d.rd_t2t(ST_RTO_FIRED);
+  const uint32_t rto_g = d.rd_t2t(ST_RTO_GAVEUP);
+  std::printf("replay  : stored=%u resent=%u refused=%u  rto(%s fired=%u gaveup=%u)\n",
+              rb_s, rb_r, rb_d, o.rto ? "on" : "off", rto_f, rto_g);
   // book: how the BBO stream was answered. early+late is the whole stream, so
   // their ratio is the realized saving from fast_bbo -- and mismatch is the one
   // number here that is not a statistic. It counts fast_bbo claiming certainty
@@ -454,6 +489,19 @@ int run(Options o) {
   if (inj == 0)   { std::cerr << "FAIL: no frames injected\n";        rc = 1; }
   if (ncap == 0)  { std::cerr << "FAIL: no frames captured\n";        rc = 1; }
   if (ovf != 0)   { std::cerr << "FAIL: capture overflowed\n";        rc = 1; }
+  if (rb_s != d.rd_t2t(ST_FRAME_CNT)) {
+    std::cerr << "FAIL: engine built " << d.rd_t2t(ST_FRAME_CNT)
+              << " frames but the replay buffer stored " << rb_s
+              << " -- the difference cannot be re-sent\n";      rc = 1;
+  }
+  if (rb_d != 0) {
+    std::cerr << "FAIL: " << rb_d << " resend request(s) refused by the replay"
+                 " buffer -- a slot was asked for that it never held\n"; rc = 1;
+  }
+  if (rto_g != 0) {
+    std::cerr << "WARN: " << rto_g << " frame(s) abandoned at the retry cap --"
+                 " the venue never acknowledged them\n";
+  }
   if (d.rd_t2t(ST_TX_DROP) != 0) {
     std::cerr << "FAIL: TX clock crossing dropped beats\n";           rc = 1;
   }
@@ -491,6 +539,8 @@ int main(int argc, char** argv) {
       else if (a == "--loc")     o.locate  = std::stoul(next());
       else if (a == "--base")    o.band    = std::stoul(next());
       else if (a == "--records") o.records = std::stoul(next());
+      else if (a == "--rto") o.rto = std::stoul(next());
+      else if (a == "--rto-retries") o.rto_retries = std::stoul(next());
       else if (a == "--sweep")   o.sweep   = true;
       else if (a == "--quiet")   o.quiet   = std::stoul(next());
       else if (a == "--clk-mhz") { o.clk_mhz = std::stod(next()); o.clk_mhz_set = true; }

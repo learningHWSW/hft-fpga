@@ -45,6 +45,7 @@ module tb_axil_regfile;
   logic [31:0] st_bbo_early, st_bbo_late, st_bbo_mismatch;
   logic [31:0] st_rx_peer_ack, st_rx_ooo, st_rx_dup, st_rx_sess_frames;
   logic [31:0] st_rto_fired, st_rto_gaveup;
+  logic [31:0] st_rb_stored, st_rb_resent, st_rb_drop, st_blk_qty;
   logic        cfg_rto_en;
   logic [31:0] cfg_rto_cycles;
   logic [3:0]  cfg_rto_retries;
@@ -91,6 +92,8 @@ module tb_axil_regfile;
     .st_rx_peer_ack(st_rx_peer_ack), .st_rx_ooo(st_rx_ooo),
     .st_rx_dup(st_rx_dup), .st_rx_sess_frames(st_rx_sess_frames),
     .st_rto_fired(st_rto_fired), .st_rto_gaveup(st_rto_gaveup),
+    .st_rb_stored(st_rb_stored), .st_rb_resent(st_rb_resent),
+    .st_rb_drop(st_rb_drop), .st_blk_qty(st_blk_qty),
     .cfg_rto_en(cfg_rto_en), .cfg_rto_cycles(cfg_rto_cycles),
     .cfg_rto_retries(cfg_rto_retries)
   );
@@ -141,7 +144,8 @@ module tb_axil_regfile;
      st_frame_cnt,st_tx_drop,st_position,
      st_bbo_early,st_bbo_late,st_bbo_mismatch,
      st_rx_peer_ack,st_rx_ooo,st_rx_dup,st_rx_sess_frames,
-     st_rto_fired,st_rto_gaveup} = '0;
+     st_rto_fired,st_rto_gaveup,
+     st_rb_stored,st_rb_resent,st_rb_drop,st_blk_qty} = '0;
     st_init_done = 0;
 
     repeat (4) @(negedge aclk);
@@ -212,6 +216,19 @@ module tb_axil_regfile;
     @(negedge aclk);
     axi_read('h168, rb); check_eq("st_rto_fired",  rb, 32'hBB00_001A);
     axi_read('h16C, rb); check_eq("st_rto_gaveup", rb, 32'hBB00_001B);
+
+    // 4b') the replay buffer's three and the shares-range rejections. These
+    // complete the map: after this every counter the datapath keeps has an
+    // offset a host can read.
+    st_rb_stored = 32'hBB00_001C;
+    st_rb_resent = 32'hBB00_001D;
+    st_rb_drop   = 32'hBB00_001E;
+    st_blk_qty   = 32'hBB00_001F;
+    @(negedge aclk);
+    axi_read('h170, rb); check_eq("st_rb_stored", rb, 32'hBB00_001C);
+    axi_read('h174, rb); check_eq("st_rb_resent", rb, 32'hBB00_001D);
+    axi_read('h178, rb); check_eq("st_rb_drop",   rb, 32'hBB00_001E);
+    axi_read('h17C, rb); check_eq("st_blk_qty",   rb, 32'hBB00_001F);
 
     // 4c) the retransmission config, which lives ABOVE ctrl rather than in the
     // config block, so this also proves adding it did not move ctrl or the

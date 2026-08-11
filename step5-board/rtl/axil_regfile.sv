@@ -134,7 +134,11 @@ module axil_regfile #(
   input  logic [31:0]         st_rx_dup,
   input  logic [31:0]         st_rx_sess_frames,
   input  logic [31:0]         st_rto_fired,      // resends the card asked for itself
-  input  logic [31:0]         st_rto_gaveup      // frames abandoned at the retry cap
+  input  logic [31:0]         st_rto_gaveup,     // frames abandoned at the retry cap
+  input  logic [31:0]         st_rb_stored,      // frames the replay buffer kept
+  input  logic [31:0]         st_rb_resent,      // ... and handed back out again
+  input  logic [31:0]         st_rb_drop,        // resend asked for a slot never filled
+  input  logic [31:0]         st_blk_qty         // orders blocked: shares out of range
 );
   // ---- config word indices (match regmap.py REG order) ----
   localparam int A_GROUP_IP=0,  A_UDP_PORT=1,  A_TRACK_LOCATE=2, A_BAND_BASE=3,
@@ -244,6 +248,10 @@ module axil_regfile #(
       A_STAT+25: readmux = st_rx_sess_frames;
       A_STAT+26: readmux = st_rto_fired;
       A_STAT+27: readmux = st_rto_gaveup;
+      A_STAT+28: readmux = st_rb_stored;
+      A_STAT+29: readmux = st_rb_resent;
+      A_STAT+30: readmux = st_rb_drop;
+      A_STAT+31: readmux = st_blk_qty;
       default:   readmux = 32'd0;
     endcase
   endfunction

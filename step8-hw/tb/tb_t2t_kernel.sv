@@ -334,6 +334,7 @@ module tb_t2t_kernel;
   // (stock AAPL, firm HFT1, token FPGA01, 10.0.0.2 -> 10.0.0.9). Only the
   // tracked symbol and price band vary between the synthetic and real feeds.
   logic [31:0] rto = 0;
+  logic [31:0] nstore, nresent, ndrop;
   logic [31:0] cfg_loc     = 32'd13;
   logic [31:0] cfg_band_px = 32'd2800000;
 
@@ -547,6 +548,36 @@ module tb_t2t_kernel;
     if (rto != 0 && v == 0)
       $display("FAIL: automatic retransmission was enabled and never fired");
     axil_read(T2T + 13'h16C, v);   $display("TB: st_rto_gaveup  = %0d", v);
+
+    // The replay buffer, and the last rejection reason to reach the map. These
+    // are worth reading through the window rather than displaying from the RTL
+    // because each has an invariant the run can check:
+    //   stored == st_frame_cnt   every frame the engine built entered the ring.
+    //                            A shortfall means a frame went out unrecorded
+    //                            and could never be re-sent.
+    //   resent + drop == fired   every request the RTO detector raised was
+    //                            either served or refused; neither counter
+    //                            moving on a fired request means one vanished.
+    //   drop == 0                a refusal means the ring was asked for a slot
+    //                            it never held -- with the detector driving the
+    //                            age itself, that is a bug, not a workload.
+    axil_read(T2T + 13'h170, nstore); $display("TB: st_rb_stored   = %0d", nstore);
+    if (nstore != ntx)
+      $display("FAIL: engine built %0d frames, replay buffer stored %0d",
+               ntx, nstore);
+    axil_read(T2T + 13'h174, nresent); $display("TB: st_rb_resent   = %0d", nresent);
+    axil_read(T2T + 13'h178, ndrop);   $display("TB: st_rb_drop     = %0d", ndrop);
+    if (ndrop != 0)
+      $display("FAIL: %0d resend request(s) refused by the replay buffer", ndrop);
+    axil_read(T2T + 13'h168, v);       // st_rto_fired again, to compare against
+    if (nresent + ndrop != v)
+      $display("FAIL: %0d resends requested, %0d served + %0d refused",
+               v, nresent, ndrop);
+    // Blocked for shares outside OUCH's legal range. The configured order_qty
+    // is inside it, so anything here means the strategy asked for a size it
+    // never should have computed.
+    axil_read(T2T + 13'h17C, v);   $display("TB: st_blk_qty     = %0d", v);
+    if (v != 0) $display("FAIL: %0d order(s) blocked on an illegal share count", v);
     // st_frame_cnt counts the ORDER frames tcp_tx built; capture records
     // everything on the TX port, so the surplus is the IGMP reports (and any
     // ARP replies) the arbiter merged in. Capture may therefore exceed it, but

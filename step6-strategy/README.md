@@ -55,7 +55,12 @@ cannot diverge the moment a configuration actually trips it.
 
 Each rejection reason is counted separately, so a strategy that is quiet can be
 told apart from one that is blocked — they look identical from the outside
-otherwise.
+otherwise. All four reach the register map: `st_blk_pos` (`0x130`),
+`st_blk_inflight` (`0x134`), `st_blk_txfull` (`0x138`) and `st_blk_qty`
+(`0x17C`), the last of which `t2t_run` flags rather than merely prints — the
+first three are the gate doing its job, while a nonzero `st_blk_qty` means the
+strategy computed a share count OUCH cannot carry, which is a bug and not a
+limit.
 
 Two deliberate choices worth naming:
 

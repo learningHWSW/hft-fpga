@@ -83,6 +83,9 @@ STATUS = [
     "st_rx_peer_ack", "st_rx_ooo", "st_rx_dup", "st_rx_sess_frames",
     # and the card's own retransmissions
     "st_rto_fired", "st_rto_gaveup",
+    # the replay buffer behind them, and the last rejection reason the RTL
+    # counted but the map did not carry
+    "st_rb_stored", "st_rb_resent", "st_rb_drop", "st_blk_qty",
 ]
 STATUS_OFFSET = {name: STATUS_BASE + 4 * i for i, name in enumerate(STATUS)}
 

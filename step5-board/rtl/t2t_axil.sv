@@ -86,11 +86,11 @@ module t2t_axil #(
 );
   localparam int CFGW = 968;      // sum of all cfg_* widths (checked at elab)
   // Sum of all st_* widths: 19 words plus st_init_done's single bit, then the
-  // nine published since. The later ones sit at the TOP of the word rather than
-  // beside their neighbours -- the bus is only transport, both ends name the
-  // same slice, and renumbering nineteen hand-written slices to keep bus order
-  // matching register order would be all risk and no benefit.
-  localparam int STW  = 865;
+  // thirteen published since. The later ones sit at the TOP of the word rather
+  // than beside their neighbours -- the bus is only transport, both ends name
+  // the same slice, and renumbering nineteen hand-written slices to keep bus
+  // order matching register order would be all risk and no benefit.
+  localparam int STW  = 993;
 
   // ================= AXI-Lite register file (axil_clk) =================
   logic [31:0] a_group_ip, a_band_base, a_max_spread, a_min_qty, a_order_qty;
@@ -151,7 +151,9 @@ module t2t_axil #(
     .st_bbo_mismatch(st_bus_axil[736:705]),
     .st_rx_peer_ack(st_bus_axil[704:673]), .st_rx_ooo(st_bus_axil[672:641]),
     .st_rx_dup(st_bus_axil[640:609]), .st_rx_sess_frames(st_bus_axil[608:577]),
-    .st_rto_fired(st_bus_axil[864:833]), .st_rto_gaveup(st_bus_axil[832:801])
+    .st_rto_fired(st_bus_axil[864:833]), .st_rto_gaveup(st_bus_axil[832:801]),
+    .st_rb_stored(st_bus_axil[896:865]), .st_rb_resent(st_bus_axil[928:897]),
+    .st_rb_drop(st_bus_axil[960:929]),   .st_blk_qty(st_bus_axil[992:961])
   );
 
   // pack every config word into one bus (order is the contract with the unpack)
@@ -200,15 +202,6 @@ module t2t_axil #(
   logic        c_rto_en;
   logic [31:0] c_rto_cycles;
   logic [3:0]  c_rto_retries;
-  // Still terminated here, and the only counters that are: the replay buffer's
-  // three and the strategy's shares-range rejections. They belong in the map for
-  // the same reason the session and BBO counters now are -- st_blk_qty in
-  // particular is the one risk-gate rejection a host cannot currently see, which
-  // makes "every rejection counted separately" true of the RTL and not yet of
-  // the register map. The map only grows at the end, so adding them later costs
-  // nothing that doing it now would save.
-  logic [31:0] st_rb_stored, st_rb_resent, st_rb_drop;
-  logic [31:0] st_blk_qty;
   // Where the payload sits inside the frame. Terminated here on purpose: the
   // frame goes to the harness whole, and a host that has the bytes can find the
   // payload the same way tcp_rx did, from the IHL and data-offset fields. Passing
@@ -247,8 +240,12 @@ module t2t_axil #(
     .cfg_rto_en(c_rto_en), .cfg_rto_cycles(c_rto_cycles),
     .cfg_rto_retries(c_rto_retries),
     .st_rto_fired(st_bus_core[864:833]), .st_rto_gaveup(st_bus_core[832:801]),
-    .st_rb_stored(st_rb_stored), .st_rb_resent(st_rb_resent), .st_rb_drop(st_rb_drop),
-    .st_blk_qty(st_blk_qty),
+    // The replay buffer's three, and the last risk-gate rejection reason that
+    // was counted in RTL but invisible to a host: an order blocked because its
+    // share count fell outside OUCH's legal range. With these four the map
+    // publishes every counter the datapath keeps.
+    .st_rb_stored(st_bus_core[896:865]), .st_rb_resent(st_bus_core[928:897]),
+    .st_rb_drop(st_bus_core[960:929]),   .st_blk_qty(st_bus_core[992:961]),
     // Order-session inbound. The frames are brought out of the wrapper so the
     // harness can capture them; the host reads the OUCH payload at the reported
     // offset. Left unconnected here would silently discard the venue's replies.

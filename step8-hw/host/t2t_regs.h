@@ -91,6 +91,10 @@
 #define ST_RX_SESS_FRAMES    0x164u
 #define ST_RTO_FIRED         0x168u
 #define ST_RTO_GAVEUP        0x16Cu
+#define ST_RB_STORED         0x170u
+#define ST_RB_RESENT         0x174u
+#define ST_RB_DROP           0x178u
+#define ST_BLK_QTY           0x17Cu
 
 // ---- harness registers, from step8-hw/rtl/t2t_kernel.sv ----
 #define K_ID                 0x040u

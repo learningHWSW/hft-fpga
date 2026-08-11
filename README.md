@@ -132,8 +132,15 @@ trade.
   zero disagreements**. On the step-8 kernel's synthetic chain the loaded-latency
   probe's four samples move **33 → 24 core cycles** at the minimum, 51 → 47 mean.
 - **Risk gate is not deferred**: kill switch, position limit, in-flight limit,
-  each rejection counted separately so a quiet strategy is distinguishable from a
-  blocked one.
+  and a shares-range check, each rejection counted separately so a quiet strategy
+  is distinguishable from a blocked one — and every one of those counters is in
+  the register map, so the distinction is one a host can actually make. That now
+  holds for the wrapper as a whole: **all 32 of `t2t_top`'s status outputs are
+  published, and none terminates in `t2t_axil`.** (Block-internal counters below
+  that boundary — the feed arbiter's source split, `fast_bbo`'s own tallies —
+  are still tied off where they are redundant with a published one.)
+  `step7-host/tests/test_regmap.py` checks the host's list against the RTL read
+  mux itself, so the two cannot drift apart quietly.
 - **The order session is maintained on the card.** `tcp_tx` takes its
   acknowledgement number from `tcp_rx`, which advances it as the venue's segments
   arrive rather than reading a shadow register software has to keep fresh;
@@ -316,10 +323,6 @@ Honest scope, all of it stated in the per-step READMEs.
   `st_bbo_mismatch` counts the one thing that could break quietly (`fast_bbo`
   certain and wrong) and is in the register map, printed by `t2t_run` and a
   failing condition for the run — but nobody has taken that run.
-- **Four counters are still off the map.** The replay buffer's three and
-  `st_blk_qty`, the shares-range rejection, terminate in `t2t_axil`. `st_blk_qty`
-  is the one risk-gate rejection a host cannot see, so "every rejection counted
-  separately" is true of the RTL and not yet of the register map.
 - **Retransmission is automatic, and off by default.** `tx_rto` watches the
   acknowledgement number `tcp_rx` tracks and asks `tx_replay_buf` for the oldest
   unacknowledged frame when it stops advancing. It arms only after the venue has
