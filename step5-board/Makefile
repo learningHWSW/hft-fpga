@@ -7,7 +7,8 @@ STEP4B = ../step4b-book
 SRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
       $(STEP3B)/rtl/mold_splitter.sv $(STEP4A)/rtl/otable_mem.sv $(STEP4A)/rtl/order_table.sv \
       $(STEP4A)/rtl/order_table_pipe.sv \
-      $(STEP4B)/rtl/price_ladder.sv rtl/drop_fifo.sv ../step6-strategy/rtl/sweep_detect.sv rtl/fh_core.sv
+      $(STEP4B)/rtl/price_ladder.sv $(STEP4B)/rtl/fast_bbo.sv $(STEP4B)/rtl/bbo_merge.sv \
+      rtl/drop_fifo.sv ../step6-strategy/rtl/sweep_detect.sv rtl/fh_core.sv
 TB  = tb/tb_fh_core.sv
 TOP = tb_fh_core
 
@@ -154,7 +155,8 @@ test-txarb:
 TAXIL_SRC = ../step2-rtl-decoder/rtl/itch5_pkg.sv ../step2-rtl-decoder/rtl/itch_decoder.sv \
   ../step3b-splitter/rtl/mold_splitter.sv ../step4a-order-table/rtl/otable_mem.sv \
   ../step4a-order-table/rtl/order_table.sv ../step4a-order-table/rtl/order_table_pipe.sv \
-  ../step4b-book/rtl/price_ladder.sv rtl/drop_fifo.sv rtl/fh_core.sv rtl/eth_ip_udp_rx.sv \
+  ../step4b-book/rtl/price_ladder.sv ../step4b-book/rtl/fast_bbo.sv \
+  ../step4b-book/rtl/bbo_merge.sv rtl/drop_fifo.sv rtl/fh_core.sv rtl/eth_ip_udp_rx.sv \
   rtl/cdc_fifo.sv ../step6-strategy/rtl/strategy.sv ../step6-strategy/rtl/sweep_detect.sv \
   ../step6-strategy/rtl/ouch_builder.sv ../step6-strategy/rtl/tcp_tx.sv \
   ../step6-strategy/rtl/tx_replay_buf.sv \

@@ -71,8 +71,15 @@ make impl              # + place & route
 ```
 eth frames -> eth_ip_udp_rx -> [beat FIFO] -> mold_splitter -> itch_decoder
                             -> [msg FIFO]  -> order_table   -> [delta FIFO]
-                            -> price_ladder -> BBO
+                            -> price_ladder ─┐
+                               fast_bbo ─────┴─> bbo_merge -> BBO
 ```
+
+`fast_bbo` hangs off the ladder's ACCEPT handshake, not off the delta FIFO, and
+`bbo_merge` decides which answer becomes the BBO record. That tap point is the
+ordering argument, not a convenience — see [step4b-book](../step4b-book/). The
+merged stream is the ladder's own stream: on the 5 M replay, the same 1,779
+records, 1,174 of them ten cycles early, `st_bbo_mismatch = 0`.
 
 `eth_ip_udp_rx` is deliberately not a general network stack. A receive-only
 multicast feed needs three checks — IPv4 with IHL=5, protocol UDP, and the

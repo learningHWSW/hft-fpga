@@ -30,7 +30,8 @@ module fh_core
   parameter int OT_SETS_BITS = 13,   // see order_table: cascade depth, not size
   parameter int OT_WAYS      = 16,
   parameter int PL_LEVELS    = 4096,
-  parameter int PL_TICK      = 100
+  parameter int PL_TICK      = 100,
+  parameter bit USE_FAST_BBO = 1     // 0 = ladder only, the pre-integration path
 )(
   input  logic                clk,
   input  logic                rst_n,
@@ -83,6 +84,15 @@ module fh_core
   output logic [$clog2(BEAT_FIFO):0]  st_beat_level_max,
   output logic [$clog2(MSG_FIFO):0]   st_msg_level_max,
   output logic [$clog2(DELTA_FIFO):0] st_delta_level_max,
+
+  // ---- fast top-of-book: how the emitted BBO records were answered ----
+  // early + late is the whole BBO stream. Their ratio is the realized saving,
+  // which is lower than fast_bbo's own certain/defer split because a record
+  // following a deferral waits for it. st_bbo_mismatch must read zero: it counts
+  // the ladder contradicting an early answer, which fast_bbo's contract forbids.
+  output logic [31:0]                 st_bbo_early,
+  output logic [31:0]                 st_bbo_late,
+  output logic [31:0]                 st_bbo_mismatch,
 
   // ---- observation tap: a decoded message, and its ITCH timestamp ----
   // Read-only, drives nothing inside this module. It exists so a latency probe
@@ -210,6 +220,10 @@ module fh_core
     .drop_cnt(st_delta_drop), .level(df_level), .level_max(st_delta_level_max)
   );
 
+  logic        lad_valid, lad_has_bid, lad_has_ask;
+  logic [47:0] lad_ts;
+  logic [31:0] lad_bid_price, lad_bid_qty, lad_ask_price, lad_ask_qty;
+
   price_ladder #(.LEVELS(PL_LEVELS), .TICK(PL_TICK)) u_ladder (
     .clk(clk), .rst_n(rst_n), .cfg_base(cfg_base),
     .i_valid    (df_pop_valid),
@@ -222,10 +236,84 @@ module fh_core
     .i_add_price(df_pop_data[63:32]),
     .i_add_qty  (df_pop_data[31:0]),
     .i_ready    (df_pop_ready),
-    .o_valid(bbo_valid), .o_ts(bbo_ts),
-    .o_has_bid(bbo_has_bid), .o_bid_price(bbo_bid_price), .o_bid_qty(bbo_bid_qty),
-    .o_has_ask(bbo_has_ask), .o_ask_price(bbo_ask_price), .o_ask_qty(bbo_ask_qty),
+    .o_valid(lad_valid), .o_ts(lad_ts),
+    .o_has_bid(lad_has_bid), .o_bid_price(lad_bid_price), .o_bid_qty(lad_bid_qty),
+    .o_has_ask(lad_has_ask), .o_ask_price(lad_ask_price), .o_ask_qty(lad_ask_qty),
     .oob_cnt(st_pl_oob)
   );
+
+  // ---------------- fast top-of-book, and the rejoin ----------------
+  // fast_bbo answers the common delta from two registers instead of a scan over
+  // the occupancy bitmap; bbo_merge decides which answer reaches the strategy and
+  // is where the ordering argument lives (see its header, and step4b's README).
+  //
+  // i_valid is the ladder's ACCEPT, not the delta FIFO's output. Feeding the fast
+  // path earlier would let it run ahead of a ladder still working on an older
+  // delta, and a record that overtakes its predecessor moves the strategy's rising
+  // edges -- different orders, same book. Gating on the handshake keeps the two in
+  // lockstep, one delta apart at most, which is what makes the rejoin a single
+  // comparison rather than a reorder buffer. The observation harness in
+  // tb_price_ladder measured the module from exactly this tap.
+  //
+  // USE_FAST_BBO = 0 restores the ladder as the only source, one parameter away,
+  // for bisecting a golden diff that appears after this was wired in.
+  generate if (USE_FAST_BBO) begin : g_fast
+    logic        fb_valid, fb_certain, fb_has_bid, fb_has_ask;
+    logic [47:0] fb_ts;
+    logic [31:0] fb_bid_price, fb_bid_qty, fb_ask_price, fb_ask_qty;
+
+    fast_bbo u_fast (
+      .clk(clk), .rst_n(rst_n),
+      .i_valid    (df_pop_valid && df_pop_ready),
+      .i_ts       (df_pop_data[185:138]),
+      .i_side     (df_pop_data[137:130]),
+      .i_has_rem  (df_pop_data[129]),
+      .i_rem_price(df_pop_data[128:97]),
+      .i_rem_qty  (df_pop_data[96:65]),
+      .i_has_add  (df_pop_data[64]),
+      .i_add_price(df_pop_data[63:32]),
+      .i_add_qty  (df_pop_data[31:0]),
+      .i_lad_valid(lad_valid),
+      .i_lad_has_bid(lad_has_bid), .i_lad_bid_price(lad_bid_price),
+      .i_lad_bid_qty(lad_bid_qty),
+      .i_lad_has_ask(lad_has_ask), .i_lad_ask_price(lad_ask_price),
+      .i_lad_ask_qty(lad_ask_qty),
+      .o_valid(fb_valid), .o_certain(fb_certain), .o_ts(fb_ts),
+      .o_has_bid(fb_has_bid), .o_bid_price(fb_bid_price), .o_bid_qty(fb_bid_qty),
+      .o_has_ask(fb_has_ask), .o_ask_price(fb_ask_price), .o_ask_qty(fb_ask_qty),
+      .certain_cnt(), .defer_cnt()
+    );
+
+    bbo_merge u_merge (
+      .clk(clk), .rst_n(rst_n),
+      .i_fast_valid(fb_valid), .i_fast_certain(fb_certain), .i_fast_ts(fb_ts),
+      .i_fast_has_bid(fb_has_bid), .i_fast_bid_price(fb_bid_price),
+      .i_fast_bid_qty(fb_bid_qty),
+      .i_fast_has_ask(fb_has_ask), .i_fast_ask_price(fb_ask_price),
+      .i_fast_ask_qty(fb_ask_qty),
+      .i_lad_valid(lad_valid), .i_lad_ts(lad_ts),
+      .i_lad_has_bid(lad_has_bid), .i_lad_bid_price(lad_bid_price),
+      .i_lad_bid_qty(lad_bid_qty),
+      .i_lad_has_ask(lad_has_ask), .i_lad_ask_price(lad_ask_price),
+      .i_lad_ask_qty(lad_ask_qty),
+      .o_valid(bbo_valid), .o_ts(bbo_ts),
+      .o_has_bid(bbo_has_bid), .o_bid_price(bbo_bid_price), .o_bid_qty(bbo_bid_qty),
+      .o_has_ask(bbo_has_ask), .o_ask_price(bbo_ask_price), .o_ask_qty(bbo_ask_qty),
+      .early_cnt(st_bbo_early), .late_cnt(st_bbo_late),
+      .mismatch_cnt(st_bbo_mismatch)
+    );
+  end else begin : g_slow
+    assign bbo_valid     = lad_valid;
+    assign bbo_ts        = lad_ts;
+    assign bbo_has_bid   = lad_has_bid;
+    assign bbo_bid_price = lad_bid_price;
+    assign bbo_bid_qty   = lad_bid_qty;
+    assign bbo_has_ask   = lad_has_ask;
+    assign bbo_ask_price = lad_ask_price;
+    assign bbo_ask_qty   = lad_ask_qty;
+    assign st_bbo_early    = '0;
+    assign st_bbo_late     = '0;
+    assign st_bbo_mismatch = '0;
+  end endgenerate
 
 endmodule

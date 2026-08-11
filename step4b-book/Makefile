@@ -34,6 +34,19 @@ test-pipe: golden
 test-pipe-real:
 	$(MAKE) test-pipe ITCH=../step5-board/real.itch LOC=13 BASE=2800000
 
+# ---------- the fast/slow rejoin, on its own ----------
+# Unit-level, because the property it has to hold -- the merged stream is the
+# ladder's stream -- is checkable against a reference here and only observable as
+# a byte diff once it is in the chain (step5 test-t2t).
+test-merge:
+	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -j 0 -o mergesim --top-module tb_bbo_merge rtl/bbo_merge.sv tb/tb_bbo_merge.sv
+	./obj_dir/mergesim
+
+test-merge-xsim:
+	xvlog -sv rtl/bbo_merge.sv tb/tb_bbo_merge.sv
+	xelab -debug typical tb_bbo_merge -s tb_bbo_merge_sim
+	xsim tb_bbo_merge_sim -runall
+
 golden: $(ITCH)
 	python3 scripts/dump_bbo.py $(ITCH) $(LOC) > bbo_gold.log
 
@@ -55,4 +68,4 @@ test-real-xsim: real.itch
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch
 
-.PHONY: test test-verilator golden test-real test-real-xsim clean
+.PHONY: test test-verilator test-merge test-merge-xsim golden test-real test-real-xsim clean

@@ -182,6 +182,13 @@ module t2t_axil #(
   logic                rxs_tvalid, rxs_tlast;
   logic [31:0] st_rx_peer_ack, st_rx_ooo, st_rx_dup, st_rx_sess_frames;
   logic [15:0] o_rx_pay_off, o_rx_pay_len;
+  // Fast-BBO accounting, terminated here for the same reason as the session
+  // counters above: the status bus is a fixed-width packed word (STW) mirrored by
+  // the register map, so publishing a counter is a register-map change and those
+  // three want to be made together rather than one module at a time. The
+  // simulation harnesses read these hierarchically, which is where the numbers in
+  // step4b's README come from.
+  logic [31:0] st_bbo_early, st_bbo_late, st_bbo_mismatch;
   assign {
     c_group_ip, c_udp_port, c_track_locate, c_band_base, c_enable, c_max_spread,
     c_ratio_shift, c_min_qty, c_order_qty, c_pos_limit, c_max_inflight, c_sweep_en,
@@ -221,6 +228,8 @@ module t2t_axil #(
     .o_rx_pay_off(o_rx_pay_off), .o_rx_pay_len(o_rx_pay_len),
     .st_rx_peer_ack(st_rx_peer_ack), .st_rx_ooo(st_rx_ooo),
     .st_rx_dup(st_rx_dup), .st_rx_sess_frames(st_rx_sess_frames),
+    .st_bbo_early(st_bbo_early), .st_bbo_late(st_bbo_late),
+    .st_bbo_mismatch(st_bbo_mismatch),
     .cfg_sweep_en(c_sweep_en), .cfg_sweep_min_levels(c_sweep_min_levels), .cfg_sweep_gap(c_sweep_gap),
     .cfg_token_prefix(c_token_prefix), .cfg_stock(c_stock), .cfg_firm(c_firm), .cfg_tif(c_tif),
     .cfg_ouch_min_qty(c_ouch_min_qty), .cfg_display(c_display), .cfg_capacity(c_capacity),

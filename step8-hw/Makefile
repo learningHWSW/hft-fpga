@@ -11,7 +11,7 @@ DPSRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
         $(STEP3B)/rtl/mold_splitter.sv \
         $(STEP4A)/rtl/otable_mem.sv $(STEP4A)/rtl/order_table.sv \
         $(STEP4A)/rtl/order_table_pipe.sv \
-        $(STEP4B)/rtl/price_ladder.sv \
+        $(STEP4B)/rtl/price_ladder.sv $(STEP4B)/rtl/fast_bbo.sv $(STEP4B)/rtl/bbo_merge.sv \
         $(STEP5)/rtl/drop_fifo.sv $(STEP5)/rtl/fh_core.sv \
         $(STEP5)/rtl/eth_ip_udp_rx.sv $(STEP5)/rtl/cdc_fifo.sv \
         $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/sweep_detect.sv \

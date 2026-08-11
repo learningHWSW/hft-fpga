@@ -35,6 +35,10 @@ QSFP28 ─► CMAC ─► cdc_fifo ─┤   MAC/IP/UDP filter            ├─�
                                                                                        ▼
                                                                                  price_ladder
                                                                                   L2 → BBO
+                                                                                       │
+                                                                    fast_bbo ─────► bbo_merge ─► BBO
+                                                                    1 cycle for      the ladder's own
+                                                                    most deltas      records, sooner
 ```
 
 **TX — order out.** The assembled frame crosses back to the CMAC clock, then two
@@ -262,16 +266,25 @@ bid/ask price + quantity) whenever it changes.
   cannot see this — `initial` runs at time 0 there — and it was found only on
   silicon.
 
-**A fast top-of-book path exists but is not wired in.** `fast_bbo` keeps only best
+**A fast top-of-book path runs beside the ladder.** `fast_bbo` keeps only best
 bid/ask and applies each delta to them directly. Exactly one delta shape needs the
 ladder's scan — a removal that empties the best level, because the next best is
 whatever the occupancy bitmap says; everything else is a comparison and an add or
 subtract. Measured on the real AAPL replay, **91 % of book updates are answerable
 in one cycle instead of ten**, with zero cases of claiming certainty and being
 wrong across 1,174 cross-checks against the ladder. It never approximates: it
-either knows or defers. Integrating it means deciding how fast and deferred
-records rejoin — a fast record must be held behind an earlier deferred one, or the
-BBO sequence changes and so do the strategy's edges.
+either knows or defers.
+
+`bbo_merge` is the rejoin, and two decisions make it safe. It is driven from the
+ladder's **accept** handshake, which fixes the arrival order — `lad(k-1)`, then
+`fast(k)`, then `lad(k)` on the next accept — so a fast record cannot overtake a
+deferred one and no reorder buffer is needed. And it merges **on value against the
+last record it emitted**, which is `price_ladder`'s own change test against its
+`o_*` registers: two change-detectors sharing a definition and a baseline agree by
+construction, so the duplicate ladder record for an already-answered delta arrives
+equal and is dropped, and no change can be lost because dropping only happens on
+equality. On the real replay the merged stream is the same 1,779 records, 1,174 of
+them delivered ten cycles early, `mismatch_cnt = 0`.
 
 L2 is the starting point (aggregate qty per level); per-level order counts and a
 fixed-slot approximate L3 are future extensions.
@@ -443,8 +456,10 @@ attacks the smaller term.
 - **Inbound on the card's own TCP connection** is unsolved: acks and fills arrive
   at the card's MAC and the FPGA does not parse TCP. Splitting the sessions
   removed the sender-side problem only.
-- **`fast_bbo` and `tx_replay_buf` are proven but not integrated** (§6, §9). Both
-  have self-checking testbenches; neither is wired into `t2t_top`.
+- **Nothing proven is left unintegrated.** `fast_bbo`, `tx_replay_buf` and
+  `tcp_rx` were the three modules with a self-checking testbench and no
+  instantiation (§6, §9); all three are now in `t2t_top`, and the goldens are
+  byte-identical across the change. What the fast path has not had is a card run.
 - **Cut-through decode was evaluated and dropped.** At 512-bit width every ITCH
   message (max 50 B) arrives in one 64-byte beat, so there is no partial-message
   window left: it could only collapse the decoder's single register stage, 1 cycle

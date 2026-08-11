@@ -42,6 +42,7 @@ module tb_fh_core;
   logic [31:0] st_gap_total, st_dup_cnt, st_frame_err, st_ot_overflow, st_ot_miss,
                st_pl_oob, st_beat_drop, st_msg_drop, st_delta_drop;
   logic [9:0]  st_beat_lvl, st_msg_lvl, st_delta_lvl;
+  logic [31:0] st_bbo_early, st_bbo_late, st_bbo_mismatch;
 
   fh_core #(.DATA_W(DATA_W)) dut (
     .init_done(init_done),
@@ -59,7 +60,9 @@ module tb_fh_core;
     .st_ot_overflow(st_ot_overflow), .st_ot_miss(st_ot_miss), .st_pl_oob(st_pl_oob),
     .st_beat_drop(st_beat_drop), .st_msg_drop(st_msg_drop), .st_delta_drop(st_delta_drop),
     .st_beat_level_max(st_beat_lvl), .st_msg_level_max(st_msg_lvl),
-    .st_delta_level_max(st_delta_lvl)
+    .st_delta_level_max(st_delta_lvl),
+    .st_bbo_early(st_bbo_early), .st_bbo_late(st_bbo_late),
+    .st_bbo_mismatch(st_bbo_mismatch)
   );
 
   // ---------------- monitor ----------------
@@ -140,6 +143,15 @@ module tb_fh_core;
              st_beat_drop, st_msg_drop, st_delta_drop);
     $display("  fifo hwm : beat=%0d msg=%0d delta=%0d",
              st_beat_lvl, st_msg_lvl, st_delta_lvl);
+    // early+late is the whole BBO stream, and the diff above is what says the
+    // stream did not change; this only says how much of it arrived ten cycles
+    // sooner. mismatch is the one that must be zero.
+    $display("  fast bbo : early=%0d late=%0d (%0d%% early) mismatch=%0d",
+             st_bbo_early, st_bbo_late,
+             (st_bbo_early + st_bbo_late) ? (100 * st_bbo_early) / (st_bbo_early + st_bbo_late) : 0,
+             st_bbo_mismatch);
+    if (st_bbo_mismatch != 0)
+      $display("FAIL: fast_bbo and price_ladder disagreed %0d times", st_bbo_mismatch);
     if (st_beat_drop || st_msg_drop || st_delta_drop || st_ot_overflow)
       $display("NOTE: drops occurred — injection outran the correctness-first FSMs");
     $finish;

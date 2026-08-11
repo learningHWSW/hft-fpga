@@ -43,6 +43,14 @@ shoulder, between 40.6 and 46.3 M msg/s, which is 20–40× the real NASDAQ peak
 Every non-saturated point is byte-identical to the golden: the pipeline degrades
 by **dropping and counting**, never by emitting a wrong order.
 
+Every figure above was measured **before `fast_bbo` was wired in**, so it describes
+the ladder-only book path. That path is still what a deferred delta takes; most
+deltas now take a shorter one, and the order frames are unchanged either way. The
+card has not been re-measured, and the MAC half — the larger half — cannot move.
+The fast path also costs post-route frequency: measured against its own baseline in
+one session, the full chain goes **218.6 → 209.1 MHz**, still above the 195.3 MHz
+the wire demands but with less room ([step4b-book](step4b-book/) has the table).
+
 > Design rationale and per-step definition-of-done: [PLAN.md](PLAN.md).
 > End-to-end data-path design: [ARCHITECTURE.md](ARCHITECTURE.md).
 > The measurements behind every sizing decision: [data/FINDINGS.md](data/FINDINGS.md).
@@ -68,10 +76,16 @@ QSFP28 ─► CMAC ─► cdc_fifo ─┤   filter + strip             ├─►
                                 the live ack for tcp_tx       ▼                      ▼
                                                         sweep_detect            order_table
                                                         momentum, skips         ref→{px,qty}
-                                                        the ladder                   │
+                                                        the ladder             ┌─────┴─────┐
+                                                                               ▼           ▼
+                                                                          fast_bbo    price_ladder
+                                                                          most deltas  L2 scan,
+                                                                          in 1 cycle   11 cycles
+                                                                               └─────┬─────┘
                                                                                      ▼
-                                                                               price_ladder
-                                                                                L2 → BBO
+                                                                                 bbo_merge
+                                                                            the ladder's records,
+                                                                                   sooner
 ```
 
 **TX — order out.** The order frame crosses back to the CMAC clock and wins
@@ -107,6 +121,14 @@ trade.
 - **Two signals, one risk gate.** Order-book imbalance, and sweep / momentum
   ignition. The sweep path taps the order-table delta and skips the ladder
   entirely — 19 core cycles against imbalance's 28.
+- **Most book updates skip the ladder scan too.** `fast_bbo` answers a delta from
+  two registers when it can prove the answer (91 % of real deltas) and says "ask
+  the ladder" when it cannot; `bbo_merge` rejoins the two so the record stream is
+  the one the ladder alone would have produced — merged on value against a shared
+  baseline, so the two change-detectors agree by construction. On the real replay
+  that is **1,779 records, unchanged, 1,174 of them delivered ~10 cycles early,
+  zero disagreements**. On the step-8 kernel's synthetic chain the loaded-latency
+  probe's four samples move **33 → 24 core cycles** at the minimum, 51 → 47 mean.
 - **Risk gate is not deferred**: kill switch, position limit, in-flight limit,
   each rejection counted separately so a quiet strategy is distinguishable from a
   blocked one.
@@ -129,7 +151,7 @@ trade.
 | 3a | MoldUDP64 stripper + splitter, sequence-gap detect | Done — [step3a-mold-stripper](step3a-mold-stripper/) |
 | 3b | 512-bit realignment, multiple message boundaries per beat | Done — [step3b-splitter](step3b-splitter/) |
 | 4a | Order table — `order_ref` hash in URAM, sized from real data | Done — [step4a-order-table](step4a-order-table/) |
-| 4b | Top-of-book engine — price ladder (L2), BBO | Done — [step4b-book](step4b-book/) |
+| 4b | Top-of-book engine — price ladder (L2), BBO, fast path + rejoin | Done — [step4b-book](step4b-book/) |
 | 5 | U55C integration: Eth/IP/UDP RX, TCP session RX, CDC, full-chain P&R | Done — [step5-board](step5-board/) |
 | 6 | Strategy, risk gate, OUCH + SoupBinTCP + TCP transmit, replay buffer | Done — [step6-strategy](step6-strategy/) |
 | 7 | Host software — session, register config, ack/fill feedback | Done — [step7-host](step7-host/) |
@@ -207,7 +229,7 @@ cd step4b-book && make test-verilator  # Verilator (no Vivado)
 | 2 | `make test` | ITCH decode == golden |
 | 3a / 3b | `make test`, `make test-real-xsim` | MoldUDP64 strip and 512-bit realignment |
 | 4a | `make test`, `make test-real-xsim` | order table == golden, zero overflow |
-| 4b | `make test`, `make test-real-xsim` | BBO sequence == golden |
+| 4b | `make test`, `make test-real-xsim`, `make test-merge-xsim` | BBO sequence == golden, and the fast/slow rejoin preserves it |
 | 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx` | the whole chain, two clocks, wire frames in and session frames back |
 | 6 | `make test-xsim`, `make test-replay` | orders and OUCH/TCP bytes == golden |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
@@ -275,19 +297,20 @@ Honest scope, all of it stated in the per-step READMEs.
 
 ### Integration
 
-- **`fast_bbo` is the last module proven but not wired into `t2t_top`.** It was
-  one of three with a self-checking testbench and no instantiation; `tx_replay_buf`
-  and now `tcp_rx` are both integrated, each verified byte-identical against every
-  existing golden through the full chain and through the MAC.
-- **`fast_bbo`'s rejoin is harder than its own header assumes**, and this is the
-  live obstacle rather than a matter of wiring. The module emits one record per
-  book delta, but `price_ladder` emits only when the BBO *changes* — 1,779 records
-  against ~6,740 deltas on the real replay. They are therefore not in
-  one-to-one correspondence, so merging the early and late records needs
-  change-detection in `fast_bbo` that matches the ladder's exactly, plus
-  bookkeeping to suppress the ladder record whose delta was already answered. Get
-  that wrong and the BBO *sequence* changes, which moves the strategy's rising
-  edges and silently changes which orders fire.
+- **Nothing proven is left unwired.** `tx_replay_buf`, `tcp_rx` and now `fast_bbo`
+  were the three modules with a self-checking testbench and no instantiation; all
+  three are in `t2t_top`, each verified byte-identical against every existing
+  golden. The rejoin `fast_bbo` needed is `bbo_merge`, and what makes it safe is
+  documented where it lives ([step4b-book](step4b-book/)): drive the fast path from
+  the ladder's accept so a record cannot overtake a deferred one, and merge on
+  value against a shared baseline so the duplicate suppression falls out of the
+  same change-detection the ladder already does.
+- **The fast path has not run on the card.** Its evidence is simulation: the BBO
+  sequence over the real 5 M replay, and the order frames HBM-to-HBM and through
+  the MAC model. `st_bbo_mismatch` counts the one thing that could break quietly —
+  `fast_bbo` certain and wrong — but it stops at `t2t_axil` with the `tcp_rx`
+  counters and is not in the register map yet, so on hardware it is not readable
+  at all. Publishing those counters is one register-map change for both.
 - **Retransmission is available, not automatic.** `tx_replay_buf` holds the last
   16 assembled frames and the host can ask for one back (`A_CTRL` bit 2). Nothing
   detects a loss and re-sends on its own — the hot path stays fire-and-forget by

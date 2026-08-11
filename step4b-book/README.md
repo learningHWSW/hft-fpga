@@ -55,7 +55,7 @@ scripts/dump_bbo.py    — golden (step 1 book model, canonical format; cross-ch
 ```
 
 
-## Fast top-of-book (`fast_bbo.sv`) — built, measured, not wired in
+## Fast top-of-book (`fast_bbo.sv`) — wired into the chain
 
 `price_ladder` is ~10 of the imbalance path's ~28 core cycles. It earns that
 depth: 4,096 levels per side and a grouped priority scan is the only way to answer
@@ -107,17 +107,80 @@ The fix is a forwarding path — when the ladder is speaking this cycle, its rec
 `r_fwd` and the ladder's own removal-to-add forward. Third time this design has
 needed that pattern.
 
-### What integration still has to decide
+### The rejoin (`bbo_merge.sv`) — how integration settled it
 
-The module is proven; wiring it in is not done, and the hard part is **ordering**.
-The strategy fires on the *rising edge* of a condition evaluated per BBO record,
-so the record sequence must not change or different orders come out. A fast record
-must therefore be held behind any earlier deferred one — otherwise record k
-overtakes k−1 and the edges move. Get that right and the output stays
-byte-identical to today's, with only the latency changing; get it wrong and the
-golden diff will say so loudly, which is the good case.
+The hard part was never the module, it was **ordering**. The strategy fires on the
+*rising edge* of a condition evaluated per BBO record, so the record sequence must
+not change or different orders come out. Two things make that safe:
 
-Note also that the realized saving is below the headline 91 %: a fast record
-following a deferral still waits for it, so how deferrals cluster decides the
-average. The 91 % is the fraction *answerable* early, not the fraction that will
-be delivered early.
+**Drive the fast path from the ladder's ACCEPT, not from the delta stream.**
+`price_ladder` accepts a delta only from IDLE and asserts `o_valid` in that same
+cycle, so gating `fast_bbo.i_valid` on `i_valid && i_ready` fixes the arrival order
+for every delta k:
+
+```
+accept(k)          lad(k-1) lands here too
+  +1 cycle         fast(k)
+  +11 cycles       lad(k), if the BBO changed -- and this is accept(k+1)
+  +12 cycles       fast(k+1)
+```
+
+A fast record therefore cannot overtake a deferred one: `fast_bbo` goes stale on a
+deferral and only a ladder record clears it, and that record is already out. The
+ordering hazard is removed by the tap point rather than by a reorder buffer.
+
+**Merge on value, not on source.** The two streams are not in one-to-one
+correspondence — one record per delta against one per *change* — so `bbo_merge`
+keeps the last BBO it emitted and emits only what differs from it. That is
+`price_ladder`'s own S_OUT test against its `o_*` registers, so the two
+change-detectors share a definition and a baseline and agree by construction. The
+duplicate ladder record for a delta the fast path already answered arrives equal
+and is dropped; no per-delta tag is needed, and no change can be lost, because
+dropping only ever happens on equality.
+
+`mismatch_cnt` counts the ladder contradicting an early answer, which `fast_bbo`'s
+contract forbids. It comes out of `fh_core` and `t2t_top` as `st_bbo_mismatch`, and
+today it stops in `t2t_axil` alongside the `tcp_rx` session counters: the status
+bus is a fixed-width word mirrored by the register map, so publishing a counter is
+a register-map change and those want doing together. Simulation reads it directly
+(`tb_fh_core` prints it), which is where the numbers below come from.
+
+**Measured on the real 5 M AAPL replay**, `fh_core` with the fast path in the
+datapath, BBO stream diffed against the software golden:
+
+```
+TB done: 1779 BBO updates (gap=24)
+  fast bbo : early=1174 late=605 (65% early) mismatch=0
+PASS: BBO == golden (real.mold loc=13 gap=24)
+```
+
+**The same 1,779 records as the ladder alone, 65 % of them delivered ten cycles
+sooner.** The realized 65 % is below the 91 % *answerable*, exactly as expected: a
+record following a deferral still waits for it, so how deferrals cluster decides
+the average. The 605 late records are the 605 deferrals.
+
+**It is not free in timing.** Out-of-context place & route of the full `t2t_top`
+chain at the 4.618 ns core target, same tool and same session, `USE_FAST_BBO = 0`
+against `1`:
+
+| | ladder only | with the fast path |
+|---|---|---|
+| synth core_clk WNS | +0.123 ns | +0.123 ns |
+| **post-route core_clk WNS** | **+0.043 ns** | **−0.164 ns** |
+| **post-route core_clk Fmax** | **218.6 MHz** | **209.1 MHz** |
+| CLB LUTs / registers | 54,329 / 33,079 | 55,227 / 33,784 |
+
+**209.1 MHz still clears the 195.3 MHz that 100 Gb/s demands**, with 13.8 MHz of
+margin instead of 23.3. The synthesis number is *identical* between the two, so the
+9.5 MHz is not a longer logic chain — it appears in place & route, where ~900 more
+LUTs and 700 more flops in the middle of the book path cost routing. Whether it is
+recoverable by floorplanning or is simply the price of the second book engine is
+not yet answered.
+
+End to end, on the step-8 kernel's synthetic chain, the loaded-latency probe's four
+samples read **min 33 → 24 core cycles** (`USE_FAST_BBO = 0` against the default),
+mean 51 → 47, with the max moving 73 → 74: the rejoin is a registered stage, so a
+deferred record pays one cycle for what the certain ones save nine or ten of. Four
+samples is a direction, not a distribution — the honest latency number for the fast
+path is still the one nobody has taken, on the card. Order frames stay
+byte-identical HBM-to-HBM and through the MAC model.

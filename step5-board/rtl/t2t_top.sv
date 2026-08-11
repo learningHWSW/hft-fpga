@@ -29,7 +29,11 @@ module t2t_top #(
   // depth rather than capacity (see order_table). Instantiated as URAM, so
   // synthesis builds the size simulation verifies.
   parameter int OT_SETS_BITS  = 13,
-  parameter int OT_WAYS       = 16
+  parameter int OT_WAYS       = 16,
+  // Answer the common book delta from fast_bbo instead of waiting for the
+  // ladder's scan. The emitted BBO stream is identical either way -- bbo_merge
+  // is what guarantees that -- so 0 exists to bisect, not to trade off.
+  parameter bit USE_FAST_BBO  = 1
 )(
   // ---- CMAC domain ----
   input  logic                cmac_clk,
@@ -106,6 +110,11 @@ module t2t_top #(
   output logic [31:0]         st_gap_total,
   output logic [31:0]         st_ot_overflow,
   output logic [31:0]         st_pl_oob,
+  // How the BBO stream was answered: early by fast_bbo, late by the ladder, and
+  // the two disagreeing, which must never happen (bbo_merge's header says why).
+  output logic [31:0]         st_bbo_early,
+  output logic [31:0]         st_bbo_late,
+  output logic [31:0]         st_bbo_mismatch,
   output logic [31:0]         st_beat_drop,
   output logic [31:0]         st_msg_drop,
   output logic [31:0]         st_delta_drop,
@@ -281,7 +290,8 @@ module t2t_top #(
   logic [31:0] st_dup_cnt, st_frame_err, st_ot_miss, st_sweep_cnt;
   logic        sweep_pulse, sweep_is_buy;
 
-  fh_core #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS)) u_fh (
+  fh_core #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS),
+            .USE_FAST_BBO(USE_FAST_BBO)) u_fh (
     .clk(core_clk), .rst_n(core_rst_n),
     .track_locate(cfg_track_locate), .cfg_base(cfg_band_base),
     .s_tdata(mrg_tdata), .s_tkeep(mrg_tkeep), .s_tvalid(mrg_tvalid), .s_tlast(mrg_tlast),
@@ -297,6 +307,8 @@ module t2t_top #(
     .st_ot_overflow(st_ot_overflow), .st_ot_miss(st_ot_miss), .st_pl_oob(st_pl_oob),
     .st_beat_drop(st_beat_drop), .st_msg_drop(st_msg_drop), .st_delta_drop(st_delta_drop),
     .st_beat_level_max(), .st_msg_level_max(), .st_delta_level_max(),
+    .st_bbo_early(st_bbo_early), .st_bbo_late(st_bbo_late),
+    .st_bbo_mismatch(st_bbo_mismatch),
     .o_dec_valid(o_dec_valid), .o_dec_ts(o_dec_ts)
   );
 

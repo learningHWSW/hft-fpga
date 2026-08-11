@@ -226,14 +226,18 @@ Ordered by value, with the measurement that justifies each:
 1. **Nothing in the datapath, first.** The MAC is ~300 ns of a ~518 ns path and
    the fabric is ~207 ns, so cycle-shaving attacks the smaller term. Know that
    before spending time on it.
-2. **Integrate `fast_bbo`** (91 % of real book updates answered in one cycle
-   instead of ten). The module and its safety property are proven; the work is
-   the rejoin ordering, which must not change the BBO sequence.
-3. **Integrate `tx_replay_buf`** — proven, and small because the spec makes a
-   resend idempotent.
-4. **Solve inbound on the card's own TCP connection.** Acks and fills arrive at
-   the card's MAC and the FPGA does not parse TCP. This is the last structural
-   gap in the tick-to-trade loop.
+2. ~~**Integrate `fast_bbo`**~~ — **done.** The rejoin (`bbo_merge`) is driven
+   from the ladder's accept, which fixes the arrival order, and merges on value
+   against a shared baseline, which makes the duplicate suppression fall out of
+   the ladder's own change test. The BBO sequence is unchanged on the real replay
+   (1,779 records, 1,174 of them ten cycles early), and the plan was right that
+   the ordering was the whole job.
+3. ~~**Integrate `tx_replay_buf`**~~ — **done**, and it was small for the reason
+   given.
+4. **Solve inbound on the card's own TCP connection.** Half done: `tcp_rx` is
+   wired in and the acknowledgement number the card sends is live. Acks and fills
+   still do not reach the host — the session stream stops inside `t2t_axil` for
+   want of a capture path.
 5. **A cabled two-port measurement** against a live feed, replacing near-end
    loopback. Needs optics and a feed source.
 6. **Re-derive the strategy parameters from a full trading day.** The current
