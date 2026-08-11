@@ -858,15 +858,36 @@ Everything above is the ladder-only datapath. `fast_bbo` went in afterwards, and
 the Phase B bitstream was rebuilt and re-run on the identical stimulus (real 5 M
 AAPL, gap 512, same MAC, same loopback), so the two are directly comparable:
 
-| Phase B, real 5 M AAPL | ladder only | with `fast_bbo` | delta |
+Both bitstreams were rebuilt and both phases re-run, so the whole table moves
+together rather than mixing a fresh number with a stale one:
+
+| real 5 M AAPL, gap 512 | ladder only | with `fast_bbo` | delta |
 |---|---|---|---|
-| wire-to-wire min | 166 cy / 515.1 ns | 152 cy / **471.7 ns** | **−43.4 ns** |
-| wire-to-wire mean | 186.6 cy / 579.1 ns | 177.8 cy / **551.9 ns** | −27.2 ns |
-| wire-to-wire max | 239 cy / 741.6 ns | 241 cy / 747.8 ns | +6.2 ns |
+| **Phase B** wire-to-wire min | 166 cy / 515.1 ns | 152 cy / **471.7 ns** | **−43.4 ns** |
+| Phase B mean | 186.6 cy / 579.1 ns | 177.8 cy / **551.9 ns** | −27.2 ns |
+| Phase B max | 239 cy / 741.6 ns | 241 cy / 747.8 ns | +6.2 ns |
+| **Phase A** in-fabric min | 62 cy / 206.7 ns | 50 cy / **166.7 ns** | **−40.0 ns** |
+| Phase A mean | 78.9 cy / 263.0 ns | 70.9 cy / **236.4 ns** | −26.6 ns |
+| Phase A max | 124 cy / 413.3 ns | 125 cy / 416.7 ns | +3.4 ns |
 | loaded (decode→order) min | 23 core cy | **14 core cy** | −9 cycles |
 | samples / excluded | 70 / 0 | 70 / 0 | |
 | `st_bbo_mismatch` | n/a | **0** | |
 | golden | PASS | PASS | |
+
+**Two quantities in this table must NOT have moved, and did not.** `fast_bbo`
+sits between the two probes, so neither the MAC term (Phase B minus Phase A) nor
+the fixed front end + back end (Phase A minus the loaded probe) should change:
+
+| | ladder only | with `fast_bbo` | delta |
+|---|---|---|---|
+| MAC TX + RX + SerDes round trip | 308.4 ns | 305.0 ns | −3.4 ns |
+| fixed front end + back end | 99.7 ns | 101.6 ns | +1.9 ns |
+
+Those are four independent 70-sample measurements across four separately placed
+and routed bitstreams, and the two invariants reproduce to within a few
+nanoseconds. That is worth more than either headline number on its own: it says
+the improvement is where the change is, and that the decomposition in §7.5.2 was
+measuring something real rather than an artefact of one build.
 
 **The fast path's own claim, checked on silicon.** It was measured in simulation
 to answer 1,174 of 1,779 records "about ten cycles early"; the loaded probe on
@@ -886,10 +907,11 @@ because the fast path can be wrong in a way a golden diff cannot see — if
 already acted on the early answer, the order stream could still match a golden
 built from the same wrong book. It is zero, on real data, on silicon.
 
-**Not re-measured: Phase A.** The in-fabric numbers in the table above, and the
-99.7 ns front-end/back-end figure derived from them in §7.5.2, are still the
-ladder-only build. The MAC-term subtraction they support is unaffected in kind,
-but the Phase A row would move by roughly the same nine core cycles.
+**Phase A was rebuilt too**, which is what makes the invariant check above
+possible. It also needed no clock scaling, unlike Phase B, where one path in the
+harness's capture DMA missed by 13 ps and Vitis dropped `ap_clk` from 300 to
+298.8 MHz. That path is not in the datapath and `ap_clk_2` — the core clock
+these cycle counts are taken in — was not scaled in either build.
 
 **Simulation was wrong by a factor of two**, as the paragraph above predicted it
 would be: it put the same delta at ~145 ns, because `MAC_LAT = 40` is a constant a

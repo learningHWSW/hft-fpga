@@ -33,7 +33,7 @@ Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session
 | **Wire-to-wire, through a real 100 G MAC** | **471.7 ns** min / 551.9 ns mean / 747.8 ns max, 70 samples, none excluded |
 | Decoder-to-order under load | **14 core cycles** min / 27.2 mean / 64 max |
 | Fast book path vs. the ladder | 1,174 of 1,779 BBO records answered early, **`st_bbo_mismatch = 0`** |
-| In-fabric only (first RX beat to first TX beat) | 206.7 ns min — *ladder-only build, not yet re-measured* |
+| In-fabric only (first RX beat to first TX beat) | **166.7 ns** min / 236.4 ns mean |
 | Order frames vs. the software golden | **70 / 70 byte-identical**, zero drops |
 | MAC frames passed | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |
 | Full chain post-route (out of context) | **225.5 MHz** best of four directive sets (221.7 worst), above the 195.3 MHz a 100 Gb/s wire demands |
@@ -56,9 +56,13 @@ early", and it delivers nine. The max moved the wrong way by 2 cycles, which is
 70 samples of noise, not a finding. `st_bbo_mismatch = 0` over the whole replay:
 the fast path never contradicted the ladder on real data.
 
-The in-fabric row is still the ladder-only measurement — it needs the Phase A
-bitstream, which has not been rebuilt. The MAC half, the larger half, cannot
-move.
+Both bitstreams were rebuilt, so the whole table moves together. That also buys
+a check worth more than either number: `fast_bbo` sits *between* the two probes,
+so the MAC term (Phase B minus Phase A) and the fixed front end + back end
+(Phase A minus the loaded probe) must not move — and across four separately
+placed and routed builds they reproduce to **305.0 vs 308.4 ns** and **101.6 vs
+99.7 ns**. The improvement is where the change is. The MAC half, still the larger
+half, cannot move.
 
 This section used to add that the fast path costs 9.5 MHz of post-route frequency.
 It does not: that was one build against one build, and across four implementation
@@ -353,14 +357,14 @@ Honest scope, all of it stated in the per-step READMEs.
   `mold_stripper`, and that is on purpose — it is step 3a's 64-bit reference,
   superseded by `mold_splitter` at CMAC width and kept because the two are
   diffed against the same golden.
-- **The fast path has run on the card; the Phase A bitstream has not been
-  rebuilt.** Phase B — through a real `cmac_usplus` with the GT in near-end
-  loopback — was rebuilt with `fast_bbo` and re-run on the real 5 M AAPL replay:
-  70/70 order frames byte-identical, `st_bbo_mismatch = 0` across 1.13 M frames,
-  and wire-to-wire down from 515.1 to 471.7 ns at the minimum (`FINDINGS`
-  §7.6.0). What is still ladder-only is the *in-fabric* half of the latency
-  budget: that number comes from the Phase A bitstream, which has not been
-  rebuilt, so §7.5.2's front-end/back-end decomposition rests on a mixed pair.
+- **The fast path has run on the card, in both phases.** Both bitstreams were
+  rebuilt with `fast_bbo` and re-run on the real 5 M AAPL replay: 70/70 order
+  frames byte-identical either way, `st_bbo_mismatch = 0` across 1.13 M frames,
+  wire-to-wire 515.1 → 471.7 ns and in-fabric 206.7 → 166.7 ns at the minimum
+  (`FINDINGS` §7.6.0). What has *not* been re-measured is the load sweep — the
+  saturation knee and the burst-tail figures in §7.5.1 are still ladder-only, so
+  the "max grows 2.21×, to 730 ns" above describes a datapath that is now nine
+  core cycles shorter at the floor.
 - **Retransmission is automatic, and off by default.** `tx_rto` watches the
   acknowledgement number `tcp_rx` tracks and asks `tx_replay_buf` for the oldest
   unacknowledged frame when it stops advancing. It arms only after the venue has
