@@ -118,11 +118,41 @@ test-t2t-pipe: real.eth
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: pipe wire -> order frames == golden"
 
 # full tick-to-trade chain (t2t_top): two clocks, wire in -> order frame out
+#
+# FAST selects the fast_bbo path (1) or the ladder alone (0), and DIRSET picks
+# an implementation directive triple -- both go to the build as knobs rather
+# than as edits, and both appear in the output directory name, so no two
+# configurations can overwrite each other's reports.
 T2T_PERIOD ?= 4.618
+FAST       ?= 1
+DIRSET     ?= default
+T2T_ARGS    = $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
 synth-t2t:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) $(FAST) $(DIRSET)
 impl-t2t:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
+	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(T2T_ARGS) $(FAST) $(DIRSET)
+
+# The fast_bbo timing question: is the post-route fMAX difference between
+# FAST=0 and FAST=1 a real cost of the feature, or is it the tool's run-to-run
+# spread? One build of each cannot tell those apart, so this runs both across
+# every directive set and prints the two distributions side by side. Four
+# concurrent Vivados is comfortable on 32 cores; each is given 8.
+#   make sweep-t2t          # 8 impl runs, ~40 min
+#   make sweep-t2t-report   # re-print the table from existing runs
+SWEEP_DIRSETS = default explore netdly fanout
+sweep-t2t:
+	@for f in 0 1; do \
+	  for d in $(SWEEP_DIRSETS); do \
+	    echo "=== launching fast=$$f dirset=$$d ==="; \
+	    vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl \
+	      -tclargs $(T2T_ARGS) $$f $$d > syn/sweep-f$$f-$$d.log 2>&1 & \
+	  done; \
+	  wait; \
+	done
+	@$(MAKE) --no-print-directory sweep-t2t-report
+
+sweep-t2t-report:
+	@python3 scripts/sweep_report.py syn/sweep-f*.log
 
 # t2t_axil wrapper (three clocks): synth checks the 3-clock XDC applies cleanly
 synth-axil:
@@ -134,7 +164,7 @@ clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 	rm -f  realsmall-*.itch realsmall-*.mold realsmall-*.eth
 
-.PHONY: test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
+.PHONY: test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
 
 # xsim twins for the self-checking unit tests. Verilator is not installed
 # everywhere -- it is absent on the machine with the actual U55C, which made most

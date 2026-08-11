@@ -9,18 +9,55 @@
 # violations.
 #
 #   vivado -mode batch -source syn/synth_t2t.tcl \
-#          -tclargs <part> <synth|impl> <ot_sets_bits> <ot_ways> <core_period>
+#          -tclargs <part> <synth|impl> <ot_sets_bits> <ot_ways> <core_period> \
+#                   <use_fast_bbo> <directive_set>
 #
-# Reports land in syn/out_t2t/.
+# THE LAST TWO ARGUMENTS EXIST TO MAKE THIS BUILD COMPARABLE WITH ITSELF.
+# Asking "what did feature X cost in fMAX?" needs two builds that differ only in
+# X, and asking "is that cost real or is it placement noise?" needs several of
+# each. Two things used to be in the way, and both have now bitten:
+#
+#   * USE_FAST_BBO was read from the RTL default, so switching it meant editing
+#     t2t_top.sv -- and a build left running with the file in the other state
+#     silently produced the wrong answer;
+#   * every run wrote to syn/out_t2t/, so two runs in parallel overwrote each
+#     other's reports and the survivor looked authoritative.
+#
+# So the parameter is a -generic, and the output directory is NAMED AFTER THE
+# BUILD (step8's replay images learned the same lesson): syn/out_t2t-f1-explore/
+# can only ever hold a fast build run with the explore directives. A run that
+# differs in any knob cannot land on top of one that differs in another.
 set part   [lindex $argv 0]
 set mode   [lindex $argv 1]
 if {$part eq ""} { set part xcu55c-fsvh2892-2L-e }
 if {$mode eq ""} { set mode synth }
 
+# USE_FAST_BBO: 1 keeps fast_bbo + bbo_merge, 0 leaves price_ladder alone. The
+# BBO sequence is identical either way (step4b/tb_bbo_merge.sv); this is purely
+# the latency-vs-timing knob.
+set fast [expr {[lindex $argv 5] ne "" ? [lindex $argv 5] : 1}]
+
+# Implementation directive sets. place/phys_opt/route are chosen together
+# because they interact -- an aggressive placer with the default router is not a
+# point anyone would ship. Vivado exposes no placement seed, so varying
+# directives is the only way to sample the tool's run-to-run spread, and without
+# that spread a single-build fMAX delta cannot be told apart from noise.
+array set dirsets {
+  default {Default            Default                  Default}
+  explore {Explore            Explore                  Explore}
+  netdly  {ExtraNetDelay_high AggressiveExplore        NoTimingRelaxation}
+  fanout  {AltSpreadLogic_medium AggressiveFanoutOpt   AggressiveExplore}
+}
+set dset [expr {[lindex $argv 6] ne "" ? [lindex $argv 6] : "default"}]
+if {![info exists dirsets($dset)]} {
+  error "unknown directive set '$dset'; have: [lsort [array names dirsets]]"
+}
+lassign $dirsets($dset) d_place d_phys d_route
+
 set here   [file dirname [file normalize [info script]]]
 set root   [file dirname $here]
 set repo   [file dirname $root]
-set outdir $here/out_t2t
+set outdir $here/out_t2t-f$fast-$dset
 file mkdir $outdir
 
 set srcs [list \
@@ -40,6 +77,11 @@ set srcs [list \
   $root/rtl/feed_ab_arb.sv $root/rtl/igmp_query_detect.sv $root/rtl/tcp_rx.sv $root/rtl/t2t_top.sv ]
 
 create_project -in_memory -part $part
+# Capped so four of these can run at once on a 32-core box without thrashing.
+# Thread count does not change the result -- Vivado's placer and router are
+# deterministic for a given directive regardless of how many threads run them --
+# so a sweep run in parallel is comparable with one run serially.
+set_param general.maxThreads 8
 foreach f $srcs { read_verilog -sv $f }
 set defs {OTABLE_XPM}
 if {[info exists ::env(OT_PIPE)]} { lappend defs OT_PIPE }
@@ -67,9 +109,20 @@ read_xdc $gen_xdc
 set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
 set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
 
-puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} ==="
+puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} fast_bbo=$fast ==="
 synth_design -top t2t_top -part $part -mode out_of_context \
-  -generic OT_SETS_BITS=$ot_sets_bits -generic OT_WAYS=$ot_ways
+  -generic OT_SETS_BITS=$ot_sets_bits -generic OT_WAYS=$ot_ways \
+  -generic USE_FAST_BBO=$fast
+
+# Cheap insurance against the generic silently not applying: with USE_FAST_BBO=0
+# the generate block leaves no fast_bbo cells at all, and with 1 it must leave
+# some. A -generic that misses (wrong name, wrong top) fails this line rather
+# than producing a plausible-looking build of the wrong thing.
+set nfast [llength [get_cells -hier -quiet \
+             -filter {REF_NAME =~ "fast_bbo*" || NAME =~ "*u_fast*"}]]
+if {($fast && $nfast == 0) || (!$fast && $nfast != 0)} {
+  error "USE_FAST_BBO=$fast did not take: $nfast fast_bbo cells in the netlist"
+}
 
 file mkdir $outdir
 report_utilization -hierarchical -file $outdir/util_synth.rpt
@@ -84,11 +137,30 @@ proc summarize {tag period} {
     if {[llength $p]} {
       set s [get_property SLACK $p]
       puts "SUMMARY_${tag}_WNS_$ck: $s"
+      # fMAX must be computed from the path's OWN clock period. cmac_clk is
+      # 3.103 ns whatever core_clk is set to, and dividing its slack by the core
+      # period would report a number for a clock that does not exist.
+      set ckp [get_property PERIOD [get_clocks $ck]]
+      puts "SUMMARY_${tag}_FMAX_MHZ_$ck: [format %.1f [expr {1000.0/($ckp - $s)}]]"
+      # Where the worst path in this domain actually is. A one-line answer to
+      # "did the thing I changed become the critical path, or did it just move
+      # the placement around?" -- which is the whole question when comparing
+      # two builds whose fMAX differ.
+      puts "SUMMARY_${tag}_WORST_$ck: [get_property STARTPOINT_PIN $p] -> \
+[get_property ENDPOINT_PIN $p] levels=[get_property LOGIC_LEVELS $p]"
     }
   }
   set w [get_property SLACK [get_timing_paths -max_paths 1 -delay_type max]]
   puts "SUMMARY_${tag}_WNS: $w"
   puts "SUMMARY_${tag}_CORE_FMAX_MHZ: [format %.1f [expr {1000.0/($period - $w)}]]"
+  # Failing endpoints and total violation: WNS is one path, and a build whose
+  # single worst path is bad but whose TNS is tiny is a different problem from
+  # one with hundreds of endpoints just over the line.
+  set tns 0.0 ; set nfail 0
+  foreach p [get_timing_paths -max_paths 4000 -delay_type max -slack_lesser_than 0] {
+    set tns [expr {$tns + [get_property SLACK $p]}] ; incr nfail
+  }
+  puts "SUMMARY_${tag}_TNS: [format %.3f $tns]  SUMMARY_${tag}_FAILING: $nfail"
 }
 summarize SYNTH $period
 foreach t {LUT FDRE RAMB36E2 RAMB18E2 URAM288 DSP48E2} {
@@ -96,15 +168,16 @@ foreach t {LUT FDRE RAMB36E2 RAMB18E2 URAM288 DSP48E2} {
 }
 
 if {$mode eq "impl"} {
-  puts "=== opt/place/route ==="
+  puts "=== opt/place/route: dirset=$dset place=$d_place phys=$d_phys route=$d_route ==="
   opt_design
-  place_design
-  phys_opt_design
-  route_design
+  place_design    -directive $d_place
+  phys_opt_design -directive $d_phys
+  route_design    -directive $d_route
   report_utilization -hierarchical -file $outdir/util_impl_hier.rpt
   report_utilization              -file $outdir/util_impl.rpt
   report_timing_summary -delay_type max -max_paths 10 -file $outdir/timing_impl.rpt
   write_checkpoint -force $outdir/post_route.dcp
   summarize IMPL $period
 }
+puts "SUMMARY_BUILD: fast=$fast dirset=$dset period=$period outdir=[file tail $outdir]"
 puts "=== DONE mode=$mode ==="
