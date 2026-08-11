@@ -47,6 +47,10 @@ step6-strategy/ouch_*.log
 step6-strategy/frames_*.log
 # the full-day BBO extract behind FINDINGS 5.3: 16 MB, and one command to rebuild
 step6-strategy/aapl_bbo.txt
+# step 8: replay images are named after their stimulus (see its Makefile)
+step8-hw/replay-*.bin
+# step 5: the simulation-sized slice of the real feed
+step5-board/realsmall.*
 step5-board/t2t_*.log
 
 # generated wire-format replays (derived from licensed NASDAQ ITCH data --

@@ -508,7 +508,10 @@ module tb_t2t_kernel;
     axil_read(R_RP_FRAMES, v); $display("TB: frames injected = %0d", v);
     if (v == 0) $display("FAIL: injector produced no frames");
     axil_read(R_CP_FRAMES, ncap); $display("TB: frames captured = %0d", ncap);
-    if (ncap == 0) $display("FAIL: capture wrote no frames");
+    // The empty-capture check waits until st_frame_cnt has been read, below:
+    // Phase A captures the IGMP report too, so empty is always wrong there, but
+    // Phase B filters the capture to TCP and a stimulus that fires no orders
+    // legitimately captures nothing.
     axil_read(R_CP_OVF,   v); $display("TB: capture overflow = %0d", v);
     if (v != 0) $display("FAIL: capture overflowed");
     axil_read(R_CP_STALL, v); $display("TB: capture stalls   = %0d", v);
@@ -522,6 +525,12 @@ module tb_t2t_kernel;
     axil_read(T2T + 13'h118, v); $display("TB: st_ot_overflow = %0d", v);
     axil_read(T2T + 13'h12C, v); $display("TB: st_sent        = %0d", v);
     axil_read(T2T + 13'h144, ntx); $display("TB: st_frame_cnt   = %0d", ntx);
+`ifdef PHASE_B
+    if (ncap == 0 && ntx != 0)
+      $display("FAIL: %0d orders built and the capture wrote no frames", ntx);
+`else
+    if (ncap == 0) $display("FAIL: capture wrote no frames");
+`endif
     axil_read(T2T + 13'h148, v); $display("TB: st_tx_drop     = %0d", v);
     if (v != 0) $display("FAIL: TX CDC dropped %0d beats", v);
     // The counters published after st_tx_drop, read the same way -- through the
@@ -582,8 +591,11 @@ module tb_t2t_kernel;
     if (nlat == 0) begin
       // Only a failure when the run actually qualified: with gap >= quiet every
       // order is attributable, so zero samples then means the probe is not
-      // seeing the streams. Below that, exclusion is the guard doing its job.
-      if (gap >= quiet)
+      // seeing the streams. Below that, exclusion is the guard doing its job --
+      // and with no orders at all there was never anything to sample, which is a
+      // property of the stimulus (the real feed fires none this early) rather
+      // than of the probe.
+      if (gap >= quiet && ntx != 0)
         $display("FAIL: latency probe recorded no samples at gap=%0d quiet=%0d",
                  gap, quiet);
       else
@@ -616,8 +628,20 @@ module tb_t2t_kernel;
     axil_read(R_M_SAMPLES, nload);
     axil_read(R_M_MISSES,  lmiss);
     $display("TB: loaded-latency samples=%0d misses=%0d", nload, lmiss);
-    if (nload == 0) $display("FAIL: loaded probe recorded no samples");
-    else begin
+    // Only a failure if there was something to measure. The real feed's first
+    // hundred thousand messages fire no orders at all (they are rare that early),
+    // and a probe with nothing to correlate is then the correct answer rather
+    // than a broken instrument.
+    if (nload == 0) begin
+      // A probe with nothing to correlate is the right answer when nothing was
+      // sent, and reading its min/max in that state is how a stimulus with no
+      // orders used to report "max 0 below min 4294967295" -- the reset values,
+      // and a division by zero one line later.
+      if (ntx != 0)
+        $display("FAIL: %0d orders sent and the loaded probe recorded no samples", ntx);
+      else
+        $display("TB: no loaded-latency samples: this stimulus fires no orders");
+    end else begin
       axil_read(R_M_MIN,    v);
       axil_read(R_M_MAX,    lmax2);
       axil_read(R_M_SUM_LO, lsum2);

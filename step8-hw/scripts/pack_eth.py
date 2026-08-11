@@ -22,6 +22,7 @@ therefore with step 6's golden. Reusing the testbench's classification instead o
 reinventing it is the point: the hardware run is checked against the same golden,
 not against a second implementation that could agree with its own mistake.
 """
+import os
 import sys
 
 BEAT = 64                      # bytes per 512-bit beat
@@ -53,9 +54,17 @@ def read_eth(path):
             yield frame
 
 
-def pack(eth_path, out_path):
+def pack(eth_path, out_path, max_bytes=0):
     """`.eth` -> replay image. Returns (frames, beats) for the host to program
-    into the harness registers; beats is what eth_replay's cfg_beats needs."""
+    into the harness registers; beats is what eth_replay's cfg_beats needs.
+
+    max_bytes, when given, is the simulation memory model's capacity. The
+    testbench refuses an image larger than its own array and says so -- but only
+    after xvlog, xelab and elaboration, several minutes in. The same limit
+    checked here fails in the second before any of that work, and says how far
+    over the image is, which is the number that decides what to do about it. Zero
+    disables the check, which is what a card image wants: the card has HBM.
+    """
     beats = 0
     frames = 0
     with open(out_path, "wb") as o:
@@ -74,6 +83,17 @@ def pack(eth_path, out_path):
         pad_beats = (-beats) % BURST_BEATS
         o.write(bytearray(pad_beats * BEAT))
         beats += pad_beats
+
+    size = beats * BEAT
+    if max_bytes and size > max_bytes:
+        os.remove(out_path)          # a half-usable image is worse than none
+        raise SystemExit(
+            "pack_eth: {} packs to {:.1f} MB, over the {:.1f} MB the simulation "
+            "memory model holds.\n"
+            "          {} frames from {}. The full replay is a CARD target: see "
+            "`make run-card-real`,\n"
+            "          or slice a smaller stimulus (step5-board RSMALL)."
+            .format(out_path, size / 1e6, max_bytes / 1e6, frames, eth_path))
     return frames, beats
 
 
@@ -126,7 +146,10 @@ def ip2int(s):
 
 def main(argv):
     if len(argv) >= 4 and argv[1] == "pack":
-        frames, beats = pack(argv[2], argv[3])
+        max_bytes = 0
+        if "--max-bytes" in argv:
+            max_bytes = int(argv[argv.index("--max-bytes") + 1])
+        frames, beats = pack(argv[2], argv[3], max_bytes)
         # stdout is consumed by the Makefile / host, so keep it machine-readable
         print(f"frames={frames} beats={beats}")
         return 0
@@ -149,7 +172,7 @@ def main(argv):
         return 0
 
     sys.stderr.write(
-        "usage: pack_eth.py pack <in.eth> <out.bin>\n"
+        "usage: pack_eth.py pack <in.eth> <out.bin> [--max-bytes N]\n"
         "       pack_eth.py unpack <capture.bin> <n_records> [local_ip]\n"
         "                                                    # orders to stdout\n")
     return 2

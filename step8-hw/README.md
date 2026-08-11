@@ -1649,6 +1649,26 @@ means slicing the 7.7 GB uncompressed capture and takes considerably longer.
 The pack is deterministic: regenerating it reproduces the image the measurements
 were taken from byte for byte (verified by md5).
 
+**Simulation images are named after their stimulus** — `replay-test.bin`,
+`replay-realsmall.bin` — and that is a fix, not a convention. One shared
+`replay.bin` meant switching `ETH` left the previous image in place whenever it
+was newer than the new `.eth`: make saw the target up to date, xsim replayed the
+OLD stimulus, and `golden` regenerated for the NEW one. The diff that produced
+looks exactly like a datapath regression. A derived name cannot go stale, because
+a different stimulus is a different target.
+
+**And the full replay is a card image, not a simulation one.** It packs to
+327 MB; `tb_t2t_kernel`'s memory model holds 8 MB. `make test-real` used to point
+at it and fail every time, minutes in, inside xsim — it now runs the largest
+prefix that fits (`step5-board/realsmall.eth`, `RSMALL` messages), and `pack_eth`
+refuses an oversized image in the second before any tool starts:
+
+```
+pack_eth: replay-real.bin packs to 327.0 MB, over the 8.4 MB the simulation
+          memory model holds. 1127057 frames from ../step5-board/real.eth.
+          The full replay is a CARD target: see `make run-card-real`.
+```
+
 **The contiguous sequences matter.** `itch2mold.py` emits unbroken MoldUDP64
 sequence numbers, so this image has `gap=0`, `feed_ab_arb`'s recovery timeout never
 fires, and the golden diff holds at *any* injector gap. That is what makes a

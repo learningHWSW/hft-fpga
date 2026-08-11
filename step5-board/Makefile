@@ -46,6 +46,34 @@ real.itch:
 real.mold: real.itch
 	python3 $(STEP1)/itch2mold.py real.itch real.mold
 
+# A SIMULATION-SIZED slice of the same real feed. The 5 M one exists to be
+# replayed on the card: packed it is 327 MB, and the kernel testbench's memory
+# model holds 8 MB, so a simulation of the full replay is not a slow test, it is
+# an impossible one. This is the largest prefix that fits, kept under its own
+# names so nothing here clobbers the artefacts the card flow depends on.
+#
+# What it covers is the FEED path on real data -- framing, the splitter, the
+# table, the book -- and not the order path: orders are rare in this feed (one in
+# the first million messages), so a prefix this size fires none. That is a
+# statement about the stimulus, not a gap in the test, and step8's test-real
+# prints the golden's order count so an empty diff cannot be mistaken for
+# coverage.
+# THE SIZE IS IN THE NAME, for the same reason step8's replay image carries its
+# stimulus: a slice built once and named `realsmall` would be silently reused
+# when someone asked for a different message count, since the rule has no
+# prerequisite that changes. As a pattern rule the count cannot go stale.
+realsmall-%.itch:
+	python3 $(STEP1)/itch_slice.py $(RCAP) $@ $* AAPL
+realsmall-%.mold: realsmall-%.itch
+	python3 $(STEP1)/itch2mold.py $< $@
+realsmall-%.eth: realsmall-%.mold
+	python3 $(STEP1)/mold2eth.py $< $@
+# Without this make treats the .itch and .mold as intermediates of the chain
+# above and DELETES them once the .eth exists -- and the .itch is what the
+# golden is generated from, so the next target to ask for it finds the .eth "up
+# to date" and no source to build a golden against.
+.SECONDARY: realsmall-%.itch realsmall-%.mold
+
 test-real: real.mold
 	$(MAKE) test-verilator MOLD=real.mold ITCH=real.itch LOC=13 BASE=2800000
 
@@ -104,6 +132,7 @@ impl-axil:
 
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
+	rm -f  realsmall-*.itch realsmall-*.mold realsmall-*.eth
 
 .PHONY: test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test test-verilator golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t synth-axil impl-axil clean
 

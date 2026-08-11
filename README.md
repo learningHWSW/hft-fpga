@@ -238,7 +238,7 @@ cd step4b-book && make test-verilator  # Verilator (no Vivado)
 | 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx` | the whole chain, two clocks, wire frames in and session frames back |
 | 6 | `make test-xsim`, `make test-replay`, `make test-rto` | orders and OUCH/TCP bytes == golden, and when a resend is decided |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
-| 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto` | the Vitis kernel, HBM to HBM, through the MAC, the venue's replies back to the host, and the card re-sending an unacknowledged order |
+| 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto`, `make test-real` | the Vitis kernel, HBM to HBM, through the MAC, the venue's replies back to the host, the card re-sending an unacknowledged order, and the real feed as far as the memory model holds |
 
 ### Synthesis and place & route
 

@@ -46,6 +46,32 @@ GAP  ?= 48
 RECS ?= 2048
 QUIET ?= 256
 
+# THE IMAGE IS NAMED AFTER ITS STIMULUS, and that is the whole fix for a trap
+# that cost real debugging time. It used to be plain `replay.bin` for every
+# stimulus, so switching ETH -- which is exactly what `make test-real` does --
+# left the previous image in place whenever it happened to be newer than the
+# .eth file. make saw an up-to-date target, xsim replayed the OLD stimulus, and
+# `golden` regenerated for the NEW one: a 70-line-against-4-line diff that reads
+# like a datapath regression and is nothing of the kind. A derived name cannot go
+# stale, because a different stimulus is a different target.
+REPLAY = replay-$(basename $(notdir $(ETH))).bin
+
+# The testbench's replay memory model, mirrored from tb_t2t_kernel.sv
+# (RMEM_BYTES). Packing checks it so an oversized image fails in seconds with a
+# number, rather than after minutes of work inside xsim -- which is what the full
+# 5 M replay used to do, since it packs to 327 MB.
+TB_MAX_BYTES ?= 8388608
+
+# The real feed, cut to a size simulation can hold. The count is part of the file
+# name (step5-board builds it with a pattern rule), so asking for a different one
+# builds a different slice instead of reusing the last.
+RSMALL      ?= 100000
+RSMALL_ITCH  = $(STEP5)/realsmall-$(RSMALL).itch
+RSMALL_ETH   = $(STEP5)/realsmall-$(RSMALL).eth
+# A gap of 512 idle cycles per frame is ten times the simulation time per
+# frame, so the latency targets take a shorter slice than the throughput ones.
+RSMALL_LAT  ?= 20000
+
 # strategy knobs, identical to the step 5/6 golden invocations
 ORDARGS = 2000 1 100 100 1000 65535 50
 
@@ -87,18 +113,18 @@ XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_ge
 # ---------- harness in simulation: HBM in -> HBM out, diffed against golden ----
 # The capture image is parsed by the SAME script the host uses on the card, so a
 # pass here means the record format and the parser agree before any build.
-test: golden replay.bin ## Simulate|full chain in Verilator (HBM->HBM, diffed against golden)
+test: golden $(REPLAY) ## Simulate|full chain in Verilator (HBM->HBM, diffed against golden)
 	verilator --binary --timing --timescale 1ns/1ps -Wno-TIMESCALEMOD \
 	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNOPTFLAT -j 0 \
 	  -o ksim --top-module $(TOP) $(SRC) $(TB)
-	./obj_dir/ksim +eth=replay.bin +cap=capture.bin +gap=$(GAP) +loc=$(LOC) +base=$(BASE) +quiet=$(QUIET)
+	./obj_dir/ksim +eth=$(REPLAY) +cap=capture.bin +gap=$(GAP) +loc=$(LOC) +base=$(BASE) +quiet=$(QUIET)
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > k_rtl.log
 	diff k_gold.log k_rtl.log && echo "PASS: kernel HBM->HBM order frames == golden"
 
-test-xsim: golden replay.bin ## Simulate|same, in xsim -- the flow that works where the card is
+test-xsim: golden $(REPLAY) ## Simulate|same, in xsim -- the flow that works where the card is
 	@$(XSETUP) xvlog -sv $(SRC) $(TB)
 	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
-	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=replay.bin -testplusarg cap=capture.bin \
+	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=$(REPLAY) -testplusarg cap=capture.bin \
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) -testplusarg quiet=$(QUIET)
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > k_rtl.log
 	diff k_gold.log k_rtl.log && echo "PASS: kernel HBM->HBM order frames == golden"
@@ -196,10 +222,10 @@ $(STEP1)/test_clean.itch $(STEP1)/test_clean.eth:
 # FIFOs and a protocol filter leaves the order frames BYTE-IDENTICAL. So this
 # diffs against exactly the same golden as `test-xsim`, which is what makes the
 # comparison worth running -- a Phase B golden of its own would prove nothing.
-test-b: golden replay.bin ## Simulate|Phase B: the same golden, through the MAC model
+test-b: golden $(REPLAY) ## Simulate|Phase B: the same golden, through the MAC model
 	@$(XSETUP) xvlog -sv $(DEFS_B) $(SRC_B) $(TB)
 	@$(XSETUP) xelab -debug typical -L xpm $(TOP_B) -s $(TOP_B)_sim
-	@$(XSETUP) xsim $(TOP_B)_sim -runall -testplusarg eth=replay.bin -testplusarg cap=capture.bin \
+	@$(XSETUP) xsim $(TOP_B)_sim -runall -testplusarg eth=$(REPLAY) -testplusarg cap=capture.bin \
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) -testplusarg quiet=$(QUIET)
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > kb_rtl.log
 	diff k_gold.log kb_rtl.log && echo "PASS: Phase B (through the MAC) order frames == golden"
@@ -230,19 +256,34 @@ test-b-session: golden ## Simulate|Phase B: the venue's replies, through the MAC
 test-b-latency: ## Simulate|Phase B at gap 512
 	$(MAKE) test-b GAP=512 QUIET=$(QUIET)
 
-test-b-real: ## Simulate|Phase B on the real slice
-	$(MAKE) -C $(STEP5) real.eth
-	$(MAKE) test-b ITCH=$(STEP5)/real.itch ETH=$(STEP5)/real.eth \
+test-b-real: ## Simulate|Phase B on the real feed, bounded like test-real
+	$(MAKE) -C $(STEP5) realsmall-$(RSMALL_LAT).eth realsmall-$(RSMALL_LAT).itch
+	$(MAKE) test-b ITCH=$(STEP5)/realsmall-$(RSMALL_LAT).itch \
+	  ETH=$(STEP5)/realsmall-$(RSMALL_LAT).eth \
 	  LOC=13 BASE=2800000 RECS=8192 GAP=512
 
 # Real-data replay: needs data/12302019.NASDAQ_ITCH50.gz (see top-level README).
 # xsim, not Verilator -- Verilator is not installed on the machine with the card,
 # and a target that silently needs it is a target that does not run where it
 # matters.
-test-real: ## Simulate|real 5M AAPL slice through the chain
-	$(MAKE) -C $(STEP5) real.eth
-	$(MAKE) test-xsim ITCH=$(STEP5)/real.itch ETH=$(STEP5)/real.eth \
+# The full 5 M replay packs to 327 MB and the testbench's memory model holds 8,
+# so this runs the largest prefix of the same real feed that simulation can
+# actually hold. It used to point at the full image and fail every time -- after
+# minutes of packing -- which is the other half of the stale-image trap: a target
+# that cannot work is worse than one that is missing.
+#
+# What it covers is the feed path on real data. Orders are rare enough in this
+# feed that a prefix this size fires none, so the golden is usually empty and the
+# diff is not the interesting part -- the counters the testbench checks are
+# (frames in/kept, zero drops, zero overflow). The order count is printed so
+# nobody reads an empty diff as coverage. For orders on real data, the card:
+# `make run-card-real`.
+test-real: ## Simulate|real feed, bounded to what the memory model holds
+	$(MAKE) -C $(STEP5) realsmall-$(RSMALL).eth realsmall-$(RSMALL).itch
+	$(MAKE) test-xsim ITCH=$(RSMALL_ITCH) ETH=$(RSMALL_ETH) \
 	  LOC=13 BASE=2800000 RECS=8192
+	@echo "test-real: golden holds $$(grep -c . k_gold.log) order frame(s);" \
+	      "orders are rare this early in the feed -- the full replay is a card run"
 
 # ---------- the real-data replay image, for CARD runs ----------
 # Simulation packs $(ETH) into replay.bin through the generic rule above. The
@@ -314,11 +355,14 @@ run-card-b-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase B, rea
 	  && echo "PASS: ON CARD, THROUGH THE MAC, real 5M AAPL == golden"
 	@python3 scripts/dump_session.py real_capture.bin 8192 --local-ip $(CARD_IP) || true
 
-# Real-data latency: many more orders than the synthetic feed's four, so the
-# histogram and the min/mean/max actually mean something.
-test-real-latency: ## Simulate|real slice, spaced for attributable latency samples
-	$(MAKE) -C $(STEP5) real.eth
-	$(MAKE) test-xsim ITCH=$(STEP5)/real.itch ETH=$(STEP5)/real.eth \
+# Real-data latency. The point of this target was more orders than the synthetic
+# feed's four -- and the prefix that fits in simulation has none at all, so in
+# simulation it measures the feed path and not the order path. The histogram it
+# was written for comes from the card: `make run-card-latency`.
+test-real-latency: ## Simulate|real feed at gap 512 (no orders this early: see run-card-latency)
+	$(MAKE) -C $(STEP5) realsmall-$(RSMALL_LAT).eth realsmall-$(RSMALL_LAT).itch
+	$(MAKE) test-xsim ITCH=$(STEP5)/realsmall-$(RSMALL_LAT).itch \
+	  ETH=$(STEP5)/realsmall-$(RSMALL_LAT).eth \
 	  LOC=13 BASE=2800000 RECS=8192 GAP=512
 
 # ---------- golden: the step 4b/6 chain, unchanged ----------
@@ -339,8 +383,8 @@ $(STEP1)/test.itch $(STEP1)/test.eth:
 	cd $(STEP1) && python3 mold2eth.py test.mold test.eth
 
 # 64-byte-aligned replay image the injector reads out of HBM
-replay.bin: $(ETH) scripts/pack_eth.py
-	python3 scripts/pack_eth.py pack $(ETH) replay.bin
+$(REPLAY): $(ETH) scripts/pack_eth.py
+	python3 scripts/pack_eth.py pack $(ETH) $@ --max-bytes $(TB_MAX_BYTES)
 
 # ---------- Vivado: elaboration and out-of-context synthesis ----------
 elab: ## Build|elaborate the kernel in Vivado (fast syntax/wiring check)
@@ -485,9 +529,9 @@ xclbin-b: t2t_kernel_b.xo $(XCLBIN_B_DEPS) ## Build|link Phase B bitstream -> t2
 
 # On the card, Phase B measures wire cycles at the CMAC's 322.265625 MHz rather
 # than ap_clk's 300, so the host has to be told which clock the probe counted.
-run-card-b: host/t2t_run golden replay.bin ## Card|Phase B, synthetic feed, through the MAC
+run-card-b: host/t2t_run golden $(REPLAY) ## Card|Phase B, synthetic feed, through the MAC
 	$(call need_xclbin,t2t_b.xclbin,xclbin-b,1 h 15 m)
-	./host/t2t_run --xclbin t2t_b.xclbin --replay replay.bin --capture capture.bin \
+	./host/t2t_run --xclbin t2t_b.xclbin --replay $(REPLAY) --capture capture.bin \
 	  --device $(BDF) --gap $(GAP) --loc $(LOC) --base $(BASE) --records $(RECS) \
 	  --quiet $(QUIET) --clk-mhz 322.265625 \
 	  --core-mhz $(shell echo $(CORE_CLK_B) | awk '{print $$1/1000000}')
@@ -525,9 +569,9 @@ host/t2t_run: host/t2t_run.cpp host/t2t_regs.h
 host: host/t2t_run ## Card|build the host runner
 # THE POINT OF THIS DIRECTORY: replay on real silicon, then diff the frames the
 # card emitted against the same golden the simulations use.
-run-card: host/t2t_run golden replay.bin ## Card|Phase A, synthetic feed
+run-card: host/t2t_run golden $(REPLAY) ## Card|Phase A, synthetic feed
 	$(call need_xclbin,t2t.xclbin,xclbin,1 h 10 m)
-	./host/t2t_run --xclbin t2t.xclbin --replay replay.bin --capture capture.bin \
+	./host/t2t_run --xclbin t2t.xclbin --replay $(REPLAY) --capture capture.bin \
 	  --device $(BDF) --gap $(GAP) --loc $(LOC) --base $(BASE) --records $(RECS) \
 	  --quiet $(QUIET) --clk-mhz $(shell echo $(AP_CLK) | awk '{print $$1/1000000}') \
 	  --core-mhz $(shell echo $(CORE_CLK) | awk '{print $$1/1000000}')
@@ -566,7 +610,7 @@ clean: ## Clean|logs, sim scratch, small captures        (seconds)
 	rm -rf obj_dir xsim.dir .Xil xsim*.jou xsim*.log
 	rm -f  *.log *.jou *.pb *.wdb *.wcfg
 	# small, regenerated by the next `make test`/`make run-card`
-	rm -f  replay.bin capture.bin rc_*.bin rc16.bin real_capture*.bin
+	rm -f  replay-*.bin capture.bin rc_*.bin rc16.bin real_capture*.bin
 	# metadata that is meaningless once its .xclbin is gone; the .xclbin itself
 	# is NOT removed here -- see distclean
 	rm -f  *.ltx *.xclbin.info *.xclbin.link_summary
