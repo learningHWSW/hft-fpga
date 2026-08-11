@@ -211,7 +211,7 @@ trade.
 
 | | Version used | Notes |
 |---|---|---|
-| Vivado / Vitis | **2025.2.1** | provides `vivado`, `v++`, `xvlog`, `xelab`, `xsim` |
+| Vivado / Vitis | **2025.2.1** | provides `vivado`, `v++`, `xvlog`, `xelab`, `xsim` — and all of them must come from the *same* install: a `.xo` packaged by one version and linked by another is refused if the linker is older, and silently accepted if it is newer. `make -C step8-hw which-tools` prints what the recipes will actually use |
 | XRT | 2.18.179 (2024.2) | only for running on the card |
 | Python | 3.8+ | goldens and packing scripts; standard library only |
 | GCC | C++17 | host runner and the step-1 C model |
