@@ -868,12 +868,73 @@ skips the standards-compliant pipeline, which is what the ultra-low-latency
 industry actually does and is a substantial project with real correctness risk. It
 should be entered deliberately, not as an optimisation pass.
 
+### 7.7 What the fast book path costs in fMAX — nothing measurable, and the README was wrong
+
+The README carried "**218.6 → 209.1 MHz**, the price of `fast_bbo`" from the day
+the fast path was integrated. That number came from one build of each
+configuration, and a single pair cannot support it: place and route are
+heuristic searches, and the difference between two arbitrary landings is not a
+property of the netlist. The baseline build closed with **0.043 ns** of slack —
+about two picoseconds per percent of a LUT delay — which is exactly the regime
+where the tool's own spread swamps the effect being measured.
+
+So: both configurations, four implementation directive sets each, everything
+else identical, one commit, `make sweep-t2t`. Vivado exposes no placement seed,
+so directive triples (place / phys_opt / route, chosen together because they
+interact) are the way to sample its run-to-run spread.
+
+| `USE_FAST_BBO` | directives | fMAX | WNS | failing | worst core_clk path is in |
+|---|---|---|---|---|---|
+| 0 | netdly  | 222.5 | +0.123 | 0 | `u_fh/u_ladder` |
+| 0 | default | 218.3 | +0.037 | 0 | `u_fh/u_ladder` |
+| 0 | explore | 218.3 | +0.037 | 0 | `u_fh/u_ladder` |
+| 0 | fanout  | 217.2 | +0.014 | 0 | `u_fh/u_msg_fifo` |
+| 1 | default | **225.5** | +0.183 | 0 | `u_tcp` |
+| 1 | explore | **225.5** | +0.183 | 0 | `u_tcp` |
+| 1 | fanout  | 221.7 | +0.107 | 0 | `u_tcp_rx` |
+| 1 | netdly  | 221.7 | +0.108 | 0 | `u_tcp` |
+
+**The cost is not there.** Best to best the fast path is **3.0 MHz faster**, and
+the spread WITHIN a single configuration is **5.3 MHz** — larger than the gap
+between them. The honest statement is not "fast_bbo is free" and certainly not
+"fast_bbo is faster"; it is that **at this sample size there is no measurable
+difference**, and a 9.5 MHz penalty is firmly excluded: the slowest fast build
+beats three of the four ladder-only builds.
+
+**Every one of the eight closes at 216.5 MHz with zero failing endpoints.** The
+build that produced 209.1 had 105. Whatever that build was, it is not
+reproducible at the current design state, and the method that produced it could
+not have told a real effect from a placement accident either way.
+
+**The path I had blamed does not appear at all.** `cc6448b` located the cost
+precisely — `u_fh/u_split/vcnt_reg`, 15 levels, 69 % route, the MoldUDP64
+splitter's byte-count carry chain — and that path is not the critical path in
+any of these eight builds. Locating a path in the one build that happened to
+show it is not the same as establishing that the feature put it there.
+
+**What the fast path does cost is area, and that is small**: +896 LUT (+1.6 %)
+and +705 FF (+2.1 %), with BRAM, URAM and DSP unchanged. That is the real price,
+and it buys 1,174 of 1,779 BBO records delivered ~10 cycles early (§ step4b).
+
+One suggestive detail, offered as an observation rather than a claim: with the
+fast path in, the worst core-clock path **moves out of the book entirely** —
+every ladder-only build is limited by `price_ladder` or the message FIFO
+feeding it, and every fast build is limited by the TCP engine at the far end.
+That is consistent with `fast_bbo` taking work off the ladder's occupancy scan,
+which is what it was built to do, but four builds per configuration is not
+enough to assert a mechanism.
+
 ## Reproduce
 
 ```sh
 cd step1-sw-parser && make itch_hist
 ./itch_hist ../data/12302019.NASDAQ_ITCH50.gz > ../data/hist_full.txt
 # first N only: ./itch_hist <file.gz> 100000000
+
+# fast_bbo fMAX cost (§7.7): both configurations x four directive sets, 8 impl
+# runs, ~40 min on 32 cores. Prints the two distributions with the spread WITHIN
+# each next to the gap BETWEEN them.
+cd step5-board && make sweep-t2t
 
 # II=1 backlog + burst tail latency (§6, §7): the 3-server sim is built into
 # itch_hist, one pass over the whole file

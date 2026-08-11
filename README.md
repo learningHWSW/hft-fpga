@@ -34,7 +34,7 @@ Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session
 | In-fabric only (first RX beat to first TX beat) | 206.7 ns min |
 | Order frames vs. the software golden | **70 / 70 byte-identical**, zero drops |
 | MAC frames passed | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |
-| Full chain post-route (out of context) | **220.0 MHz**, above the 195.3 MHz a 100 Gb/s wire demands |
+| Full chain post-route (out of context) | **225.5 MHz** best of four directive sets (221.7 worst), above the 195.3 MHz a 100 Gb/s wire demands |
 
 Under load the floor never moves (23 core cycles, 107 ns), but from 25.1 to
 40.6 M msg/s the mean grows 1.49× while the **max grows 2.21×, to 730 ns** —
@@ -47,9 +47,12 @@ Every figure above was measured **before `fast_bbo` was wired in**, so it descri
 the ladder-only book path. That path is still what a deferred delta takes; most
 deltas now take a shorter one, and the order frames are unchanged either way. The
 card has not been re-measured, and the MAC half — the larger half — cannot move.
-The fast path also costs post-route frequency: measured against its own baseline in
-one session, the full chain goes **218.6 → 209.1 MHz**, still above the 195.3 MHz
-the wire demands but with less room ([step4b-book](step4b-book/) has the table).
+This section used to add that the fast path costs 9.5 MHz of post-route frequency.
+It does not: that was one build against one build, and across four implementation
+directive sets per configuration the fast path is 3.0 MHz *faster* best-to-best
+with a 5.3 MHz spread inside either — no measurable difference, and a 9.5 MHz
+penalty excluded. Its real price is **+1.6 % LUTs and +2.1 % registers**
+([FINDINGS §7.7](data/FINDINGS.md), [step4b-book](step4b-book/)).
 
 > Design rationale and per-step definition-of-done: [PLAN.md](PLAN.md).
 > End-to-end data-path design: [ARCHITECTURE.md](ARCHITECTURE.md).

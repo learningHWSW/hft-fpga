@@ -159,34 +159,37 @@ sooner.** The realized 65 % is below the 91 % *answerable*, exactly as expected:
 record following a deferral still waits for it, so how deferrals cluster decides
 the average. The 605 late records are the 605 deferrals.
 
-**It is not free in timing.** Out-of-context place & route of the full `t2t_top`
-chain at the 4.618 ns core target, same tool and same session, `USE_FAST_BBO = 0`
-against `1`:
+**It is not free in area, and it is not measurably costly in timing.** Both
+statements needed a sweep to make, and the first version of this section made
+the second one wrongly.
+
+What it costs in area, out-of-context place & route of the full `t2t_top` chain
+at the 4.618 ns core target, `USE_FAST_BBO = 0` against `1`:
 
 | | ladder only | with the fast path |
 |---|---|---|
-| synth core_clk WNS | +0.123 ns | +0.123 ns |
-| **post-route core_clk WNS** | **+0.043 ns** | **−0.164 ns** |
-| **post-route core_clk Fmax** | **218.6 MHz** | **209.1 MHz** |
-| CLB LUTs / registers | 54,329 / 33,079 | 55,227 / 33,784 |
+| CLB LUTs | 54,939 | 55,835 (+896, +1.6 %) |
+| registers | 33,236 | 33,941 (+705, +2.1 %) |
+| BRAM / URAM / DSP | 52 / 66 / 2 | unchanged |
 
-**209.1 MHz still clears the 195.3 MHz that 100 Gb/s demands**, with 13.8 MHz of
-margin instead of 23.3. The synthesis number is *identical* between the two, so the
-9.5 MHz is not a longer logic chain, and the post-route critical path says where it
-went — it is not in `bbo_merge` or `fast_bbo` at all:
+What it costs in fMAX is nothing this can measure. This section used to report
+**218.6 → 209.1 MHz** and attribute the 9.5 MHz to a specific carry chain in the
+MoldUDP64 splitter. That was one build against one build. Across four
+implementation directive sets per configuration:
 
-```
-Slack (VIOLATED) : -0.164ns
-  Source:      u_fh/u_split/vcnt_reg[4]_replica/C
-  Destination: u_fh/u_split/vcnt_reg[6]_replica/D
-  Data Path Delay: 4.764ns (logic 1.456ns 30.6%, route 3.308ns 69.4%)
-  Logic Levels: 15 (CARRY8=4 LUT3=2 LUT4=4 LUT5=2 LUT6=3)
-```
+| | ladder only | with the fast path |
+|---|---|---|
+| best post-route core_clk Fmax | 222.5 MHz | **225.5 MHz** |
+| worst | 217.2 MHz | 221.7 MHz |
+| spread within the configuration | 5.3 MHz | 3.8 MHz |
+| builds with failing endpoints | 0 of 4 | 0 of 4 |
 
-That is `mold_splitter`'s valid-count carry chain, an existing path that was
-already the region's longest and is 69 % route. Adding ~900 LUTs and ~700 flops
-beside it moved its placement, not its logic. So the lever, if the margin is ever
-wanted back, is that counter or a floorplan constraint — not the rejoin.
+The gap between the two bests (3.0 MHz, in the fast path's favour) is smaller
+than the spread inside either, so the measurement does not resolve a difference
+— but it does exclude a 9.5 MHz penalty, since the slowest fast build beats
+three of the four ladder-only builds. The splitter path that was blamed is not
+the critical path in any of the eight. `data/FINDINGS.md` §7.7 has the full
+table and the method.
 
 End to end, on the step-8 kernel's synthetic chain, the loaded-latency probe's four
 samples read **min 33 → 24 core cycles** (`USE_FAST_BBO = 0` against the default),
