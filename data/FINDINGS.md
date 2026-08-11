@@ -135,6 +135,57 @@ filter, over the day, [hash_sweep.txt](hash_sweep.txt)):
   workload wastes DSPs and wrecks timing. Here too, measurement reversed the
   folklore.
 
+### 4.4 How many symbols fit one table — measured, and the README was wrong
+
+"Multi-symbol needs the HBM path" was in the README from the start. It is true of
+ALL symbols (§4.1: 1.92 M concurrent orders, ~159 MB) and false of the case
+anyone would actually build next, which is a handful of names. Measured by
+replaying the union of the top-K symbols through the table
+(`otable_sim ... loc=393,13,...`, K taken from [sym_conc.txt](sym_conc.txt)):
+
+| tracked | peak live orders | smallest zero-overflow geometry | slots | URAM | of device |
+|---|---|---|---|---|---|
+| 1 (AMZN) | 37,068 | **2^13 × 16** (deployed) | 131,072 | 64 | 6.7 % |
+| 2 (+AAPL) | 64,175 | 2^14 × 16 | 262,144 | 128 | 13 % |
+| 4 (+MSFT, TSLA) | 104,613 | 2^15 × 16 | 524,288 | 256 | 27 % |
+| 8 (+FB, CSCO, NVDA, AMD) | 156,993 | 2^15 × 16 | 524,288 | 256 | 27 % |
+| 16 | 230,412 | 2^16 × 16 | 1,048,576 | 512 | 53 % |
+
+**Sixteen symbols fit in URAM.** The device has 960 URAM288 and the whole design
+currently uses 66. Nothing here needs HBM; what needs HBM is the all-symbols
+table, which is a different design.
+
+**The deployed geometry holds exactly one symbol.** At 2^13 × 16 a second symbol
+overflows 821 times over the day (824 ppm) and four overflow 79,085 times
+(4.4 %). Worst-set occupancy is already 16 of 16 with AMZN alone — the zero is
+real but it has no headroom, so NSYM and SETS_BITS have to move together. That is
+why `order_table` refuses to imply one from the other.
+
+**4 and 8 symbols cost the same.** Both close at 2^15 × 16, so once the table is
+paid for at four names the next four are free. 16 at 2^15 misses by 2,336 inserts
+(369 ppm) — close enough that a 16-symbol design is a judgement about whether a
+few hundred ppm of deep-order drops matter, not a capacity wall.
+
+**Peaks coincide; do not count on diversification.** The peak of the SUM is within
+0.6 % of the sum of the peaks at every K (64,175 against 64,178 at K=2; 156,888
+against 157,223 at K=8). Symbol activity peaks together, because the events that
+move one name move the market. Sizing a shared table on the assumption that peaks
+spread out would be sizing it for a day that does not happen.
+
+**What the entry costs.** Nothing it was not already paying. §4.2 removed the
+per-entry locate as "8.4 Mbit of a constant" and got the entry to 130 bits, which
+is what fits two URAM columns (144 b). Multi-symbol puts back an INDEX, not a
+locate: 4 bits for 16 symbols, 14 bits available. The order table's per-symbol
+cost is the capacity above, not the width.
+
+**What is NOT in this table** is the rest of the chain. Each tracked symbol also
+needs its own price ladder, measured post-route at **27,505 LUTs, 9,143 FFs and
+2 BRAM** (step5 `syn/out_t2t_fast/util_impl_hier.rpt`), so four symbols add
+~110 k LUTs — 8.4 % of the device, comfortable — plus a book-delta demux, a
+tagged BBO merge, per-symbol strategy state and per-symbol OUCH stock fields. The
+table was the part with a capacity question; the ladders are the part with an
+area answer.
+
 ## 5. Sweep (momentum ignition) signal — measured on real data (step 6 strategy)
 
 A sweep = an aggressive marketable order walking one side's resting liquidity
@@ -831,6 +882,11 @@ cd step1-sw-parser && make itch_hist && ./itch_hist ../data/12302019.NASDAQ_ITCH
 # Sweep signal (§5): needs a large slice — sweeps are rare
 python3 step1-sw-parser/itch_slice.py data/12302019.NASDAQ_ITCH50.gz aapl_big.itch 40000000 AAPL
 python3 step6-strategy/scripts/dump_sweep.py aapl_big.itch 13 3 1000000 >/dev/null   # summary on stderr
+
+# Multi-symbol capacity (§4.4): the union of the top-K symbols through one table
+cd step1-sw-parser && make otable_sim
+./otable_sim ../data/12302019.NASDAQ_ITCH50.gz loc=393,13          # 2 symbols
+./otable_sim ../data/12302019.NASDAQ_ITCH50.gz loc=393,13,5291,7992
 
 # Imbalance edge (§5.3): the FULL day, regular hours only -- the point of §5.2 is
 # that a slice is pre-market. ~40 s for the book, ~2 min for the statistics.

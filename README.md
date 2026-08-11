@@ -233,7 +233,7 @@ cd step4b-book && make test-verilator  # Verilator (no Vivado)
 | 1 | `make test` | the C golden parses a real day self-consistently |
 | 2 | `make test` | ITCH decode == golden |
 | 3a / 3b | `make test`, `make test-real-xsim` | MoldUDP64 strip and 512-bit realignment |
-| 4a | `make test`, `make test-real-xsim` | order table == golden, zero overflow |
+| 4a | `make test`, `make test-real-xsim`, `make test-multi` | order table == golden, zero overflow, and two symbols share one table |
 | 4b | `make test`, `make test-real-xsim`, `make test-merge-xsim` | BBO sequence == golden, and the fast/slow rejoin preserves it |
 | 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx` | the whole chain, two clocks, wire frames in and session frames back |
 | 6 | `make test-xsim`, `make test-replay`, `make test-rto` | orders and OUCH/TCP bytes == golden, and when a resend is decided |
@@ -356,9 +356,17 @@ Honest scope, all of it stated in the per-step READMEs.
   `max_spread = 2000` selected nothing where AAPL's real regular-hours spread is
   3 cents. Test parameters stay as they are on purpose — the goldens run on that
   pre-market slice, where a tight threshold would never exercise the risk gates.
-- **Only one tracked symbol.** `track_locate` is a single register, not a bitmap:
-  one symbol is what fits URAM at the measured geometry. Multi-symbol needs the
-  HBM path, and the filter widens with it.
+- **One tracked symbol end to end; the table now holds more.** `order_table`
+  takes a set of locates and tags every delta with the symbol it belongs to
+  (`NSYM`, default 1, verified against a two-symbol golden). The capacity question
+  behind the old "multi-symbol needs HBM" claim turned out to be answerable
+  differently: measured over the full day, **16 symbols fit in URAM** — 2 need
+  2^14 × 16, 4 and 8 need 2^15 × 16, 16 need 2^16 × 16, against 960 URAM on the
+  device (`FINDINGS` §4.4). HBM is what *all* symbols need, not a handful. What is
+  still single-symbol is everything downstream: one price ladder (27,505 LUTs
+  each, so four is 8.4 % of the device), one set of strategy edge/position state,
+  and one OUCH stock field. Those are a sizing decision now rather than an
+  unknown.
 
 ## License
 

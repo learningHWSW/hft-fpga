@@ -49,10 +49,20 @@ a unit test disagrees with a system that works.
   makes that symbol's ref subset cluster in the low bits** (raw 16b×4 = 24142
   overflows vs mix = 132). So the filter table uses a multiply-shift mixing hash —
   a measured result that is the exact opposite of the all-symbols case.
-- **URAM-resident via the symbol filter**: A/F enter only when their locate equals
-  `track_locate`. E/C/X/D/U look up by ref — if stored, it is a tracked symbol.
-  The all-symbols table is 8M+ entries (HBM territory), but filtering the symbol
+- **URAM-resident via the symbol filter**: A/F enter only when their locate is in
+  the tracked set. E/C/X/D/U look up by ref — if stored, it is a tracked symbol.
+  The all-symbols table is 8M+ entries (HBM territory), but filtering the symbols
   puts it in URAM.
+- **`NSYM` symbols share one table** (default 1). The set is `track_locate`
+  packed 16 bits per symbol; the entry stores a symbol **index**, not a locate,
+  because a D or X carries no locate of its own and the delta still has to reach
+  the right book. Four bits covers sixteen symbols and the entry had fourteen
+  spare inside its two URAM columns, so the width cost is zero — the cost is
+  capacity, and it is measured: 2 symbols need `2^14 × 16`, 4 and 8 need
+  `2^15 × 16`, 16 need `2^16 × 16` (FINDINGS §4.4). The deployed `2^13 × 16`
+  holds exactly one, with a worst set already at 16 of 16, which is why `NSYM`
+  does not quietly resize the table. `make test-multi` runs two symbols through
+  one table against the golden.
 - **Adopted size**: `2^16 sets × 8-way + mix` = 524K slots. AAPL peak 27K -> load
   ~5%. The full-day AAPL filter measurement confirms **0 overflow** (FINDINGS
   §4.2). ~10 MB URAM. The cheaper alternative `16b×4 mix` (~5 MB) drops 132 deep

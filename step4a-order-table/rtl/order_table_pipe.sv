@@ -30,12 +30,20 @@ module order_table_pipe
 #(
   parameter int SETS_BITS = 13,
   parameter int RD_LAT    = 2,
-  parameter int WAYS      = 16
+  parameter int WAYS      = 16,
+  // Port-compatible with order_table so the two stay drop-in replacements, but
+  // only NSYM=1 is implemented here: the pipelined variant is the opt-in one
+  // (+define+OT_PIPE) and multi-symbol was built where the deployed table is.
+  // An elaboration error rather than a comment, because a silent single-symbol
+  // pipe behind a multi-symbol configuration would drop every other book's
+  // orders and look like a hash problem.
+  parameter int NSYM      = 1,
+  parameter int SYMW      = (NSYM > 1) ? $clog2(NSYM) : 1
 )(
   input  logic         clk,
   input  logic         rst_n,
 
-  input  logic [15:0]  track_locate,
+  input  logic [NSYM*16-1:0] track_locate,
 
   input  itch_msg_t    s_msg,
   input  logic         s_valid,
@@ -45,6 +53,7 @@ module order_table_pipe
   output logic [7:0]   o_type,
   output logic [47:0]  o_ts,
   output logic [15:0]  o_locate,
+  output logic [SYMW-1:0] o_sym,      // always 0 here: see the NSYM parameter
   output logic [7:0]   o_side,
   output logic         o_has_rem,
   output logic [31:0]  o_rem_price,
@@ -57,6 +66,11 @@ module order_table_pipe
   output logic [31:0]  overflow_cnt,
   output logic [31:0]  miss_cnt
 );
+  initial if (NSYM != 1)
+    $error("order_table_pipe supports NSYM=1 only; use order_table for %0d", NSYM);
+
+  assign o_sym = '0;
+
   localparam int SETS = 1 << SETS_BITS;
   localparam int WAYW = (WAYS > 1) ? $clog2(WAYS) : 1;
   localparam int PDEPTH = RD_LAT + 2;   // read-latency stages + resolve + write

@@ -19,7 +19,13 @@
  * URAM table of step 4a) and reports the URAM-scale configs — used to confirm
  * the deployed (sets,ways) never overflows for the tracked symbol.
  *
- * Usage: ./otable_sim <file[.gz]> [max_msgs] [loc=<N>]
+ * loc= also takes a COMMA-SEPARATED SET, which is the multi-symbol question:
+ * one table shared by K tracked symbols holds the union of their live orders,
+ * and the per-symbol peaks in sym_conc.txt cannot answer whether that fits
+ * because peaks do not coincide. Only replaying the union measures the peak of
+ * the sum, which is the number the geometry has to cover.
+ *
+ * Usage: ./otable_sim <file[.gz]> [max_msgs] [loc=<N>[,<N>...]]
  */
 #define _DEFAULT_SOURCE
 #include <inttypes.h>
@@ -100,8 +106,22 @@ static void dec(cfg_t *c, uint64_t ref, uint32_t q){
 int main(int argc, char **argv){
     if (argc < 2){ fprintf(stderr,"usage: %s <file[.gz]> [max_msgs] [loc=<N>]\n",argv[0]); return 1; }
     uint64_t max_msgs = 0; int filt_loc = -1;
+    /* The tracked set. A bitmap over the locate space costs 8 KB and turns the
+     * per-message test into one indexed load, which matters over 268 M
+     * messages -- a linear scan of K locates would be the inner loop. */
+    static unsigned char track[65536];
+    int ntrack = 0;
     for (int a = 2; a < argc; a++){
-        if (!strncmp(argv[a],"loc=",4)) filt_loc = atoi(argv[a]+4);
+        if (!strncmp(argv[a],"loc=",4)){
+            const char *p = argv[a]+4;
+            while (*p){
+                int v = atoi(p);
+                if (v >= 0 && v < 65536){ if(!track[v]) ntrack++; track[v]=1; }
+                if (filt_loc < 0) filt_loc = v;      /* first, for the config pick */
+                while (*p && *p != ',') p++;
+                if (*p == ',') p++;
+            }
+        }
         else max_msgs = strtoull(argv[a],0,10);
     }
 
@@ -131,6 +151,12 @@ int main(int argc, char **argv){
         {"14b x16 xorfld",14,16,H_XORFOLD},  /* 262K, deeper sets */
         {"13b x16 xorfld",13,16,H_XORFOLD},  /* 131K */
         {"12b x16 xorfld",12,16,H_XORFOLD},  /*  65K, same as 13bx8 */
+        /* Multi-symbol capacity. One table shared by K symbols holds the union
+         * of their live orders, and at 16 ways the deployed 131K slots stop
+         * being enough at K=2, so the question becomes how far up the ladder a
+         * given K has to go. These are the rungs above the deployed one. */
+        {"15b x16 xorfld",15,16,H_XORFOLD},  /* 524K */
+        {"16b x16 xorfld",16,16,H_XORFOLD},  /* 1.05M */
     };
     cfg_t *cfgs = (filt_loc >= 0) ? small : big;
     int NC = (filt_loc >= 0) ? (int)(sizeof small/sizeof small[0])
@@ -157,7 +183,7 @@ int main(int argc, char **argv){
         uint8_t t=buf[0]; uint16_t loc=(uint16_t)(buf[1]<<8|buf[2]); n++;
         uint64_t ref; uint32_t q;
         switch(t){
-        case 'A': case 'F': if(filt_loc>=0 && loc!=filt_loc) break;
+        case 'A': case 'F': if(filt_loc>=0 && !track[loc]) break;
                             ref=be64(buf+11); q=be32(buf+20); for(int i=0;i<NC;i++) ins(&cfgs[i],ref,q); break;
         case 'E': case 'C': ref=be64(buf+11); q=be32(buf+19); for(int i=0;i<NC;i++) dec(&cfgs[i],ref,q); break;
         case 'X':           ref=be64(buf+11); q=be32(buf+19); for(int i=0;i<NC;i++) dec(&cfgs[i],ref,q); break;
@@ -173,6 +199,7 @@ int main(int argc, char **argv){
     if(piped) pclose(f); else fclose(f);
 
     printf("== otable_sim: %s  (%"PRIu64" msgs) ==\n", argv[1], n);
+    if (ntrack > 0) printf("   tracking %d symbol(s) by locate\n", ntrack);
     printf("peak live orders (all symbols): %"PRIu64"\n\n", cfgs[0].live_peak);
     printf("%-14s %8s %6s %8s %10s %8s %9s %7s\n",
            "config","cap","load%","maxset","overflow","ovf-ppm","live_pk","miss");

@@ -36,13 +36,27 @@ module order_table
   // that is the default; the FSM waits RD_LAT-1 extra cycles rather than
   // assuming a number.
   parameter int RD_LAT    = 2,
-  parameter int WAYS      = 16
+  parameter int WAYS      = 16,
                                 // day, data/FINDINGS.md §4.2)
+  // How many symbols share this table. One is the deployed design point and the
+  // only one whose capacity was measured as zero-overflow at this geometry --
+  // FINDINGS §4.4 has the sweep, and the short version is that two symbols need
+  // 2^14 sets and four need 2^15. Raising NSYM without raising SETS_BITS is a
+  // choice to drop orders, so the parameters move together.
+  parameter int NSYM      = 1,
+  // Derived, not a knob: the width of a symbol index. One symbol still gets a
+  // bit, because a zero-width field cannot go in a packed struct -- see the
+  // entry below, where that bit costs nothing it did not already have.
+  parameter int SYMW      = (NSYM > 1) ? $clog2(NSYM) : 1
 )(
   input  logic         clk,
   input  logic         rst_n,
 
-  input  logic [15:0]  track_locate,   // software-set; only this symbol enters
+  // The tracked set, packed: symbol k is track_locate[16*k +: 16]. Packed
+  // rather than an unpacked array because this port crosses fh_core, t2t_top and
+  // t2t_axil, and a packed vector is the shape every one of those already uses
+  // for configuration.
+  input  logic [NSYM*16-1:0] track_locate,
 
   input  itch_msg_t    s_msg,
   input  logic         s_valid,
@@ -52,6 +66,11 @@ module order_table
   output logic [7:0]   o_type,
   output logic [47:0]  o_ts,           // pass-through of the message timestamp
   output logic [15:0]  o_locate,
+  // Which tracked symbol this delta belongs to. With NSYM=1 it is always 0 and
+  // the consumer can ignore it; above that it is what routes the delta to the
+  // right book, and it comes from the ENTRY rather than the message, because a
+  // D/X/E carries no locate of its own.
+  output logic [SYMW-1:0] o_sym,
   output logic [7:0]   o_side,
   output logic         o_has_rem,
   output logic [31:0]  o_rem_price,
@@ -86,13 +105,40 @@ module order_table
   // Together that is 153 -> 130 bits, which is what makes an entry fit TWO
   // URAM columns (144 b) instead of three (216 b) -- a third of the memory,
   // for fields that carried no information.
+  //
+  // `sym` is the one field multi-symbol had to add back, and it is the cheap
+  // version of what was removed: an INDEX into the tracked set, not the 16-bit
+  // locate. A D or X carries no locate, so without it a delete could not be
+  // routed to the right book. Two URAM columns are 144 bits and the entry is
+  // 130, so up to 14 bits of index -- 16,384 tracked symbols -- fit in memory
+  // that is already paid for. At NSYM=1 the single bit is always zero and
+  // synthesis removes what reads it.
   typedef struct packed {
     logic        valid;
     logic [63:0] oref;
     logic        is_buy;
     logic [31:0] price;
     logic [31:0] qty;
+    logic [SYMW-1:0] sym;
   } oentry_t;
+
+  // ---- the tracked set ----
+  // NSYM comparators against the message's locate, and a priority pick of the
+  // match. NSYM is a small compile-time constant (the capacity measurement in
+  // FINDINGS §4.4 stops being interesting well before it is large), so this is
+  // a flat compare rather than a CAM or a lookup: at NSYM=1 it collapses to the
+  // single equality this module had before.
+  logic                sym_hit;
+  logic [SYMW-1:0]     sym_idx;
+  always_comb begin
+    sym_hit = 1'b0;
+    sym_idx = '0;
+    for (int k = NSYM-1; k >= 0; k--)
+      if (m.locate == track_locate[16*k +: 16]) begin
+        sym_hit = 1'b1;
+        sym_idx = SYMW'(k);
+      end
+  end
 
   function automatic logic [7:0] side_of(input logic is_buy);
     return is_buy ? "B" : "S";
@@ -122,6 +168,7 @@ module order_table
   logic [SETS_BITS-1:0] set0, set1;
   logic                 u_same;
   logic                 old_is_buy;
+  logic [SYMW-1:0]      old_sym;         // the replaced order's book
   logic [3:0]           rd_wait;         // memory read-latency countdown
   logic [31:0]          old_price, old_qty;
   logic [WAYW-1:0]      old_way;
@@ -237,10 +284,11 @@ module order_table
       EXEC: begin
         unique case (m.msg_type)
           "A", "F":
-            if ((m.locate == track_locate) && sel_free_ok) begin
+            if (sym_hit && sel_free_ok) begin
               we = 1'b1; w_way = sel_free_way; w_set = set0;
               w_entry = '{valid:1'b1, oref:m.order_ref,
-                          is_buy:(m.side == "B"), price:m.price, qty:m.shares};
+                          is_buy:(m.side == "B"), price:m.price, qty:m.shares,
+                          sym:sym_idx};
             end
           "D":
             if (sel_hit) begin                   // remove the order
@@ -266,7 +314,8 @@ module order_table
         if (selu_free_ok) begin
           we = 1'b1; w_way = selu_free_way; w_set = set1;
           w_entry = '{valid:1'b1, oref:m.new_order_ref,
-                      is_buy:old_is_buy, price:m.price, qty:m.shares};
+                      is_buy:old_is_buy, price:m.price, qty:m.shares,
+                      sym:old_sym};
         end
       default: ;
     endcase
@@ -363,12 +412,13 @@ module order_table
           o_type   <= m.msg_type;
           o_ts     <= m.timestamp;
           o_locate <= m.locate;
+          o_sym    <= sym_idx;          // A/F: the message says which book
           o_side   <= m.side;
           o_has_rem <= 1'b0; o_rem_price <= '0; o_rem_qty <= '0;
           o_has_add <= 1'b0; o_add_price <= '0; o_add_qty <= '0;
           unique case (m.msg_type)
             "A", "F": begin
-              if (m.locate == track_locate) begin
+              if (sym_hit) begin
                 if (sel_free_ok) begin
                   o_valid   <= 1'b1;
                   o_has_add <= 1'b1; o_add_price <= m.price; o_add_qty <= m.shares;
@@ -379,7 +429,8 @@ module order_table
             "D": begin
               if (sel_hit) begin
                 o_valid   <= 1'b1;
-                o_side    <= side_of(sel_ent.is_buy); o_locate <= track_locate;
+                o_side    <= side_of(sel_ent.is_buy);
+                o_locate  <= track_locate[16*sel_ent.sym +: 16]; o_sym <= sel_ent.sym;
                 o_has_rem <= 1'b1; o_rem_price <= sel_ent.price; o_rem_qty <= sel_ent.qty;
               end else miss_cnt <= miss_cnt + 1;
               state <= IDLE;
@@ -389,7 +440,8 @@ module order_table
                 automatic logic [31:0] delta =
                     (sel_ent.qty < m.shares) ? sel_ent.qty : m.shares;
                 o_valid   <= 1'b1;
-                o_side    <= side_of(sel_ent.is_buy); o_locate <= track_locate;
+                o_side    <= side_of(sel_ent.is_buy);
+                o_locate  <= track_locate[16*sel_ent.sym +: 16]; o_sym <= sel_ent.sym;
                 o_has_rem <= 1'b1; o_rem_price <= sel_ent.price; o_rem_qty <= delta;
               end else miss_cnt <= miss_cnt + 1;
               state <= IDLE;
@@ -397,6 +449,7 @@ module order_table
             "U": begin
               if (sel_hit) begin
                 old_is_buy <= sel_ent.is_buy;
+                old_sym   <= sel_ent.sym;
                 old_price <= sel_ent.price;
                 old_qty   <= sel_ent.qty;
                 old_way   <= sel_way;
@@ -424,7 +477,8 @@ module order_table
         U_EXEC: begin
           if (!selu_free_ok) overflow_cnt <= overflow_cnt + 1;
           o_valid   <= 1'b1; o_type <= "U";
-          o_locate  <= track_locate; o_side <= side_of(old_is_buy);
+          o_locate  <= track_locate[16*old_sym +: 16]; o_sym <= old_sym;
+          o_side    <= side_of(old_is_buy);
           o_has_rem <= 1'b1; o_rem_price <= old_price; o_rem_qty <= old_qty;
           o_has_add <= 1'b1; o_add_price <= m.price;  o_add_qty <= m.shares;
           state <= IDLE;

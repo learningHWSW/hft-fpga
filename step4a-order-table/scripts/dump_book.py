@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Golden for the step-4a order table.
 
-Reads an ITCH BinaryFILE (2B BE length + message), filters to one stock
-locate, and prints one book-delta record per processed message — the same
-record order_table.sv emits. Uses an exact ref->{locate,side,price,qty} map;
+Reads an ITCH BinaryFILE (2B BE length + message), filters to the tracked
+stock locate(s), and prints one book-delta record per processed message — the
+same record order_table.sv emits. Several locates may be given, comma
+separated: one table shared by several symbols is the multi-symbol design point,
+and the golden has to model the shared table rather than be run once per symbol,
+because what is under test is that deltas keep their symbol through a structure
+that no longer stores the locate per order. Uses an exact ref->{locate,side,price,qty} map;
 valid as the golden only because the RTL table is sized so it never overflows
 for the tracked symbol (data/FINDINGS.md §4.2 — confirmed by the TB's
 overflow_cnt==0 check).
@@ -12,7 +16,7 @@ Line format (must stay byte-identical with tb_order_table.sv):
   <type> locate=<L> side=<c> rem=<price>:<qty> add=<price>:<qty>
 rem/add are 0:0 when the message doesn't move that side.
 
-Usage: ./dump_book.py <file.itch> <locate>
+Usage: ./dump_book.py <file.itch> <locate>[,<locate>...]
 """
 import sys
 
@@ -25,7 +29,7 @@ def line(t, loc, side, rp, rq, ap, aq):
     return f"{t} locate={loc} side={side} rem={rp}:{rq} add={ap}:{aq}"
 
 
-def main(path, L):
+def main(path, tracked):
     data = open(path, "rb").read()
     book = {}          # ref -> [locate, side, price, qty]
     i = 0
@@ -38,7 +42,7 @@ def main(path, L):
         t = chr(m[0])
         if t in "AF":
             loc = be(m[1:3])
-            if loc != L:
+            if loc not in tracked:
                 continue
             ref = be(m[11:19]); side = chr(m[19])
             shares = be(m[20:24]); price = be(m[32:36])
@@ -77,4 +81,4 @@ def main(path, L):
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         sys.exit(__doc__)
-    main(sys.argv[1], int(sys.argv[2]))
+    main(sys.argv[1], {int(x) for x in sys.argv[2].split(",")})

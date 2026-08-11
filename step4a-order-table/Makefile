@@ -24,6 +24,22 @@ test-verilator: golden
 golden: $(ITCH)
 	python3 scripts/dump_book.py $(ITCH) $(LOC) > book_gold.log
 
+# ---------- two symbols in one table ----------
+# The multi-symbol design point (FINDINGS 4.4). What it proves is not capacity --
+# that was measured over the full day -- but that a delta still knows which book
+# it belongs to once the entry stores a symbol INDEX instead of a locate. A
+# delete carries no locate of its own, so getting this wrong sends AAPL's cancel
+# to AMZN's ladder and the diff below is the only thing that would say so.
+LOC2 ?= 2
+test-multi:
+	python3 scripts/dump_book.py $(ITCH) $(LOC),$(LOC2) > book_gold.log
+	xvlog -sv -d TB_NSYM=2 $(SRC) $(TB)
+	xelab -debug typical $(TOP) -s $(TOP)_msim
+	xsim $(TOP)_msim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) \
+	     -testplusarg loc2=$(LOC2)
+	diff book_gold.log book_rtl.log \
+	  && echo "PASS: two symbols in one table == golden (loc=$(LOC),$(LOC2))"
+
 $(STEP1)/test.itch:
 	cd $(STEP1) && python3 gen_itch.py test.itch
 
@@ -42,4 +58,4 @@ test-real-xsim: real.itch
 clean:
 	rm -rf obj_dir xsim.dir *.log *.jou *.pb *.wdb book_*.log real.itch
 
-.PHONY: test test-verilator golden test-real test-real-xsim clean
+.PHONY: test test-verilator test-multi golden test-real test-real-xsim clean

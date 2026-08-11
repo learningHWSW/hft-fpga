@@ -29,7 +29,17 @@ module tb_order_table;
   itch_msg_t msg;
   logic mvalid, len_err;
 
-  logic [15:0] track_locate = 16'd1;
+  // TB_NSYM symbols share the table. The default of 1 keeps every existing run
+  // exactly as it was; the multi-symbol run compiles with -d TB_NSYM=2 and
+  // passes a second locate, which is what proves a delta finds its way back to
+  // the right book from an entry that stores an index and not a locate.
+`ifndef TB_NSYM
+  `define TB_NSYM 1
+`endif
+  localparam int NSYM = `TB_NSYM;
+  localparam int SYMW = (NSYM > 1) ? $clog2(NSYM) : 1;
+  logic [NSYM*16-1:0] track_locate = {NSYM{16'd1}};
+  logic [SYMW-1:0]    o_sym;
   logic        s_ready;
   logic        o_valid;
   logic [7:0]  o_type, o_side;
@@ -45,11 +55,12 @@ module tb_order_table;
     .m_msg(msg), .m_valid(mvalid), .m_len_err(len_err)
   );
 
-  order_table #(.SETS_BITS(16), .WAYS(8)) dut (
+  order_table #(.SETS_BITS(16), .WAYS(8), .NSYM(NSYM)) dut (
     .clk(clk), .rst_n(rst_n),
     .track_locate(track_locate),
     .s_msg(msg), .s_valid(mvalid), .s_ready(s_ready),
-    .o_valid(o_valid), .o_type(o_type), .o_ts(), .o_locate(o_locate), .o_side(o_side),
+    .o_valid(o_valid), .o_type(o_type), .o_ts(), .o_locate(o_locate),
+    .o_sym(o_sym), .o_side(o_side),
     .o_has_rem(o_has_rem), .o_rem_price(o_rem_price), .o_rem_qty(o_rem_qty),
     .o_has_add(o_has_add), .o_add_price(o_add_price), .o_add_qty(o_add_qty),
     .init_done(init_done),
@@ -101,7 +112,12 @@ module tb_order_table;
 
     fname = "../step1-sw-parser/test.itch";
     void'($value$plusargs("itch=%s", fname));
-    if ($value$plusargs("loc=%d", loc)) track_locate = loc[15:0];
+    if ($value$plusargs("loc=%d", loc))
+      for (int k = 0; k < NSYM; k++) track_locate[16*k +: 16] = loc[15:0];
+    // +loc2 fills the second slot. Every slot is written first, so an unused
+    // one holds a duplicate of the first rather than zero -- locate 0 is a real
+    // locate, and a table that tracked it by accident would admit stray orders.
+    if ($value$plusargs("loc2=%d", loc) && NSYM > 1) track_locate[16*1 +: 16] = loc[15:0];
 
     fd = $fopen(fname, "rb");
     if (fd == 0) begin $display("FATAL: cannot open %s", fname); $finish; end
