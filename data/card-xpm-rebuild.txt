@@ -1,0 +1,68 @@
+Phase A on the card with the UNIFIED order-table memory (task #28)
+
+The first card build whose otable_mem is the XPM macro. Before FINDINGS 4.5
+the Vitis flow silently compiled the behavioural array, so every card number
+in this repository was measured on a memory description the fMAX sweeps did
+not use. This run closes that.
+
+  t2t.xclbin rebuilt on the pinned 2025.2.1, 1h 22m, 0 errors
+  routed timing MET: 0 failing endpoints of 563,470
+    clk_kernel_01 (core)   WNS +0.603 ns
+    clk_kernel_00 (ap_clk) WNS +0.174 ns
+    the tightest path in the design is dma_ip_axi_aclk at +0.003 ns --
+    PLATFORM logic, not ours, common to every build of this shell
+
+5 M AAPL replay, RGAP=512:
+  PASS: ON CARD, real 5M AAPL == golden   (70/70 order frames, byte-identical)
+
+  in-fabric     min 50 cyc / 166.7 ns   avg 70.9 / 236.2   max 125 / 416.7
+  decode->order min 14 cyc /  65.1 ns   avg 27.2 / 126.3   max  64 / 297.7
+  book          bbo early=1174 late=605 (65%)  mismatch=0
+  feed          1,127,057 frames in, 1,122,567 kept, 0 drops, ot_overflow=0
+
+AGAINST THE PREVIOUS BUILD (behavioural array): in-fabric 166.7 min /
+236.4 mean, loaded 14 / 27.2 / 64, bbo 1174 of 1779, mismatch 0. Identical
+to the tenth of a nanosecond on the minimum and to the cycle on every
+loaded figure.
+
+So the two memory descriptions are interchangeable on hardware as well as in
+simulation -- believed before, measured now.
+
+ack lat : no counterparty -- 0 samples (expected under GT loopback)
+  The new probe's first run on silicon. It reports nothing, correctly.
+
+=== Phase B, through the real MAC (GT near-end loopback) ===
+
+  t2t_b.xclbin rebuilt on the pinned 2025.2.1, 1h 30m, 0 errors
+
+  PASS: ON CARD, THROUGH THE MAC, real 5M AAPL == golden  (70/70 frames)
+
+  wire-to-wire  min 152 cyc / 471.7 ns  avg 177.8 / 551.7  max 241 / 747.8
+  decode->order min  14 cyc /  70.0 ns  avg  27.2 / 135.8  max  64 / 320.0
+  mac           tx=1127130 rx=1127130 rx_err=0 underrun=0 overflow=0
+  book          bbo early=1174 late=605  mismatch=0
+
+Against the recorded figures (behavioural array): 471.7 / 551.9 / 747.8 ns.
+The minimum and maximum are identical and the mean differs by 0.2 ns, which
+is one 322 MHz cycle spread over 70 samples. The headline wire-to-wire
+number does not depend on which memory description was compiled.
+
+The loaded figures are the same 14 / 27.2 / 64 CYCLES as Phase A; the ns
+differ only because Phase B's core clock is 200 MHz against Phase A's 215.
+
+TIMING, HONESTLY. The routed report says constraints are NOT met: ap_clk
+(clk_kernel_00) is -0.102 ns with 31 failing endpoints, all of them inside
+u_capture -- the harness's HBM write master, 6 logic levels and 86% routing,
+which is congestion rather than depth. Two things about that:
+  * the DATAPATH clock met timing. ap_clk_2 closed at +0.030 ns, and every
+    number above is measured on that clock or on the CMAC's.
+  * Vitis auto-scaled the failing clock from 300 to 291.1 MHz
+    (AUTO-FREQ-SCALING-04), so the shipped bitstream is timing-correct at the
+    frequency it actually runs. It is not a bitstream shipped over a
+    violation.
+
+AND ap_clk IS NOT THE FREQUENCY THE MAKEFILE ASKS FOR. AP_CLK_B is 250 MHz;
+cfgen received the request; the design was built at 300 and scaled to 291.1.
+The harness therefore runs ~16% faster than the build claims. Benign here --
+it met timing after scaling and the probes count other clocks -- but it is an
+assumption the build has been making without checking.

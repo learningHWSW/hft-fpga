@@ -1345,6 +1345,25 @@ the state the sweep exists to produce, and a build without the sweep would pass
 every golden in this project while coming up on the device holding garbage that
 looks like live orders.
 
+**And the card was rebuilt on it, which is the only flow the change actually
+altered.** Phase A relinked on the pinned toolchain (1 h 22 m, 0 errors), routed
+timing met with 0 failing endpoints of 563,470 — the kernel clocks at +0.603 ns
+(core) and +0.174 ns, the design's tightest path being the platform's own
+`dma_ip_axi_aclk` at +0.003 ns, which is shell logic and common to every build
+here. The 5 M AAPL replay is **byte-identical to the golden, 70/70 frames**, and
+every measured number lands on the previous build's: in-fabric 166.7 ns min /
+236.2 mean against 166.7 / 236.4, loaded 14 / 27.2 / 64 core cycles against
+14 / 27.2 / 64, and `bbo early=1174 late=605 mismatch=0` against 1,174 of 1,779.
+**Phase B, through the real MAC, reproduces the headline figure too**:
+wire-to-wire 471.7 ns min / 551.7 mean / 747.8 max against the recorded
+471.7 / 551.9 / 747.8, with the minimum and maximum identical and the mean
+0.2 ns apart — one 322 MHz cycle spread across 70 samples. `rx_err`,
+`underrun` and `overflow` all zero over 1,127,130 MAC frames.
+
+The two memory descriptions are interchangeable on silicon as well as in
+simulation — which was the belief this section started by refusing to accept
+without evidence (`data/card-xpm-rebuild.txt`).
+
 That property is now a test rather than an accident — `step4a make test-clear`,
 which writes garbage into the memory model before reset and requires the table
 not to see it. **Its second half is the part that matters**: the same garbage is

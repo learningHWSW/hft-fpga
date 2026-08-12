@@ -578,6 +578,24 @@ CU_B = t2t_kernel_b_1
 # back off rather than the RTL changing. Both stay above what the design needs:
 # 200 MHz clears the 195.3 MHz that 100 Gb/s demands at 512-bit width, and
 # ap_clk at 250 MHz still moves 16 GB/s of replay against a 12.5 GB/s line rate.
+#
+# EXCEPT THAT AP_CLK_B HAS NEVER TAKEN EFFECT, which was measured rather than
+# assumed on the rebuild that followed FINDINGS 4.5. cfgen receives the request
+# (`-clock.freqHz 250000000:...ap_clk` is in the link log), and the design is
+# then built at 300 MHz anyway: ap_clk maps to the platform's SCALABLE kernel
+# clock 0, whose frequency the platform sets, and v++ reports its "original
+# frequency equal to 300.000000 MHz". The same u_capture path fails again at
+# -0.102 ns, 31 endpoints -- and what rescues the build is not this back-off but
+# AUTO-FREQ-SCALING-04, v++ dropping that clock to 291.1 MHz so the bitstream is
+# timing-correct at the frequency it actually runs.
+#
+# The outcome is the one the comment above wanted -- a working bitstream, the
+# harness comfortably above line rate -- by a different mechanism than the one
+# it credits. Left as it is because it works and the datapath clock, which is
+# NOT scalable and which every latency number is measured on, does take its
+# request and did close (+0.030 ns). But a knob that is passed, accepted and
+# ignored is exactly the shape of the OTABLE_XPM problem, so it is written down
+# instead of being believed.
 AP_CLK_B   ?= 250000000
 CORE_CLK_B ?= 200000000
 
