@@ -1,3 +1,5 @@
+include ../mk/xilinx.mk
+
 STEP1  = ../step1-sw-parser
 STEP2  = ../step2-rtl-decoder
 STEP3B = ../step3b-splitter
@@ -21,9 +23,9 @@ GAP  ?= 24
 
 # ---------- functional: end-to-end 512-bit chain vs BBO golden ----------
 test: golden
-	xvlog -sv $(SRC) $(TB)
-	xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
-	xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD) -testplusarg loc=$(LOC) \
+	$(XSETUP) xvlog -sv $(SRC) $(TB)
+	$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
+	$(XSETUP) xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD) -testplusarg loc=$(LOC) \
 	     -testplusarg base=$(BASE) -testplusarg gap=$(GAP)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(MOLD) loc=$(LOC) gap=$(GAP))"
 
@@ -50,9 +52,9 @@ MSYM_SRC = $(SRC)
 test-msym: $(CLEAN_ITCH) $(CLEAN_MOLD)
 	python3 $(STEP4B)/scripts/dump_bbo.py $(CLEAN_ITCH) 1 > bbo_gold_s0.log
 	python3 $(STEP4B)/scripts/dump_bbo.py $(CLEAN_ITCH) 2 > bbo_gold_s1.log
-	xvlog -sv $(MSYM_SRC) tb/tb_fh_core_msym.sv
-	xelab -debug typical -L xpm tb_fh_core_msym -s tb_fh_core_msym_sim
-	xsim tb_fh_core_msym_sim -runall -testplusarg mold=$(CLEAN_MOLD)
+	$(XSETUP) xvlog -sv $(MSYM_SRC) tb/tb_fh_core_msym.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_fh_core_msym -s tb_fh_core_msym_sim
+	$(XSETUP) xsim tb_fh_core_msym_sim -runall -testplusarg mold=$(CLEAN_MOLD)
 	diff bbo_gold_s0.log bbo_rtl_s0.log
 	diff bbo_gold_s1.log bbo_rtl_s1.log
 	@echo "PASS: two tracked books, each == its own single-symbol golden"
@@ -110,9 +112,9 @@ OT_WAYS ?= 16
 # target period: 3.103 = 322.27 MHz (CMAC box), 4.000 = 250 MHz (QDMA box)
 PERIOD ?= 4.000
 synth:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(PERIOD)
+	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(PERIOD)
 impl:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(PERIOD)
+	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_ooc.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(PERIOD)
 
 # end-to-end simulation of the full chain, diffed against step 6's golden.
 # max_inflight is disabled (see tb_t2t.sv) because nothing drives the ack.
@@ -122,9 +124,9 @@ test-t2t: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	xvlog -sv $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv $(STEP6)/rtl/ack_latency.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
-	xelab -debug typical -L xpm tb_t2t -s tb_t2t_sim
-	xsim tb_t2t_sim -runall -testplusarg eth=real.eth -testplusarg loc=13 \
+	$(XSETUP) xvlog -sv $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv $(STEP6)/rtl/ack_latency.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_t2t -s tb_t2t_sim
+	$(XSETUP) xsim tb_t2t_sim -runall -testplusarg eth=real.eth -testplusarg loc=13 \
 	     -testplusarg base=2800000 -testplusarg gap=48 -testplusarg frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: wire -> order frames == golden"
 
@@ -134,9 +136,9 @@ test-t2t-pipe: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	xvlog -sv -d OT_PIPE $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv $(STEP6)/rtl/ack_latency.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
-	xelab -debug typical -L xpm -d OT_PIPE tb_t2t -s tb_t2t_pipe_sim
-	xsim tb_t2t_pipe_sim -runall -testplusarg eth=real.eth -testplusarg loc=13 \
+	$(XSETUP) xvlog -sv -d OT_PIPE $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv $(STEP6)/rtl/ack_latency.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
+	$(XSETUP) xelab -debug typical -L xpm -d OT_PIPE tb_t2t -s tb_t2t_pipe_sim
+	$(XSETUP) xsim tb_t2t_pipe_sim -runall -testplusarg eth=real.eth -testplusarg loc=13 \
 	     -testplusarg base=2800000 -testplusarg gap=48 -testplusarg frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: pipe wire -> order frames == golden"
 
@@ -152,9 +154,9 @@ DIRSET     ?= default
 NSYM       ?= 1
 T2T_ARGS    = $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
 synth-t2t:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) $(FAST) $(DIRSET) $(NSYM)
+	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) $(FAST) $(DIRSET) $(NSYM)
 impl-t2t:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(T2T_ARGS) $(FAST) $(DIRSET) $(NSYM)
+	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(T2T_ARGS) $(FAST) $(DIRSET) $(NSYM)
 
 # The fast_bbo timing question: is the post-route fMAX difference between
 # FAST=0 and FAST=1 a real cost of the feature, or is it the tool's run-to-run
@@ -171,7 +173,7 @@ SWEEP_DIRSETS = default explore netdly fanout
 SWEEP_FAST   ?= 0 1
 SWEEP_NSYM   ?= 1
 sweep-t2t:
-	@for n in $(SWEEP_NSYM); do \
+	@$(XSETUP) for n in $(SWEEP_NSYM); do \
 	  for f in $(SWEEP_FAST); do \
 	    for d in $(SWEEP_DIRSETS); do \
 	      echo "=== launching fast=$$f nsym=$$n dirset=$$d ==="; \
@@ -188,9 +190,9 @@ sweep-t2t-report:
 
 # t2t_axil wrapper (three clocks): synth checks the 3-clock XDC applies cleanly
 synth-axil:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000 $(NSYM)
+	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000 $(NSYM)
 impl-axil:
-	vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000 $(NSYM)
+	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_axil.tcl -tclargs $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) 4.000 $(NSYM)
 
 clean:
 	rm -rf xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
@@ -208,9 +210,9 @@ clean:
 # the old comments here implied: xsim runs multiple clocks fine, and
 # step8-hw/tb/tb_t2t_kernel.sv uses two.
 define XSIM_UNIT
-	xvlog -sv $(2)
-	xelab -debug typical -L xpm $(1) -s $(1)_xsim
-	xsim $(1)_xsim -runall
+	$(XSETUP) xvlog -sv $(2)
+	$(XSETUP) xelab -debug typical -L xpm $(1) -s $(1)_xsim
+	$(XSETUP) xsim $(1)_xsim -runall
 endef
 
 # alias: the xsim recipe is the only one now.
@@ -255,9 +257,9 @@ TAXIL_SRC = ../step2-rtl-decoder/rtl/itch5_pkg.sv ../step2-rtl-decoder/rtl/itch_
   rtl/axil_regfile.sv rtl/cfg_cdc.sv rtl/axis_tx_arb.sv rtl/igmp_join.sv rtl/arp_responder.sv rtl/t2t_axil.sv
 test-axil-top:
 	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
-	xvlog -sv $(TAXIL_SRC) tb/tb_t2t_axil.sv
-	xelab -debug typical -L xpm tb_t2t_axil -s tb_t2t_axil_sim
-	xsim tb_t2t_axil_sim -runall
+	$(XSETUP) xvlog -sv $(TAXIL_SRC) tb/tb_t2t_axil.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_t2t_axil -s tb_t2t_axil_sim
+	$(XSETUP) xsim tb_t2t_axil_sim -runall
 
 # full datapath THROUGH the wrapper: real replay + AXI config, order frames
 # diffed against step 6's golden; IGMP reports (incl. a query-triggered one)
@@ -267,9 +269,9 @@ test-axil-full: real.eth
 	python3 $(STEP6)/scripts/dump_orders.py t2t_bbo.log 2000 1 100 100 1000 65535 50 > t2t_orders.log
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
-	xvlog -sv $(TAXIL_SRC) tb/tb_t2t_axil_full.sv
-	xelab -debug typical -L xpm tb_t2t_axil_full -s tb_t2t_axil_full_sim
-	xsim tb_t2t_axil_full_sim -runall -testplusarg eth=real.eth \
+	$(XSETUP) xvlog -sv $(TAXIL_SRC) tb/tb_t2t_axil_full.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_t2t_axil_full -s tb_t2t_axil_full_sim
+	$(XSETUP) xsim tb_t2t_axil_full_sim -runall -testplusarg eth=real.eth \
 	     -testplusarg frm=t2t_axil_rtl.log
 	diff t2t_gold.log t2t_axil_rtl.log && echo "PASS: wrapper AXI-config -> order frames == golden"
 
@@ -281,43 +283,43 @@ test-axil-full: real.eth
 # t2t_axil is connected and every width agrees -- which is the only question a
 # box adapter with no behaviour of its own can get wrong.
 lint-opennic:
-	xvlog -sv $(TAXIL_SRC) opennic/t2t_core_clk_stub.sv opennic/t2t_user_322mhz.sv
-	xelab -debug typical -L xpm t2t_user_322mhz -s t2t_user_322mhz_elab
+	$(XSETUP) xvlog -sv $(TAXIL_SRC) opennic/t2t_core_clk_stub.sv opennic/t2t_user_322mhz.sv
+	$(XSETUP) xelab -debug typical -L xpm t2t_user_322mhz -s t2t_user_322mhz_elab
 	@echo "PASS: t2t_user_322mhz elaborates against t2t_axil"
 
 # ---------- A/B line arbiter (redundant-feed gap recovery) ----------
 # Two lines with different drops must merge to the clean golden stream; a
 # double-line gap must be skipped (ev_gap). gen_ab.py builds both cases.
 test-ab:
-	xvlog -sv rtl/feed_ab_arb.sv tb/tb_feed_ab.sv
-	xelab -debug typical -L xpm tb_feed_ab -s tb_feed_ab_sim
+	$(XSETUP) xvlog -sv rtl/feed_ab_arb.sv tb/tb_feed_ab.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_feed_ab -s tb_feed_ab_sim
 	python3 scripts/gen_ab.py recover 30
-	xsim tb_feed_ab_sim -runall -testplusarg gap=0
+	$(XSETUP) xsim tb_feed_ab_sim -runall -testplusarg gap=0
 	diff ab_gold.hex ab_rtl.hex && echo "PASS: A/B recover == golden (single-line drops filled)"
 	python3 scripts/gen_ab.py gap 30
-	xsim tb_feed_ab_sim -runall -testplusarg gap=1
+	$(XSETUP) xsim tb_feed_ab_sim -runall -testplusarg gap=1
 	diff ab_gold.hex ab_rtl.hex && echo "PASS: A/B double-gap skipped == golden"
 
 # ---------- ARP responder (answer who-has our IP) ----------
 test-arp:
 	python3 scripts/gen_arp.py 00:11:22:33:44:55 10.0.0.2 aa:bb:cc:dd:ee:ff 10.0.0.9 > arp_gold.mem
-	xvlog -sv rtl/arp_responder.sv tb/tb_arp_responder.sv
-	xelab -debug typical -L xpm tb_arp_responder -s tb_arp_responder_sim
-	xsim tb_arp_responder_sim -runall
+	$(XSETUP) xvlog -sv rtl/arp_responder.sv tb/tb_arp_responder.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_arp_responder -s tb_arp_responder_sim
+	$(XSETUP) xsim tb_arp_responder_sim -runall
 
 # ---------- IGMPv2 membership report (multicast join) ----------
 # Golden frame from an independent Python build; TB diffs every emitted frame
 # against it byte-for-byte. Group/src match tb_igmp_join.sv defaults.
 test-igmpq:
-	xvlog -sv rtl/igmp_query_detect.sv tb/tb_igmp_query_detect.sv
-	xelab -debug typical -L xpm tb_igmp_query_detect -s tb_igmp_query_detect_sim
-	xsim tb_igmp_query_detect_sim -runall
+	$(XSETUP) xvlog -sv rtl/igmp_query_detect.sv tb/tb_igmp_query_detect.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_igmp_query_detect -s tb_igmp_query_detect_sim
+	$(XSETUP) xsim tb_igmp_query_detect_sim -runall
 
 test-igmp:
 	python3 scripts/gen_igmp.py 233.54.12.1 10.0.0.2 00:11:22:33:44:55 > igmp_gold.mem
-	xvlog -sv rtl/igmp_join.sv tb/tb_igmp_join.sv
-	xelab -debug typical -L xpm tb_igmp_join -s tb_igmp_join_sim
-	xsim tb_igmp_join_sim -runall
+	$(XSETUP) xvlog -sv rtl/igmp_join.sv tb/tb_igmp_join.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_igmp_join -s tb_igmp_join_sim
+	$(XSETUP) xsim tb_igmp_join_sim -runall
 
 # alias: the xsim recipe is the only one now.
 test-cdc: test-cdc-xsim
@@ -335,9 +337,9 @@ test.eth: $(STEP1)/test.mold
 WETH ?= test.eth
 test-wire: $(WETH)
 	python3 $(STEP4B)/scripts/dump_bbo.py $(ITCH) $(LOC) > bbo_gold.log
-	xvlog -sv $(WSRC) tb/tb_wire_to_bbo.sv
-	xelab -debug typical -L xpm $(WTB) -s $(WTB)_sim
-	xsim $(WTB)_sim -runall -testplusarg eth=$(WETH) -testplusarg loc=$(LOC) \
+	$(XSETUP) xvlog -sv $(WSRC) tb/tb_wire_to_bbo.sv
+	$(XSETUP) xelab -debug typical -L xpm $(WTB) -s $(WTB)_sim
+	$(XSETUP) xsim $(WTB)_sim -runall -testplusarg eth=$(WETH) -testplusarg loc=$(LOC) \
 	     -testplusarg base=$(BASE) -testplusarg gap=$(GAP)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: wire->BBO == golden"
 
@@ -351,6 +353,6 @@ test-wire-real: real.eth
 # Self-checking, no golden needed: tcp_rx's contract is its sequence bookkeeping,
 # and every way of getting that wrong is silent on the wire.
 test-tcprx:
-	xvlog -sv rtl/tcp_rx.sv tb/tb_tcp_rx.sv
-	xelab -debug typical -L xpm tb_tcp_rx -s tb_tcp_rx_sim
-	xsim tb_tcp_rx_sim -runall
+	$(XSETUP) xvlog -sv rtl/tcp_rx.sv tb/tb_tcp_rx.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_tcp_rx -s tb_tcp_rx_sim
+	$(XSETUP) xsim tb_tcp_rx_sim -runall

@@ -1,3 +1,5 @@
+include ../mk/xilinx.mk
+
 # Step 6 — strategy trigger + risk gate.
 #
 # Stimulus is a BBO log, which is what step 4b emits, so this stage is tested
@@ -27,9 +29,9 @@ test: test-xsim
 test-combined: bbo_in.log
 	python3 scripts/dump_sweep.py $(SWITCH) $(SWLOC) $(SWMIN) $(SWGAP) > sweep_in.log 2>/dev/null
 	python3 scripts/dump_orders.py bbo_in.log 2000 1 100 100 1000 4 50 sweep_in.log > orders_gold.log
-	xvlog -sv $(VSRC)
-	xelab -debug typical -L xpm tb_strategy -s tb_strategy_sim
-	xsim tb_strategy_sim -runall -testplusarg bbo=bbo_in.log -testplusarg sweep=sweep_in.log \
+	$(XSETUP) xvlog -sv $(VSRC)
+	$(XSETUP) xelab -debug typical -L xpm tb_strategy -s tb_strategy_sim
+	$(XSETUP) xsim tb_strategy_sim -runall -testplusarg bbo=bbo_in.log -testplusarg sweep=sweep_in.log \
 	     -testplusarg out=orders_rtl.log -testplusarg pkt=ouch_rtl.log -testplusarg frm=frames_rtl.log
 	diff orders_gold.log orders_rtl.log && echo "PASS: combined orders == golden ($(SWITCH) loc=$(SWLOC))"
 	python3 scripts/dump_ouch.py orders_gold.log > ouch_gold.log
@@ -39,9 +41,9 @@ test-combined: bbo_in.log
 
 test-xsim: bbo_in.log
 	python3 scripts/dump_orders.py bbo_in.log > orders_gold.log
-	xvlog -sv $(VSRC)
-	xelab -debug typical -L xpm tb_strategy -s tb_strategy_sim
-	xsim tb_strategy_sim -testplusarg bbo=bbo_in.log -testplusarg out=orders_rtl.log -testplusarg pkt=ouch_rtl.log -testplusarg frm=frames_rtl.log -runall
+	$(XSETUP) xvlog -sv $(VSRC)
+	$(XSETUP) xelab -debug typical -L xpm tb_strategy -s tb_strategy_sim
+	$(XSETUP) xsim tb_strategy_sim -testplusarg bbo=bbo_in.log -testplusarg out=orders_rtl.log -testplusarg pkt=ouch_rtl.log -testplusarg frm=frames_rtl.log -runall
 	diff orders_gold.log orders_rtl.log && echo "PASS: orders == golden (xsim)"
 	python3 scripts/dump_ouch.py orders_gold.log > ouch_gold.log
 	diff ouch_gold.log ouch_rtl.log && echo "PASS: OUCH packets == golden (xsim)"
@@ -55,9 +57,9 @@ test-xsim: bbo_in.log
 MSYM_SRC = rtl/strategy.sv rtl/ouch_builder.sv tb/tb_strategy_msym.sv
 test-msym: bbo_in.log
 	python3 scripts/dump_orders.py bbo_in.log 2000 1 100 100 1000 65535 50 > orders_gold_msym.log
-	xvlog -sv $(MSYM_SRC)
-	xelab -debug typical -L xpm tb_strategy_msym -s tb_strategy_msym_sim
-	xsim tb_strategy_msym_sim -testplusarg bbo=bbo_in.log \
+	$(XSETUP) xvlog -sv $(MSYM_SRC)
+	$(XSETUP) xelab -debug typical -L xpm tb_strategy_msym -s tb_strategy_msym_sim
+	$(XSETUP) xsim tb_strategy_msym_sim -testplusarg bbo=bbo_in.log \
 	     -testplusarg out0=orders_rtl_s0.log -testplusarg out1=orders_rtl_s1.log -runall
 	diff orders_gold_msym.log orders_rtl_s0.log
 	diff orders_gold_msym.log orders_rtl_s1.log
@@ -81,9 +83,9 @@ SWSRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
         $(STEP5)/rtl/drop_fifo.sv rtl/sweep_detect.sv tb/tb_sweep.sv
 test-sweep:
 	python3 scripts/dump_sweep.py $(SWITCH) $(SWLOC) $(SWMIN) $(SWGAP) > sweep_gold.log 2>sweep_sum.txt
-	xvlog -sv $(SWSRC)
-	xelab -debug typical -L xpm tb_sweep -s tb_sweep_sim
-	xsim tb_sweep_sim -runall -testplusarg itch=$(SWITCH) -testplusarg loc=$(SWLOC) \
+	$(XSETUP) xvlog -sv $(SWSRC)
+	$(XSETUP) xelab -debug typical -L xpm tb_sweep -s tb_sweep_sim
+	$(XSETUP) xsim tb_sweep_sim -runall -testplusarg itch=$(SWITCH) -testplusarg loc=$(SWLOC) \
 	     -testplusarg min=$(SWMIN) -testplusarg gap=$(SWGAP)
 	diff sweep_gold.log sweep_rtl.log && echo "PASS: sweeps == golden ($(SWITCH) loc=$(SWLOC) min=$(SWMIN))"
 	@cat sweep_sum.txt
@@ -117,19 +119,19 @@ clean:
 # frame is byte-identical to the original and that a resend never delays a live
 # order. Both are checked directly.
 test-replay:
-	xvlog -sv rtl/tx_replay_buf.sv tb/tb_tx_replay_buf.sv
-	xelab -debug typical -L xpm tb_tx_replay_buf -s tb_tx_replay_buf_sim
-	xsim tb_tx_replay_buf_sim -runall
+	$(XSETUP) xvlog -sv rtl/tx_replay_buf.sv tb/tb_tx_replay_buf.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_tx_replay_buf -s tb_tx_replay_buf_sim
+	$(XSETUP) xsim tb_tx_replay_buf_sim -runall
 
 # the other half of a retransmission: deciding there was one to make
 test-rto:
-	xvlog -sv rtl/tx_rto.sv tb/tb_tx_rto.sv
-	xelab -debug typical -L xpm tb_tx_rto -s tb_tx_rto_sim
-	xsim tb_tx_rto_sim -runall
+	$(XSETUP) xvlog -sv rtl/tx_rto.sv tb/tb_tx_rto.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_tx_rto -s tb_tx_rto_sim
+	$(XSETUP) xsim tb_tx_rto_sim -runall
 
 # the number tx_rto's two constants should have been chosen from, measured in
 # hardware off the same two signals tx_rto watches
 test-acklat:
-	xvlog -sv rtl/ack_latency.sv tb/tb_ack_latency.sv
-	xelab -debug typical -L xpm tb_ack_latency -s tb_ack_latency_sim
-	xsim tb_ack_latency_sim -runall
+	$(XSETUP) xvlog -sv rtl/ack_latency.sv tb/tb_ack_latency.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_ack_latency -s tb_ack_latency_sim
+	$(XSETUP) xsim tb_ack_latency_sim -runall

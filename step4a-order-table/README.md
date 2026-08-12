@@ -78,9 +78,11 @@ a unit test disagrees with a system that works.
 ## Status / performance
 
 - xsim: synthetic test.itch PASS (10 records, all types), real data 500k AAPL
-  slice PASS, two symbols in one table PASS, clear sweep PASS. Re-run under both
-  Vivado 2023.2 and 2025.2.1 — worth doing since the memory is now a vendor
-  macro and nothing else, so the vendor's version is part of what is tested.
+  slice PASS, two symbols in one table PASS, clear sweep PASS. Run on the pinned
+  toolchain (`make which-tools` says which), and checked on the older install
+  too — worth doing since the memory is now a vendor macro and nothing else, so
+  the vendor's version is part of what is tested rather than an implementation
+  detail of a branch nobody compiled.
 - Real data **5M AAPL slice PASS** (6740 records — including real A/F/E/X/D/U,
   0 drops, 0 overflow, miss = lookups for other symbols). Measured under
   Verilator, a flow this project no longer runs; kept as the largest replay the

@@ -1,0 +1,19 @@
+NSYM=1 FAST=1 fMAX: the same design under two Vivado versions
+Identical RTL and directives; only the tool differs. FINDINGS 7.6.4.
+
+dirset         2023.2   2025.2.1
+---------- ---------- ----------
+default         220.7      221.0
+explore         220.7      221.0
+fanout          220.0      220.4
+netdly          217.4      223.4
+best            220.7      223.4
+
+The 2023.2 column is what steps 1-6 silently used before the toolchain was
+pinned, and is the tool behind every fMAX number in FINDINGS 7.6.x and 7.7.
+The 2025.2.1 column is the pinned default -- the version the card is built
+with, which is the reason to prefer it for a proxy of the card's timing.
+
+Not worse on any directive. The netdly gain (+6.0) is large enough to matter:
+it is the same size as the effects 7.6.2 and 7.7 reason about, which is why
+those tables need re-running before a new build is compared against them.

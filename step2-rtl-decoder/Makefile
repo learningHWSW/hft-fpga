@@ -1,3 +1,5 @@
+include ../mk/xilinx.mk
+
 SRC  = rtl/itch5_pkg.sv rtl/itch_decoder.sv
 TB   = tb/tb_itch_decoder.sv
 TOP  = tb_itch_decoder
@@ -5,9 +7,9 @@ ITCH ?= ../step1-sw-parser/test.itch
 
 # ---------- xsim (Vivado/Vitis) — primary; source settings64.sh first ----------
 test: golden
-	xvlog -sv $(SRC) $(TB)
-	xelab -debug typical $(TOP) -s $(TOP)_sim
-	xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH)
+	$(XSETUP) xvlog -sv $(SRC) $(TB)
+	$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	$(XSETUP) xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH)
 	diff decode_gold.log decode_rtl.log && echo "PASS: RTL == golden"
 
 golden: $(ITCH)

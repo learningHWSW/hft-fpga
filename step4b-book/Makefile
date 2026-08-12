@@ -1,3 +1,5 @@
+include ../mk/xilinx.mk
+
 STEP1 = ../step1-sw-parser
 STEP2 = ../step2-rtl-decoder
 STEP4A = ../step4a-order-table
@@ -14,9 +16,9 @@ BASE ?= 1500000
 
 # ---------- xsim (Vivado 2025.2) — primary; source settings64.sh first ----------
 test: golden
-	xvlog -sv $(SRC) $(TB)
-	xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
-	xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
+	$(XSETUP) xvlog -sv $(SRC) $(TB)
+	$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
+	$(XSETUP) xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(ITCH) loc=$(LOC))"
 
 # II=1 pipelined order table (order_table_pipe) against the SAME golden
@@ -24,9 +26,9 @@ test: golden
 # xelab takes defines with -d, and they have to reach BOTH steps: xvlog parses
 # the `ifdef, xelab elaborates what it selected.
 test-pipe: golden
-	xvlog -sv -d OT_PIPE $(SRC) $(TB)
-	xelab -debug typical -L xpm -d OT_PIPE $(TOP) -s $(TOP)_pipe_sim
-	xsim $(TOP)_pipe_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
+	$(XSETUP) xvlog -sv -d OT_PIPE $(SRC) $(TB)
+	$(XSETUP) xelab -debug typical -L xpm -d OT_PIPE $(TOP) -s $(TOP)_pipe_sim
+	$(XSETUP) xsim $(TOP)_pipe_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: pipe BBO == golden ($(ITCH) loc=$(LOC))"
 
 test-pipe-real:
@@ -36,9 +38,9 @@ test-pipe-real:
 test-merge: test-merge-xsim
 
 test-merge-xsim:
-	xvlog -sv rtl/bbo_merge.sv tb/tb_bbo_merge.sv
-	xelab -debug typical -L xpm tb_bbo_merge -s tb_bbo_merge_sim
-	xsim tb_bbo_merge_sim -runall
+	$(XSETUP) xvlog -sv rtl/bbo_merge.sv tb/tb_bbo_merge.sv
+	$(XSETUP) xelab -debug typical -L xpm tb_bbo_merge -s tb_bbo_merge_sim
+	$(XSETUP) xsim tb_bbo_merge_sim -runall
 
 golden: $(ITCH)
 	python3 scripts/dump_bbo.py $(ITCH) $(LOC) > bbo_gold.log

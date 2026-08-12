@@ -1,3 +1,5 @@
+include ../mk/xilinx.mk
+
 STEP2 = ../step2-rtl-decoder
 SRC   = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv rtl/mold_stripper.sv
 TB    = tb/tb_mold_stripper.sv
@@ -6,9 +8,9 @@ MOLD ?= ../step1-sw-parser/test.mold
 
 # ---------- xsim (Vivado/Vitis) — primary; source settings64.sh first ----------
 test: golden
-	xvlog -sv $(SRC) $(TB)
-	xelab -debug typical $(TOP) -s $(TOP)_sim
-	xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD)
+	$(XSETUP) xvlog -sv $(SRC) $(TB)
+	$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	$(XSETUP) xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD)
 	diff mold_gold.log mold_rtl.log && echo "PASS: RTL == golden"
 
 golden: $(MOLD)

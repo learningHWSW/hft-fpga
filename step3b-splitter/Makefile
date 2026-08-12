@@ -1,3 +1,5 @@
+include ../mk/xilinx.mk
+
 STEP1 = ../step1-sw-parser
 STEP2 = ../step2-rtl-decoder
 STEP3A = ../step3a-mold-stripper
@@ -12,9 +14,9 @@ MOLD  ?= $(STEP1)/test.mold
 
 # ---------- xsim (Vivado 2025.2) — primary; source settings64.sh first ----------
 test: golden
-	xvlog -sv $(SRC) $(TB)
-	xelab -debug typical $(TOP) -s $(TOP)_sim
-	xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD)
+	$(XSETUP) xvlog -sv $(SRC) $(TB)
+	$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	$(XSETUP) xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD)
 	diff splitter_gold.log splitter_rtl.log && echo "PASS: RTL == golden ($(MOLD))"
 
 golden: $(MOLD)

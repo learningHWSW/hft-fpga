@@ -223,15 +223,25 @@ trade.
 |---|---|---|
 | Vivado / Vitis | **2025.2.1** | provides `vivado`, `v++`, `xvlog`, `xelab`, `xsim` — and all of them must come from the *same* install: a `.xo` packaged by one version and linked by another is refused if the linker is older, and silently accepted if it is newer. `make -C step8-hw which-tools` prints what the recipes will actually use |
 
-**Only step 8 enforces that.** Its recipes source `XILINX_SETTINGS` themselves
-and fail loudly if the tools are missing; steps 1–6 take whatever `xvlog` is on
-`PATH`, which on this machine is an older install that also happens to be
-present. The two halves of the suite have therefore been running on different
-simulators without saying so — harmless so far (step 4a's goldens and its clear
-sweep were re-run under both and agree), but it stopped being purely cosmetic
-once `otable_mem` became a vendor macro and nothing else, because the vendor's
-version is now part of what is under test. Source the settings script before
-running steps 1–6 if it matters to you; making them enforce it is an open task.
+**Every step enforces that now**, through one shared guard in
+[`mk/xilinx.mk`](mk/xilinx.mk): each recipe sources `XILINX_SETTINGS`, fails
+loudly if it is unreadable or if sourcing it fails, and fails again if the tool
+is still not on `PATH`. Silence is never a fallback. `make which-tools` in any
+step prints what its recipes will actually use, version included.
+
+```sh
+make test                                        # the pinned install
+make test XILINX_SETTINGS=/opt/Xilinx/2024.2/Vivado/settings64.sh
+make test XILINX_SETTINGS=                       # deliberately, whatever is on PATH
+```
+
+Only step 8 used to be guarded. Steps 2–6 took whatever `xvlog` came first on
+`PATH` — an older install, on this machine — so the suite had been running on
+two toolchains and reporting one. That was cosmetic until `otable_mem` became a
+vendor macro and nothing else, at which point the vendor's version stopped being
+an implementation detail. **It also means the fMAX history in
+[`data/FINDINGS.md`](data/FINDINGS.md) §7.6–7.7 was produced by the older
+install**, which is stated there rather than quietly re-baselined.
 | XRT | 2.18.179 (2024.2) | only for running on the card |
 | Python | 3.8+ | goldens and packing scripts; standard library only |
 | GCC | C++17 | host runner and the step-1 C model |

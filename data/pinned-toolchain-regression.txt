@@ -1,0 +1,40 @@
+The full xsim suite on the PINNED toolchain (task #29)
+
+First run of the whole suite on 2025.2.1 -- the version step 8 and the card
+have always used, and the version steps 1-6 never did until now.
+
+RESULT step2-rtl-decoder  test                   OK
+RESULT step3a-mold-stripper test                   OK
+RESULT step3b-splitter    test                   OK
+RESULT step4a-order-table test                   OK
+RESULT step4a-order-table test-multi             OK
+RESULT step4a-order-table test-clear             OK
+RESULT step4b-book        test                   OK
+RESULT step4b-book        test-merge-xsim        OK
+RESULT step6-strategy     test-xsim              OK
+RESULT step6-strategy     test-msym              OK
+RESULT step6-strategy     test-sweep             OK
+RESULT step6-strategy     test-replay            OK
+RESULT step6-strategy     test-rto               OK
+RESULT step6-strategy     test-acklat            OK
+RESULT step5-board        test-t2t               OK
+RESULT step5-board        test-units-xsim        OK
+RESULT step5-board        test-tcprx             OK
+RESULT step5-board        test-msym              OK
+RESULT step7-host         test                   OK
+RESULT step8-hw           test-xsim              OK
+RESULT step8-hw           test-session           OK
+RESULT step8-hw           test-rto               OK
+RESULT step8-hw           test-b                 OK
+RESULT step8-hw           test-b-session         OK
+RESULT step3b-splitter    test-real-xsim         OK
+RESULT step4a-order-table test-real-xsim         OK
+RESULT step4b-book        test-real-xsim         OK
+RESULT step5-board        test-real              OK
+RESULT step8-hw           test-real              OK
+
+29 targets, 29 OK, 0 FAIL.
+
+The same 29 pass on 2023.2 (data/ack-probe-regression.txt), so the two
+installs agree on every golden. They do NOT agree on fMAX -- see
+data/fmax-toolchain-version.txt.

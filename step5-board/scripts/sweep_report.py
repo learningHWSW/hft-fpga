@@ -58,6 +58,15 @@ def parse(path):
     r["failing"] = grab(r"SUMMARY_IMPL_FAILING: (\d+)", int)
     w = re.search(r"SUMMARY_IMPL_WORST_core_clk: (.*)", txt)
     r["worst"] = w.group(1).strip() if w else ""
+    # WHICH TOOL BUILT THIS ROW. Not a decoration: these transcripts accumulate
+    # in syn/ and the glob picks up whatever is there, so a sweep re-run on a
+    # new install lands in the same table as the old one's leftovers and reads
+    # as one experiment. That happened the day the toolchain was pinned -- two
+    # rows rebuilt on 2025.2.1, two stale rows from 2023.2, one table, no way to
+    # tell. fMAX is version-dependent (FINDINGS 7.6.4), so a mixed table is not
+    # a comparison of anything.
+    v = re.search(r"Vivado v(\S+)", txt)
+    r["tool"] = v.group(1) if v else "?"
     return r
 
 
@@ -85,18 +94,25 @@ def main(argv):
     period = runs[0]["period"]
     print(f"core_clk constrained at {period} ns "
           f"({1000.0/period:.1f} MHz); fMAX = 1000/(period - WNS)\n")
-    hdr = ("{:<8} {:>4} {:<9} {:>9} {:>9} {:>9} {:>8}   {}"
+    tools = sorted({r["tool"] for r in runs})
+    if len(tools) > 1:
+        print("!! MIXED TOOLCHAIN: " + ", ".join(tools))
+        print("!! fMAX is version-dependent, so the rows below are not one")
+        print("!! experiment. Delete syn/sweep-f*.log and re-run the whole set.\n")
+    else:
+        print(f"built by Vivado {tools[0]}\n")
+    hdr = ("{:<8} {:>4} {:<9} {:>9} {:>9} {:>9} {:>8} {:<9}  {}"
            .format("fast_bbo", "nsym", "dirset", "fMAX MHz", "WNS ns", "TNS ns",
-                   "failing", "worst core_clk path is in"))
+                   "failing", "tool", "worst core_clk path is in"))
     print(hdr)
     print("-" * len(hdr))
     for r in sorted(runs, key=lambda x: (x["nsym"], x["fast"], -x["fmax"])):
         src = r["worst"].split(" -> ")[0]
-        print("{:<8} {:>4} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8}   {}"
+        print("{:<8} {:>4} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8} {:<9}  {}"
               .format(r["fast"], r["nsym"], r["dirset"], r["fmax"], r["wns"],
                       r["tns"] if r["tns"] is not None else float("nan"),
                       r["failing"] if r["failing"] is not None else "?",
-                      owner(src)))
+                      r["tool"], owner(src)))
 
     print()
     # Group on whichever axis this sweep actually varied. A sweep that moved

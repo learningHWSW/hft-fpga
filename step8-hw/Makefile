@@ -172,14 +172,12 @@ XILINX_SETTINGS ?= /opt/Xilinx/2025.2.1/Vivado/settings64.sh
 # `make which-tools` did not catch this and could not have: it reports the tools
 # XSETUP provides, which is precisely what the link was not using. It describes
 # the recipes again now that the recipes agree with it.
-SHELL := /bin/bash
-
-XSETUP = { if [ -n "$(XILINX_SETTINGS)" ]; then \
-             [ -r "$(XILINX_SETTINGS)" ] || { echo "ERROR: XILINX_SETTINGS=$(XILINX_SETTINGS) is not readable."; exit 1; }; \
-             . "$(XILINX_SETTINGS)" >/dev/null || { echo "ERROR: sourcing $(XILINX_SETTINGS) failed."; exit 1; }; \
-           fi; \
-           command -v v++ >/dev/null 2>&1 \
-           || { echo "ERROR: no Xilinx tools on PATH. Point XILINX_SETTINGS at a settings64.sh."; exit 1; }; } &&
+# The guard itself now lives in ../mk/xilinx.mk, because steps 2-6 need exactly
+# the same one and a second copy of a rule about consistency is a poor joke.
+# v++ rather than xvlog: a Vitis install can answer xvlog and still be missing
+# the linker, and this directory is the one that links.
+XTOOL := v++
+include ../mk/xilinx.mk
 
 PART ?= xcu55c-fsvh2892-2L-e
 XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
@@ -779,10 +777,7 @@ real-image: real_replay.bin ## Data|build real_replay.bin from the full-day capt
 	@ls -la real_replay.bin
 
 # Diagnostic: which Xilinx tools will the recipes actually use?
-which-tools: ## Info|which Xilinx tools the recipes will actually use
-	@$(XSETUP) echo "vivado : $$(command -v vivado)"; \
-	  echo "v++    : $$(command -v v++)"; \
-	  echo "xvlog  : $$(command -v xvlog)"
+# which-tools comes from ../mk/xilinx.mk, shared with every other step.
 
 # ---------- help ----------
 # Reads the `## Group|description` tags on the rules themselves, so it cannot

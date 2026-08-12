@@ -5,7 +5,8 @@ xsim (Vivado/Vitis) is the flow.
 ## Run
 
 ```sh
-# Vivado/Vitis environment (after sourcing settings64.sh)
+# No sourcing needed: the recipes source the pinned install themselves and
+# fail loudly if it is missing (../mk/xilinx.mk). `make which-tools` says which.
 make test
 
 ```

@@ -1,3 +1,5 @@
+include ../mk/xilinx.mk
+
 STEP1 = ../step1-sw-parser
 STEP2 = ../step2-rtl-decoder
 SRC   = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv rtl/otable_mem.sv rtl/order_table.sv
@@ -10,9 +12,9 @@ LOC  ?= 1
 
 # ---------- xsim (Vivado 2025.2) — primary; source settings64.sh first ----------
 test: golden
-	xvlog -sv $(SRC) $(TB)
-	xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
-	xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC)
+	$(XSETUP) xvlog -sv $(SRC) $(TB)
+	$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
+	$(XSETUP) xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC)
 	diff book_gold.log book_rtl.log && echo "PASS: RTL == golden ($(ITCH) loc=$(LOC))"
 
 golden: $(ITCH)
@@ -27,9 +29,9 @@ golden: $(ITCH)
 LOC2 ?= 2
 test-multi:
 	python3 scripts/dump_book.py $(ITCH) $(LOC),$(LOC2) > book_gold.log
-	xvlog -sv -d TB_NSYM=2 $(SRC) $(TB)
-	xelab -debug typical -L xpm $(TOP) -s $(TOP)_msim
-	xsim $(TOP)_msim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) \
+	$(XSETUP) xvlog -sv -d TB_NSYM=2 $(SRC) $(TB)
+	$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_msim
+	$(XSETUP) xsim $(TOP)_msim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) \
 	     -testplusarg loc2=$(LOC2)
 	diff book_gold.log book_rtl.log \
 	  && echo "PASS: two symbols in one table == golden (loc=$(LOC),$(LOC2))"
@@ -42,10 +44,10 @@ test-multi:
 # is a real test now that every flow builds the XPM macro, whose simulation
 # model comes up ZEROED however USE_MEM_INIT is set (FINDINGS 4.5).
 test-clear:
-	xvlog -sv $(STEP2)/rtl/itch5_pkg.sv rtl/otable_mem.sv rtl/order_table.sv \
+	$(XSETUP) xvlog -sv $(STEP2)/rtl/itch5_pkg.sv rtl/otable_mem.sv rtl/order_table.sv \
 	          tb/tb_otable_clear.sv
-	xelab -debug typical -L xpm tb_otable_clear -s tb_otable_clear_sim
-	xsim tb_otable_clear_sim -runall
+	$(XSETUP) xelab -debug typical -L xpm tb_otable_clear -s tb_otable_clear_sim
+	$(XSETUP) xsim tb_otable_clear_sim -runall
 
 $(STEP1)/test.itch:
 	cd $(STEP1) && python3 gen_itch.py test.itch

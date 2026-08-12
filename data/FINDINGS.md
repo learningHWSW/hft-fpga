@@ -1188,6 +1188,51 @@ Two things follow, and the second is a temptation worth naming:
   disappears this is a lever, and it is written down here rather than
   rediscovered.
 
+#### 7.6.4 Every fMAX number above was produced by a tool nobody had pinned
+
+Steps 1-6 took whatever `xvlog` and `vivado` came first on `PATH`. On this
+machine that is **2023.2**, while step 8 has always sourced **2025.2.1** and
+every one of those READMEs reported 2025.2. So the simulation suite and the card
+build ran on different toolchains, the fMAX sweeps ran on the older one, and
+nothing in the repository said so.
+
+That is now fixed -- one guard in `mk/xilinx.mk`, included by every step
+including step 8, sourcing the pinned install and failing loudly rather than
+falling back (`make which-tools` reports what any directory will use). The
+suite passes 29/29 on the pinned version, real-data replays included.
+
+**But pinning MOVES the instrument**, so it was measured rather than announced.
+Identical RTL, identical directives, one commit, only the tool differs:
+
+| dirset | 2023.2 | 2025.2.1 |
+|---|---|---|
+| default | 220.7 | 221.0 |
+| explore | 220.7 | 221.0 |
+| fanout | 220.0 | 220.4 |
+| netdly | 217.4 | **223.4** |
+| **best of four** | 220.7 | **223.4** |
+
+Not worse anywhere; +0.3 to +0.4 on three directives and **+6.0 MHz on netdly**,
+which alone moves best-of-four by 2.7. (223.4 is also what reversing two
+generate labels gave on 2023.2 in §7.6.3. Two unrelated causes landing on the
+same number is a coincidence, not a pattern -- worth saying because it looks
+like one.)
+
+**What that does to everything above.** Each table here is still internally
+valid: every row in it came from one tool. What is no longer valid is comparing
+a NEW build against an OLD table, and a 6 MHz version effect is the same size as
+the effects §7.6.2 and §7.7 are reasoning about -- §7.7 in particular concludes
+that two configurations differ by less than the spread within either, and both
+halves of that were measured on 2023.2. Those tables need their own re-run
+before being quoted against a 2025.2.1 build.
+
+The accident is at least loud now. `sweep_report.py` globbed `syn/sweep-f*.log`
+and printed two freshly rebuilt 2025.2.1 rows beside two stale 2023.2 rows as
+one experiment -- which is how this section's own numbers were nearly recorded
+wrong. It now parses the version out of each transcript, prints it per row, and
+refuses to present a mixed set as a comparison. A report that cannot say which
+tool produced a row is §4.5 wearing a different hat.
+
 ### 7.7 What the fast book path costs in fMAX — nothing measurable, and the README was wrong
 
 The README carried "**218.6 → 209.1 MHz**, the price of `fast_bbo`" from the day

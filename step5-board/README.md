@@ -7,8 +7,21 @@ to get resource and timing facts that simulation cannot give.
 
 ## What runs here, and what is blocked
 
-This machine has Vivado 2025.2 and the `xcu55c-fsvh2892-2L-e` part, but **no
-Alveo card** (and it is WSL2, which cannot do PCIe passthrough to an Alveo).
+This directory targets `xcu55c-fsvh2892-2L-e` and stops at place and route: it
+is where the design is *built*, not where it is run. Everything on silicon lives
+in [step8-hw](../step8-hw/), which does have the card — a U55C at
+`0000:08:00.1`, alongside a U250.
+
+(This section used to say there was no Alveo here and that the machine was WSL2,
+which could not do PCIe passthrough. Both stopped being true once the card
+arrived and the bitstreams ran, and the last row of the table below had already
+been recording hardware results while the sentence above it denied they were
+possible.)
+
+The toolchain is pinned by `../mk/xilinx.mk` — the recipes source it themselves
+and fail loudly rather than falling back to whatever is on `PATH`. `make
+which-tools` prints the version every recipe here will use, which matters more
+in this directory than anywhere else: **fMAX depends on it** (FINDINGS §7.6.4).
 
 | Task | Status |
 |---|---|
