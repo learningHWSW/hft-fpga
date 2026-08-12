@@ -592,8 +592,8 @@ module tb_t2t_kernel;
     axil_read(T2T + 13'h194, v);
     $display("TB: build geom     = NSYM=%0d OT=2^%0dx%0d",
              v[7:0], v[15:8], v[23:16]);
-    if (v[7:0] != `T2T_NSYM)
-      $display("FAIL: built NSYM=%0d, expected %0d", v[7:0], `T2T_NSYM);
+    if (v[7:0] != t2t_geom_pkg::NSYM)
+      $display("FAIL: built NSYM=%0d, expected %0d", v[7:0], t2t_geom_pkg::NSYM);
     // st_frame_cnt counts the ORDER frames tcp_tx built; capture records
     // everything on the TX port, so the surplus is the IGMP reports (and any
     // ARP replies) the arbiter merged in. Capture may therefore exceed it, but

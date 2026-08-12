@@ -39,30 +39,23 @@
 // depends on. Phase B replaces ap_clk on the stream side with the CMAC's real
 // 322.265625 MHz recovered clock.
 `timescale 1ns/1ps
-`ifndef T2T_NSYM
-  `define T2T_NSYM 1
-`endif
-`ifndef T2T_OT_SETS_BITS
-  `define T2T_OT_SETS_BITS 13
-`endif
-`ifndef T2T_OT_WAYS
-  `define T2T_OT_WAYS 16
-`endif
+import t2t_geom_pkg::*;
 module t2t_kernel #(
   parameter int DATA_W       = 512,
   parameter int ADDR_W       = 64,
-  // Geometry defaults come from `defines, not from literals, because that is the
-  // only override that survives Vitis packaging. ipx::package_project packages
-  // SOURCES -- it does not carry a `generic` set on the fileset, and the
-  // packager then strips user parameters, so the module's own defaults are what
-  // v++ elaborates. verilog_define does survive (it is how OTABLE_XPM reaches
-  // the order table today), so the geometry rides the same path.
-  parameter int OT_SETS_BITS = `T2T_OT_SETS_BITS,
-  parameter int OT_WAYS      = `T2T_OT_WAYS,
+  // Geometry defaults come from a GENERATED PACKAGE, not from literals and not
+  // from `defines. Neither of the other two reaches v++: ipx::package_project
+  // packages SOURCES, so a `generic` on the fileset is not carried, the packager
+  // strips user parameters, and a verilog_define set on the packaging project is
+  // not seen by v++'s own synthesis of the kernel. A generated source file IS
+  // packaged into the .xo, so it travels with the design -- and the same file
+  // feeds the simulation, so there is one mechanism rather than two.
+  parameter int OT_SETS_BITS = t2t_geom_pkg::OT_SETS_BITS,
+  parameter int OT_WAYS      = t2t_geom_pkg::OT_WAYS,
   // Tracked symbols. Moves together with OT_SETS_BITS by hand and not by
   // implication -- 2^13 x 16 holds exactly one name, and the resize is where
   // the timing difficulty is (FINDINGS 4.4), so a build must state both.
-  parameter int NSYM         = `T2T_NSYM
+  parameter int NSYM         = t2t_geom_pkg::NSYM
 )(
   // ---- Vitis kernel clocks and resets ----
   input  logic         ap_clk,

@@ -52,6 +52,7 @@ puts "=== using CMAC IP: $cmac_xci ==="
 file delete -force $packaged $tmp_proj $xo
 
 set srcs [list \
+  $root/rtl/t2t_geom_pkg.sv \
   $repo/step2-rtl-decoder/rtl/itch5_pkg.sv \
   $repo/step2-rtl-decoder/rtl/itch_decoder.sv \
   $repo/step3b-splitter/rtl/mold_splitter.sv \
@@ -90,22 +91,19 @@ set srcs [list \
 create_project -force kernel_b_pack $tmp_proj -part $part
 add_files -norecurse $srcs
 add_files -norecurse $cmac_xci
-# ---- kernel geometry as build knobs, not RTL edits ----
-# Carried as `defines and NOT as generics. ipx::package_project packages
-# SOURCES: a `generic` set on the fileset is not carried into the component, and
-# the packager then strips user parameters, so the module's own defaults are
-# what v++ elaborates. That failed silently once -- the build reported the
-# generics it had set, produced a bitstream, ran, and tracked one symbol -- and
-# was caught only by reading URAM counts out of the utilization report.
-# verilog_define does survive, which is how OTABLE_XPM already reaches the order
-# table, so the geometry rides the proven path.
-set defs {OTABLE_XPM}
-foreach {gv gd} {NSYM 1 OT_SETS_BITS 13 OT_WAYS 16} {
-  set val [expr {[info exists ::env($gv)] ? $::env($gv) : $gd}]
-  lappend defs "T2T_$gv=$val"
-}
-set_property verilog_define $defs [current_fileset]
-puts "=== kernel geometry: $defs ==="
+# The kernel geometry travels as rtl/t2t_geom_pkg.sv, first in the source list
+# above -- a GENERATED SOURCE, because that is the only thing that reaches v++.
+# Two other mechanisms were tried and both failed silently, each producing a
+# bitstream that reported one geometry and elaborated another:
+#   * -generic / set_property generic: ipx::package_project packages sources,
+#     not a synthesised netlist, and the packager then strips user parameters,
+#     so the module's own defaults are what v++ elaborates;
+#   * set_property verilog_define here: it applies to THIS project's synthesis,
+#     and v++ re-synthesises the kernel in its own project where it is unset.
+# (OTABLE_XPM appeared to prove verilog_define worked. It did not prove it:
+#  both branches of otable_mem carry ram_style="ultra", so the URAM count is
+#  the same either way and says nothing about which branch was compiled.)
+set_property verilog_define {OTABLE_XPM} [current_fileset]
 set_property top $kernel_name [current_fileset]
 
 update_compile_order -fileset sources_1
