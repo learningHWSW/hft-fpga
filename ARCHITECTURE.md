@@ -235,7 +235,15 @@ Two implementation details matter more than they look:
   **+0.099 ns** at the same 215 MHz, for no latency.
 - **URAM cannot be initialised**, so the table sweeps itself clear on reset and
   holds `init_done` low until it finishes. `initial mem = 0` works in simulation
-  and in BRAM and is a lie on the device.
+  and in BRAM and is a lie on the device — and so is the XPM simulation model,
+  which zeroes itself and therefore cannot fail a build whose sweep was removed.
+  `step4a make test-clear` pokes garbage into the memory before reset and
+  requires the table not to see it (FINDINGS §4.5).
+- **One memory description, all three flows.** `otable_mem` instantiates
+  `xpm_memory_sdpram` unconditionally. It used to select against a behavioural
+  array on a define that only step 5's synthesis set, so simulation and the card
+  build compiled the other branch — invisibly, because both map to URAM and
+  report the same count.
 
 ## 6. Stage 4b — price ladder / top-of-book
 
@@ -408,6 +416,17 @@ The reason this can live in hardware at all is that the resend is idempotent
 twice over -- the replayed bytes carry the original sequence number, so the peer's
 stack discards them, and the original token, which the venue must ignore. A
 spurious retransmission costs a discarded segment, not a duplicate fill.
+
+**`cfg_rto_cycles` and `cfg_max_retries` are the only two numbers in this design
+that were not measured**, because what they need is the distribution of venue
+acknowledgement latency and nothing has ever answered these orders.
+`ack_latency` is the instrument for them, built ahead of the venue: it watches
+the same `seq_num`/`peer_ack` pair `tx_rto` does -- a send is one advancing, an
+acknowledgement is the other passing it -- so it costs the datapath nothing and
+adds no taps. One measurement at a time, because acks are cumulative; a
+retransmitted frame's ack is discarded rather than averaged in; and with no
+counterparty it reports zero samples rather than a zero that reads like a
+measurement. Seven status registers at `0x198`-`0x1B0`.
 
 **The card gets its own OUCH session, rather than sharing the host's connection.**
 Two senders on one TCP connection must coordinate sequence numbers and forward

@@ -105,6 +105,22 @@ def main():
                     help="first TCP sequence number = the harness's cfg_ack_num")
     ap.add_argument("--ack", type=lambda x: int(x, 0), default=0x10000000,
                     help="what the venue acknowledges = the card's cfg_init_seq")
+    # A VENUE THAT ACKNOWLEDGES NOTHING is not a venue. Every reply used to
+    # carry the same ack -- the card's INITIAL sequence number -- which says "I
+    # have received none of your orders" however many arrived. That was enough
+    # for what this generator was written for (do the replies reach the host
+    # decoder intact) and it silently made the session untestable for anything
+    # that depends on acknowledgement: tx_rto's loss detector and ack_latency's
+    # measurement both watch peer_ack, and neither can do anything with an ack
+    # that never advances.
+    #
+    # So reply i now acknowledges i+1 order frames, each ACK-BYTES long. That is
+    # what a venue receiving a burst and answering one at a time looks like, and
+    # it is what lets step 8's session run check the latency probe end to end.
+    # --ack-bytes 0 restores the old fixed ack for anyone who wants it.
+    ap.add_argument("--ack-bytes", type=int, default=52,
+                    help="payload bytes per order frame the venue acknowledges "
+                         "as it replies (0 = never advance the ack)")
     ap.add_argument("--venue-ip", default="10.0.0.9")
     ap.add_argument("--card-ip", default="10.0.0.2")
     ap.add_argument("--venue-port", type=int, default=4001)
@@ -135,7 +151,8 @@ def main():
             mac2bytes(args.venue_mac), mac2bytes(args.card_mac),
             ip2int(args.venue_ip), ip2int(args.card_ip),
             args.venue_port, args.card_port,
-            seq, args.ack, payload, ip_id=0x7000 + i))
+            seq, args.ack + args.ack_bytes * (i + 1), payload,
+            ip_id=0x7000 + i))
         seq += len(payload)
 
         golden.append("A token={} side={} shares={} stock={} price={} ref={}".format(

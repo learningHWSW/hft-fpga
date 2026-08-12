@@ -1146,6 +1146,48 @@ wire demands there is no pressure to reclaim it, and removing it would mean
 giving up the generate — but it is a cost, it is reproducible, and it should not
 be filed under noise the way the fast path's supposed 9.5 MHz was.
 
+#### 7.6.3 More than half of that 4.8 MHz is the two blocks' NAMES
+
+The paragraph above blames the hierarchy and proposes flattening it. Before
+duplicating ~110 lines of `fh_core` to test that, one control: build the
+identical netlist under different generate-block LABELS. Nothing else changes —
+same logic, same parameters, same directives, same everything.
+
+| the two labels, in source order | default | explore | fanout | netdly | best |
+|---|---|---|---|---|---|
+| `g_sweep` / `g_sym` — as shipped | 220.7 | 220.7 | 220.0 | 217.4 | 220.7 |
+| `g_sweep_detector_lane` / `g_symbol_lane_slot` | 220.7 | 220.7 | 220.0 | 217.4 | 220.7 |
+| `g_swp` / `g_lane` | 223.4 | 223.4 | 220.5 | 219.5 | **223.4** |
+| `g_zweep` / `g_sym` | 223.4 | — | — | — | **223.4** |
+
+**Renaming as such does nothing**: the long-name build reproduces the shipped
+one to the decimal on all four directives, which is Vivado's determinism
+confirmed a third time. What moves fMAX is which of the two labels sorts FIRST.
+Shipped, `g_sweep` sorts before `g_sym`; the long names preserve that order and
+reproduce it exactly; both variants that reverse it gain the same 2.7 MHz. The
+last row changes **one character** of the shipped name — `g_sweep` → `g_zweep`,
+same length, same everything else — and lands on the same 223.4 as the variant
+that renamed both blocks.
+
+**So 2.7 of the 4.8 MHz is not the hierarchy at all.** It is the order the tool
+walks two sibling generate blocks in, which no amount of restructuring
+addresses and which nothing in the RTL is entitled to control. That kills the
+flat-hierarchy rewrite as a plan: a ~3 MHz effect from a block name is the noise
+floor any two-hierarchy comparison would have to beat, and four builds cannot.
+
+Two things follow, and the second is a temptation worth naming:
+
+* the 4.8 MHz should be read as "at most ~2 MHz of hierarchy, plus ~2.7 MHz of
+  where the placer happened to start" — closer to the fast path's supposed
+  9.5 MHz (§7.7) than the paragraph above allowed;
+* **2.7 MHz is available for free by renaming a block**, reproducibly, and it is
+  not being taken. A name chosen to game the placer is a trap for the next
+  reader — it looks like a typo, it has no reason anyone could infer from the
+  code, and it survives only until the next edit perturbs placement anyway. The
+  design clears its 195.3 MHz requirement by 25 MHz. If that margin ever
+  disappears this is a lever, and it is written down here rather than
+  rediscovered.
+
 ### 7.7 What the fast book path costs in fMAX — nothing measurable, and the README was wrong
 
 The README carried "**218.6 → 209.1 MHz**, the price of `fast_bbo`" from the day
@@ -1237,10 +1279,113 @@ But the card measurements and the OOC fMAX sweeps are therefore built from
 file compares. The behavioural branch also exists only because Verilator could
 not elaborate XPM, and Verilator is gone.
 
-The fix is to stop selecting on a define that one flow silently drops — xsim
-elaborates the XPM branch cleanly with `-L xpm`, so all three flows could build
-the same thing. Not done here: it touches a module every step depends on, and
-it deserves its own regression rather than riding along with a card run.
+**Fixed: there is nothing to select any more.** The `` `ifdef ``, the
+behavioural array and the four `set_property verilog_define {OTABLE_XPM}` lines
+are gone; every flow compiles the macro. `-L xpm` went on *every* `xelab` line
+in steps 4a, 4b, 5, 6 and 8, not only the ones that reach `otable_mem` today —
+"only the ones that happen to" is the entire subject of this finding. The suite
+passes end to end: 27 targets across steps 2–8, real-data replays included,
+every golden byte-identical, and the transcripts now show
+`Compiling module xpm.xpm_memory_sdpram` where they used to show an inferred
+array.
+
+**It cost a property, and that is worth more words than the fix was.** The
+behavioural array deliberately did not initialise, so a build with
+`order_table`'s post-reset clear sweep removed showed X out of the first lookup.
+XPM's simulation model zeroes itself — measured, not read off the source, since
+the source can be read both ways: an unwritten location reads `0`, and
+`USE_MEM_INIT(0)` does not change that (it gates an `$info`, not the loop that
+fills the array). So the simulator now models UltraRAM as coming up in exactly
+the state the sweep exists to produce, and a build without the sweep would pass
+every golden in this project while coming up on the device holding garbage that
+looks like live orders.
+
+That property is now a test rather than an accident — `step4a make test-clear`,
+which writes garbage into the memory model before reset and requires the table
+not to see it. **Its second half is the part that matters**: the same garbage is
+poked back in *after* the sweep and the same delete must now find it. Without
+that control a poke that landed somewhere the FSM never reads would produce an
+identical clean miss, and the test would pass while checking nothing. Writing
+the control is also what caught the first version of the test being wrong: it
+poisoned both ways of a set with the same `order_ref`, which tripped
+`order_table`'s own one-hot assertion — garbage that violates the design's
+stated premise tests the assertion, not the sweep.
+
+## 8. The one number this design has never had: venue acknowledgement latency
+
+`tx_rto` decides an order was lost when `cfg_rto_cycles` pass without the
+acknowledgement number advancing. That constant, and `cfg_rto_retries` beside
+it, are **the only numbers in this design chosen without evidence** — everything
+else in this file was measured before it was built. They could not be measured,
+because the input they need is the distribution of venue acknowledgement
+latency and nothing has ever answered these orders except a Python generator.
+A timeout below the round trip resends orders the venue already has; one far
+above it gives back the reason for doing this in hardware.
+
+**So the instrument is built before the thing it measures exists.**
+`ack_latency` (step 6) watches the same two signals `tx_rto` does — `tcp_tx`'s
+`seq_num` and `tcp_rx`'s `peer_ack` — and needs no new taps in the datapath: a
+send is `seq_num` advancing, an acknowledgement is `peer_ack` passing the value
+it took. Seven status registers at `0x198`–`0x1B0` carry last/min/max/samples,
+a 64-bit sum for the mean, and the count of measurements thrown away.
+
+**What the number is.** Kernel to kernel: from the cycle `tcp_tx` commits the
+frame's sequence number to the cycle `peer_ack` covers it. It therefore
+*excludes* the MAC, SerDes and framing in both directions — about 300 ns the
+round trip (§7.6.1) — and includes our transmit tail, the venue's entire
+turnaround, and our receive path. Add the MAC's share for a wire figure.
+
+**Three decisions worth stating, because each discards data on purpose:**
+
+* *One measurement at a time.* Acknowledgements are cumulative — an ack covering
+  the third frame covers the first two and says nothing about when the venue saw
+  either — so frames sent while a measurement is running go unmeasured rather
+  than being credited with a latency the wire never showed. `st_ack_samples`
+  against `st_frame_cnt` says how many.
+* *A resend poisons the sample.* If the frame being timed was retransmitted, the
+  ack may be answering either copy, and the difference between them is exactly
+  the timeout under test. Counted in `st_ack_lost`, not averaged in.
+* *No counterparty, no samples.* Under GT loopback nothing acknowledges
+  anything, `peer_ack` never moves, and the probe reports zero samples forever.
+  That is the correct output: a latency of 0 and a latency never measured look
+  identical in a table and mean opposite things, so the host prints
+  "no counterparty" rather than a row of zeros.
+
+**Verified in the integrated kernel, both directions**, which is the part a
+unit test cannot do:
+
+| step 8 run | replies injected | samples | measured |
+|---|---|---|---|
+| `test-xsim` (HBM→HBM) | none | 0 | — |
+| `test-session` | 4 | 1 | 170 cycles |
+| `test-b` (through the MAC) | none | 0 | — |
+| `test-b-session` | 4 | 1 | 168 cycles |
+
+One sample from four replies is the cumulative-ack rule working: all four orders
+leave before any reply arrives, so only the first is timed. **Those cycle counts
+are the simulated harness's turnaround, not a venue's** — they demonstrate the
+instrument, and are not a latency figure for anything.
+
+**Making that table possible required fixing the simulated venue**, which is a
+finding of its own. Every generated reply carried the same acknowledgement
+number — the card's *initial* sequence number, i.e. "I have received none of
+your orders" however many arrived. It was sufficient for what the generator was
+written for (do replies reach the host decoder intact) and it silently made the
+session untestable for everything that depends on acknowledgement: `tx_rto`'s
+loss detector and this probe both watch `peer_ack`, and neither can do anything
+with an ack that never advances. Replies now acknowledge the orders they
+answer, one per reply.
+
+**It costs nothing to carry.** One place-and-route at the default directive with
+the probe in: **220.7 MHz, 0 failing endpoints** — the same number to the
+decimal that this configuration gave before it existed, and URAM/BRAM/DSP
+unchanged (66 / 48+4 / 2). The worst core path is in `tcp_tx`, not here. That is
+what a probe hanging off two registers already in the design should cost, and it
+was measured rather than assumed.
+
+**The two constants remain guesses**, and are now labelled as such wherever they
+appear rather than sitting unmarked among measured values. What closes this is a
+counterparty, not more simulation.
 
 ## Reproduce
 
@@ -1253,6 +1398,21 @@ cd step1-sw-parser && make itch_hist
 # runs, ~40 min on 32 cores. Prints the two distributions with the spread WITHIN
 # each next to the gap BETWEEN them.
 cd step5-board && make sweep-t2t
+
+# The order table's clear sweep (§4.5): garbage poked into the memory model
+# before reset, with the control that pokes it back afterwards. Seconds.
+cd step4a-order-table && make test-clear
+
+# The acknowledgement-latency probe (§8): the arithmetic, the sequence-space
+# wrap, and the four cases where a measurement must NOT be recorded. Seconds.
+cd step6-strategy && make test-acklat
+# ... and end to end, where replies actually arrive and one gets timed:
+cd step8-hw && make test-session
+
+# The generate-label naming effect (§7.6.3): one build per label variant.
+# Change the two `begin :` labels in step5-board/rtl/fh_core.sv so that the
+# sweep block sorts AFTER the ladder block, and re-run one directive.
+cd step5-board && make sweep-t2t SWEEP_FAST=1 SWEEP_NSYM=1 SWEEP_DIRSETS=default
 
 # II=1 backlog + burst tail latency (§6, §7): the 3-server sim is built into
 # itch_hist, one pass over the whole file

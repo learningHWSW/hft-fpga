@@ -151,7 +151,22 @@ module axil_regfile #(
   input  logic [31:0]         st_rb_resent,      // ... and handed back out again
   input  logic [31:0]         st_rb_drop,        // resend asked for a slot never filled
   input  logic [31:0]         st_blk_qty,        // orders blocked: shares out of range
-  input  logic [31:0]         st_bbo_arb_drop    // BBO records lost merging K books
+  input  logic [31:0]         st_bbo_arb_drop,   // BBO records lost merging K books
+  // Venue acknowledgement latency, in core cycles (ack_latency.sv). Six words
+  // because a single "last" is not a distribution and the timeout these exist
+  // to inform has to be chosen against a tail, not against one sample.
+  input  logic [31:0]         st_ack_last,
+  input  logic [31:0]         st_ack_min,
+  input  logic [31:0]         st_ack_max,
+  input  logic [31:0]         st_ack_samples,
+  // The 64-bit sum arrives already split, one input per register. Every other
+  // status word is one 32-bit name, and tests/test_regmap.py holds the map to
+  // that by parsing this mux for a name per offset -- a `st_ack_sum[31:0]` here
+  // would give two offsets the same name and make the diff unable to tell them
+  // apart, which is the check, not a formality.
+  input  logic [31:0]         st_ack_sum_lo,     // with samples, a mean
+  input  logic [31:0]         st_ack_sum_hi,
+  input  logic [31:0]         st_ack_lost        // poisoned by a resend, or timed out
 );
   // ---- config word indices (match regmap.py REG order) ----
   localparam int A_GROUP_IP=0,  A_UDP_PORT=1,  A_TRACK_LOCATE=2, A_BAND_BASE=3,
@@ -332,6 +347,20 @@ module axil_regfile #(
       // it was caught was someone reading URAM counts out of a utilization
       // report. One constant word makes it a question the host can just ask.
       A_STAT+37: readmux = st_build_geom;
+      // Venue acknowledgement latency. APPEND-ONLY, like everything above it:
+      // these went after st_build_geom rather than beside st_rto_fired, which is
+      // where they belong by subject, because a status offset is a contract
+      // shipped in t2t_regs.h and in whatever script a previous run left behind.
+      // st_ack_samples == 0 means nothing has ever acknowledged an order --
+      // every run on this bench, since GT loopback has no counterparty -- and a
+      // host must read it before reading any of the others.
+      A_STAT+38: readmux = st_ack_last;
+      A_STAT+39: readmux = st_ack_min;
+      A_STAT+40: readmux = st_ack_max;
+      A_STAT+41: readmux = st_ack_samples;
+      A_STAT+42: readmux = st_ack_sum_lo;
+      A_STAT+43: readmux = st_ack_sum_hi;
+      A_STAT+44: readmux = st_ack_lost;
       default:   readmux = 32'd0;
     endcase
   endfunction

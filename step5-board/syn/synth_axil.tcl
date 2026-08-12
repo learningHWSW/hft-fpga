@@ -41,16 +41,16 @@ set srcs [list \
   $root/rtl/cdc_fifo.sv \
   $repo/step6-strategy/rtl/strategy.sv $repo/step6-strategy/rtl/sweep_detect.sv \
   $repo/step6-strategy/rtl/ouch_builder.sv \
-  $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv $repo/step6-strategy/rtl/tx_rto.sv \
+  $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv $repo/step6-strategy/rtl/tx_rto.sv $repo/step6-strategy/rtl/ack_latency.sv \
   $root/rtl/feed_ab_arb.sv $root/rtl/igmp_query_detect.sv $root/rtl/tcp_rx.sv $root/rtl/t2t_top.sv \
   $root/rtl/axil_regfile.sv $root/rtl/cfg_cdc.sv $root/rtl/axis_tx_arb.sv \
   $root/rtl/igmp_join.sv $root/rtl/arp_responder.sv $root/rtl/t2t_axil.sv ]
 
 create_project -in_memory -part $part
 foreach f $srcs { read_verilog -sv $f }
-set defs {OTABLE_XPM}
+set defs {}
 if {[info exists ::env(OT_PIPE)]} { lappend defs OT_PIPE }
-set_property verilog_define $defs [current_fileset]
+if {[llength $defs]} { set_property verilog_define $defs [current_fileset] }
 
 # clocks: cmac fixed by the MAC, core is the datapath under test, axil is QDMA
 set core_ns [expr {[lindex $argv 4] ne "" ? [lindex $argv 4] : 4.618}]

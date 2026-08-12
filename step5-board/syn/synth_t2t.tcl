@@ -81,7 +81,7 @@ set srcs [list \
   $root/rtl/cdc_fifo.sv \
   $repo/step6-strategy/rtl/strategy.sv $repo/step6-strategy/rtl/sweep_detect.sv \
   $repo/step6-strategy/rtl/ouch_builder.sv \
-  $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv $repo/step6-strategy/rtl/tx_rto.sv \
+  $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv $repo/step6-strategy/rtl/tx_rto.sv $repo/step6-strategy/rtl/ack_latency.sv \
   $root/rtl/feed_ab_arb.sv $root/rtl/igmp_query_detect.sv $root/rtl/tcp_rx.sv $root/rtl/t2t_top.sv ]
 
 create_project -in_memory -part $part
@@ -91,9 +91,9 @@ create_project -in_memory -part $part
 # so a sweep run in parallel is comparable with one run serially.
 set_param general.maxThreads 8
 foreach f $srcs { read_verilog -sv $f }
-set defs {OTABLE_XPM}
+set defs {}
 if {[info exists ::env(OT_PIPE)]} { lappend defs OT_PIPE }
-set_property verilog_define $defs [current_fileset]
+if {[llength $defs]} { set_property verilog_define $defs [current_fileset] }
 
 # Constraints must be read BEFORE synth_design: create_clock needs an open
 # design, so they live in an XDC rather than being called here.
@@ -111,9 +111,10 @@ puts $fh "  -group \[get_clocks cmac_clk\] -group \[get_clocks core_clk\]"
 close $fh
 read_xdc $gen_xdc
 
-# The order table is an instantiated XPM/URAM macro now, so synthesis builds
-# the same 2^16 x 8 the simulations verify. OTABLE_XPM selects the real macro
-# over the behavioural model the simulations use.
+# The order table is an instantiated XPM/URAM macro, so synthesis builds the
+# same 2^16 x 8 the simulations verify -- and since otable_mem no longer
+# selects between two descriptions (FINDINGS 4.5), that is now true of the card
+# build as well, which it was not when this comment first claimed it.
 set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
 set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
 

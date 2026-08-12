@@ -75,7 +75,7 @@ but suppresses output (the DROP state).
 
 ## Status
 
-- **xsim (Vivado 2025.2)**: synthetic test.mold PASS, real data PASS
+- **xsim**: synthetic test.mold PASS, real data PASS
 - Verifies gap / dup / hb / eos and 512-bit realignment; `len_err` and
   `frame_err` are 0.
 - Historically also run under Verilator (synthetic PASS, real data 1M msg PASS,

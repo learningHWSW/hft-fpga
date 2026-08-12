@@ -15,7 +15,7 @@ BASE ?= 1500000
 # ---------- xsim (Vivado 2025.2) — primary; source settings64.sh first ----------
 test: golden
 	xvlog -sv $(SRC) $(TB)
-	xelab -debug typical $(TOP) -s $(TOP)_sim
+	xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
 	xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(ITCH) loc=$(LOC))"
 
@@ -25,7 +25,7 @@ test: golden
 # the `ifdef, xelab elaborates what it selected.
 test-pipe: golden
 	xvlog -sv -d OT_PIPE $(SRC) $(TB)
-	xelab -debug typical -d OT_PIPE $(TOP) -s $(TOP)_pipe_sim
+	xelab -debug typical -L xpm -d OT_PIPE $(TOP) -s $(TOP)_pipe_sim
 	xsim $(TOP)_pipe_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: pipe BBO == golden ($(ITCH) loc=$(LOC))"
 
@@ -37,7 +37,7 @@ test-merge: test-merge-xsim
 
 test-merge-xsim:
 	xvlog -sv rtl/bbo_merge.sv tb/tb_bbo_merge.sv
-	xelab -debug typical tb_bbo_merge -s tb_bbo_merge_sim
+	xelab -debug typical -L xpm tb_bbo_merge -s tb_bbo_merge_sim
 	xsim tb_bbo_merge_sim -runall
 
 golden: $(ITCH)

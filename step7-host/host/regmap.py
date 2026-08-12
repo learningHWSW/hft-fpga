@@ -58,9 +58,19 @@ RESEND_AGE_OFFSET = CTRL_OFFSET + 4     # 0xAC: which stored frame to re-send
 # Automatic retransmission (tx_rto), above ctrl for the same reason. Off unless
 # RTO_EN is written: with it clear the transmit path is what it was before the
 # detector existed, which is why it is not in REGS with the rest of the setup.
+#
+# WHATEVER YOU WRITE TO THE TWO BELOW IS A GUESS, and it is worth knowing that
+# before choosing one. Every other number this project configures was measured
+# first; these two cannot be, because the only correct input is the distribution
+# of venue acknowledgement latency and nothing has ever acknowledged an order
+# here. Too low and the card resends orders the venue already has; too high and
+# a lost order is noticed milliseconds late, which is the reason for doing this
+# in hardware at all. st_ack_* (below) is the instrument that will answer it the
+# first time a real counterparty answers; until st_ack_samples is nonzero, treat
+# any value here as arbitrary. FINDINGS section 8.
 RTO_EN_OFFSET      = CTRL_OFFSET + 8    # 0xB0: bit0 enables the detector
-RTO_CYCLES_OFFSET  = CTRL_OFFSET + 12   # 0xB4: idle core cycles before a resend
-RTO_RETRIES_OFFSET = CTRL_OFFSET + 16   # 0xB8: attempts per unacknowledged frame
+RTO_CYCLES_OFFSET  = CTRL_OFFSET + 12   # 0xB4: idle core cycles before a resend (GUESS)
+RTO_RETRIES_OFFSET = CTRL_OFFSET + 16   # 0xB8: attempts per unacknowledged frame (GUESS)
 # ---- per-symbol configuration block (mirrors axil_regfile's A_SYM) ----
 # Symbol 0's locate, band base and stock keep the registers they have always
 # had, in REGS above. Symbols 1 and up live here, four words each, in the gap
@@ -135,6 +145,27 @@ STATUS = [
     # cannot say what it is gets configured as something it is not, and the
     # status page is the one place a host already reads.
     "st_build_geom",
+    # Venue acknowledgement latency, in CORE CYCLES, from ack_latency.sv. The
+    # number tx_rto's cfg_rto_cycles should have been chosen from: it never was,
+    # because nothing has ever acknowledged an order on this bench.
+    #
+    # READ st_ack_samples FIRST. Zero means no counterparty has ever answered --
+    # the normal state under GT loopback -- and the other five words are then
+    # meaningless rather than small. The mean is st_ack_sum / st_ack_samples,
+    # with the sum split low word first like every other 64-bit field here.
+    #
+    # The sum's two halves are two separate bus reads of a counter that is still
+    # moving, so they can tear -- the same exposure the latency probe's own
+    # 64-bit sum has, and it is left alone for the same reason: samples arrive
+    # microseconds apart at most, a torn read costs one wrong mean, and freezing
+    # the counters to read them would put a handshake in the datapath to serve a
+    # diagnostic. Read st_ack_samples either side if a single mean has to be
+    # exact.
+    "st_ack_last", "st_ack_min", "st_ack_max", "st_ack_samples",
+    "st_ack_sum_lo", "st_ack_sum_hi",
+    # measurements thrown away: the frame was retransmitted while being timed
+    # (so the ack answers one of two copies), or nothing answered at all
+    "st_ack_lost",
 ]
 STATUS_OFFSET = {name: STATUS_BASE + 4 * i for i, name in enumerate(STATUS)}
 

@@ -1,0 +1,47 @@
+otable_mem: one memory description for all three flows (task #26, FINDINGS 4.5)
+
+The full xsim suite, run after the `ifdef and the behavioural array were
+removed. Steps 2-6 on the tools on PATH (2023.2), step 8 through its own
+XSETUP (2025.2.1, the pinned install); step 4a was additionally re-run under
+2025.2.1 because this change is the one that made a VENDOR MACRO the only
+implementation, so the vendor's version is no longer irrelevant.
+
+RESULT step2-rtl-decoder  test                   OK
+RESULT step3a-mold-stripper test                   OK
+RESULT step3b-splitter    test                   OK
+RESULT step4a-order-table test                   OK
+RESULT step4a-order-table test-multi             OK
+RESULT step4b-book        test                   OK
+RESULT step4b-book        test-merge-xsim        OK
+RESULT step6-strategy     test-xsim              OK
+RESULT step6-strategy     test-msym              OK
+RESULT step6-strategy     test-sweep             OK
+RESULT step6-strategy     test-replay            OK
+RESULT step6-strategy     test-rto               OK
+RESULT step5-board        test-t2t               OK
+RESULT step5-board        test-units-xsim        OK
+RESULT step5-board        test-tcprx             OK
+RESULT step5-board        test-msym              OK
+RESULT step7-host         test                   OK
+RESULT step8-hw           test-xsim              OK
+RESULT step8-hw           test-session           OK
+RESULT step8-hw           test-rto               OK
+RESULT step8-hw           test-b                 OK
+RESULT step8-hw           test-b-session         OK
+RESULT step3b-splitter    test-real-xsim         OK
+RESULT step4a-order-table test-real-xsim         OK
+RESULT step4b-book        test-real-xsim         OK
+RESULT step5-board        test-real              OK
+RESULT step8-hw           test-real              OK
+
+27 targets, 27 OK, 0 FAIL.
+
+Two measurements behind the write-up:
+
+  an unwritten location in the XPM simulation model reads
+    000000000000000000000000000000000   -- zero, not X
+  on 2023.2 and on 2025.2.1 alike, with USE_MEM_INIT(0) set. So the model
+  does NOT reproduce an uninitialised UltraRAM, and the property the old
+  behavioural array gave for free is gone. step4a 'make test-clear' replaces
+  it with a test (garbage poked in before reset; the control pokes the same
+  garbage back afterwards and requires it to be found).

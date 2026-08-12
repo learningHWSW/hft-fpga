@@ -48,8 +48,11 @@ status still reach the host over AXI-Lite.
 1. **RTL sources.** Add this repo's `step5-board/rtl/*.sv`, the step2/3b/4a/4b
    and step6 RTL (the `TAXIL_SRC` list in `step5-board/Makefile`), and
    `opennic/t2t_user_322mhz.sv` to the shell's source list
-   (`open-nic-shell/src/` or via `--user_plugin`). Define `OTABLE_XPM` and, for
-   the II=1 order table, `OT_PIPE`.
+   (`open-nic-shell/src/` or via `--user_plugin`). For the II=1 order table,
+   define `OT_PIPE`. Nothing needs defining for the order-table memory itself
+   any more — `otable_mem` instantiates the XPM macro unconditionally, which is
+   the change FINDINGS §4.5 asked for and which this integration would
+   otherwise have had to remember.
 2. **Plugin.** Replace
    `plugin/p2p/box_322mhz/user_plugin_322mhz_inst.vh` with the one here (reuse
    the p2p address map unchanged — one 4 KB AXI-Lite slave is enough for

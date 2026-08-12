@@ -15,7 +15,7 @@ DPSRC = $(STEP2)/rtl/itch5_pkg.sv $(STEP2)/rtl/itch_decoder.sv \
         $(STEP5)/rtl/drop_fifo.sv $(STEP5)/rtl/fh_core.sv \
         $(STEP5)/rtl/eth_ip_udp_rx.sv $(STEP5)/rtl/cdc_fifo.sv \
         $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/sweep_detect.sv \
-        $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv \
+        $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv $(STEP6)/rtl/ack_latency.sv \
         $(STEP5)/rtl/feed_ab_arb.sv $(STEP5)/rtl/igmp_query_detect.sv \
         $(STEP5)/rtl/tcp_rx.sv $(STEP5)/rtl/t2t_top.sv $(STEP5)/rtl/axil_regfile.sv \
         $(STEP5)/rtl/cfg_cdc.sv $(STEP5)/rtl/axis_tx_arb.sv \
@@ -36,8 +36,24 @@ export NSYM OT_SETS_BITS OT_WAYS
 # step 8's replay image had before 6785cdc, and worse here, because a stale .xo
 # links into a bitstream that runs and silently tracks one symbol. The stamp
 # carries the geometry; the .xo depends on it, so changing any knob rebuilds.
+#
+# AND THE SAME ARGUMENT APPLIES TO ANY SOURCE EDIT, not only a geometry knob.
+# The cache is keyed on the kernel's interface, and a module's BODY changing
+# does not move its interface -- so the stamp is keyed on the sources' CONTENT
+# as well as on the geometry. The first edit to hit this was otable_mem losing
+# its `ifdef (FINDINGS 4.5): identical ports, a different memory inside, and
+# nothing in the old stamp that could have noticed.
+#
+# The generated geometry package is excluded from the hash on purpose. It is
+# regenerated FROM this stamp, so including it would make the stamp's own name
+# depend on its own rule's output and the first build after a geometry change
+# would clear the cache twice.
 GEOM       = nsym$(NSYM)-ot$(OT_SETS_BITS)x$(OT_WAYS)
-GEOM_STAMP = .geom-$(GEOM)
+STAMP_SRC  = $(DPSRC) $(filter-out $(GEOM_PKG),$(wildcard rtl/*.sv)) \
+             $(wildcard syn/package_kernel*.tcl) $(wildcard syn/kernel*.xml) \
+             syn/t2t_kernel_cdc.xdc
+SRC_HASH   = $(shell cat $(STAMP_SRC) 2>/dev/null | cksum | cut -d' ' -f1)
+GEOM_STAMP = .geom-$(GEOM)-$(SRC_HASH)
 # Changing the geometry must invalidate EVERY downstream cached artefact, not
 # just the .xo. v++ keeps an IP cache keyed on the kernel's INTERFACE, and the
 # interface does not change when only a parameter default does -- so a rebuilt
@@ -66,8 +82,10 @@ $(GEOM_STAMP):
 	@rm -f .geom-* && touch $@
 	@rm -rf .ipcache packaged_kernel packaged_kernel_b tmp_kernel_pack tmp_kernel_b_pack
 	@echo "kernel geometry: NSYM=$(NSYM) OT_SETS_BITS=$(OT_SETS_BITS) OT_WAYS=$(OT_WAYS)"
+	@echo "  sources: $(SRC_HASH)"
 	@echo "  (cleared .ipcache and the packaged kernels: a cached IP would"
-	@echo "   otherwise link the previous geometry's source)"
+	@echo "   otherwise link the previous geometry -- or the previous source,"
+	@echo "   which a changed body with unchanged ports does not announce)"
 
 SRC = $(GEOM_PKG) $(DPSRC) rtl/eth_replay.sv rtl/eth_capture.sv rtl/lat_probe.sv rtl/lat_loaded.sv rtl/t2t_kernel.sv
 TB  = tb/tb_t2t_kernel.sv
@@ -175,7 +193,7 @@ test: test-xsim  ## Simulate|full chain HBM->HBM, diffed against golden
 
 test-xsim: golden $(REPLAY) $(GEOM_PKG) ## Simulate|same, in xsim -- the flow that works where the card is
 	@$(XSETUP) xvlog -sv $(SRC) $(TB)
-	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	@$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
 	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=$(REPLAY) -testplusarg cap=capture.bin \
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) -testplusarg quiet=$(QUIET)
 	python3 scripts/pack_eth.py unpack capture.bin $(RECS) > k_rtl.log
@@ -204,7 +222,7 @@ test-session: golden $(GEOM_PKG) ## Simulate|the venue's replies: RX -> capture 
 	cat $(ETH) session.eth > session_stim.eth
 	python3 scripts/pack_eth.py pack session_stim.eth session_replay.bin
 	@$(XSETUP) xvlog -sv $(SRC) $(TB)
-	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	@$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
 	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=session_replay.bin \
 	  -testplusarg cap=session_capture.bin \
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) \
@@ -236,7 +254,7 @@ test-rto: golden $(GEOM_PKG) ## Simulate|the card notices an unacknowledged orde
 	cat $(ETH) session.eth > session_stim.eth
 	python3 scripts/pack_eth.py pack session_stim.eth session_replay.bin
 	@$(XSETUP) xvlog -sv $(SRC) $(TB)
-	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
+	@$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
 	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=session_replay.bin \
 	  -testplusarg cap=session_capture.bin -testplusarg rto=$(RTO_CYCLES) \
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) \
@@ -734,7 +752,7 @@ distclean: clean-build ## Clean|+ bitstreams, ip/, real_replay.bin       (HOURS,
 # from the same interface events, independently of the DUT.
 test-latprobe: ## Simulate|unit-test the latency instrument itself
 	@$(XSETUP) xvlog -sv rtl/lat_probe.sv tb/tb_lat_probe.sv
-	@$(XSETUP) xelab -debug typical tb_lat_probe -s tb_lat_probe_sim
+	@$(XSETUP) xelab -debug typical -L xpm tb_lat_probe -s tb_lat_probe_sim
 	@$(XSETUP) xsim tb_lat_probe_sim -runall
 
 # ---------- unit test for the store-and-forward FIFO ----------
@@ -750,7 +768,7 @@ test-latprobe: ## Simulate|unit-test the latency instrument itself
 # exercises s_tready, and equal clocks are the order path.
 test-sffifo: ## Simulate|store-and-forward FIFO at four clock ratios
 	@$(XSETUP) xvlog -sv rtl/axis_sf_fifo.sv tb/tb_axis_sf_fifo.sv
-	@$(XSETUP) xelab -debug typical tb_axis_sf_fifo -s tb_sf_sim
+	@$(XSETUP) xelab -debug typical -L xpm tb_axis_sf_fifo -s tb_sf_sim
 	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=1.5515
 	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=5.0
 	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=5.0    -testplusarg rper=1.5515

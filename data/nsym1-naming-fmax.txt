@@ -1,0 +1,26 @@
+NSYM=1 fMAX vs the two generate blocks' LABELS (FAST=1, 4.618 ns target)
+Identical logic in every row. Only the two 'begin :' labels in fh_core.sv differ.
+
+labels (sweep block / ladder block)        default explore  fanout  netdly   best
+------------------------------------------ ------- ------- ------- -------   -----
+g_sweep / g_sym            (as shipped)      220.7   220.7   220.0   217.4   220.7
+g_sweep_detector_lane / g_symbol_lane_slot   220.7   220.7   220.0   217.4   220.7
+g_swp / g_lane                               223.4   223.4   220.5   219.5   223.4
+g_zweep / g_sym                              223.4       -       -       -   223.4
+
+Row 2 keeps the shipped alphabetical ORDER (sweep block first) and reproduces
+the shipped numbers to the decimal on all four directives -- so renaming as
+such does nothing, and Vivado is deterministic here for the third time.
+
+Rows 3 and 4 REVERSE that order and both gain 2.7 MHz at best-of-four. Row 4
+changes exactly one character of the shipped name (g_sweep -> g_zweep, same
+length) and lands on the same number as row 3, which renamed both blocks.
+
+So 2.7 of the 4.8 MHz that FINDINGS 7.6.2 attributed to the generate's
+hierarchy is the order the placer walks two sibling blocks in -- not hierarchy
+depth, and not anything a flat-hierarchy rewrite would address. See 7.6.3.
+
+Not taken: the shipped names stay meaningful. A name chosen to game the placer
+looks like a typo, has no reason inferable from the code, and survives only
+until the next edit perturbs placement. The design clears its 195.3 MHz
+requirement by 25 MHz.

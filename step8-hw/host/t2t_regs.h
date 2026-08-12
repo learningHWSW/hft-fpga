@@ -107,6 +107,13 @@
 #define ST_POSITION_4        0x18Cu
 #define ST_BBO_ARB_DROP      0x190u
 #define ST_BUILD_GEOM        0x194u
+#define ST_ACK_LAST          0x198u
+#define ST_ACK_MIN           0x19Cu
+#define ST_ACK_MAX           0x1A0u
+#define ST_ACK_SAMPLES       0x1A4u
+#define ST_ACK_SUM_LO        0x1A8u
+#define ST_ACK_SUM_HI        0x1ACu
+#define ST_ACK_LOST          0x1B0u
 
 // ---- harness registers, from step8-hw/rtl/t2t_kernel.sv ----
 #define K_ID                 0x040u

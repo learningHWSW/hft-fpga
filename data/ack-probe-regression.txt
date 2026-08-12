@@ -1,0 +1,48 @@
+ack_latency + otable_mem unification: the full xsim suite (tasks #26, #18-half)
+
+Steps 2-6 on the tools on PATH (2023.2), step 8 through XSETUP (2025.2.1).
+
+RESULT step2-rtl-decoder  test                   OK
+RESULT step3a-mold-stripper test                   OK
+RESULT step3b-splitter    test                   OK
+RESULT step4a-order-table test                   OK
+RESULT step4a-order-table test-multi             OK
+RESULT step4a-order-table test-clear             OK
+RESULT step4b-book        test                   OK
+RESULT step4b-book        test-merge-xsim        OK
+RESULT step6-strategy     test-xsim              OK
+RESULT step6-strategy     test-msym              OK
+RESULT step6-strategy     test-sweep             OK
+RESULT step6-strategy     test-replay            OK
+RESULT step6-strategy     test-rto               OK
+RESULT step6-strategy     test-acklat            OK
+RESULT step5-board        test-t2t               OK
+RESULT step5-board        test-units-xsim        OK
+RESULT step5-board        test-tcprx             OK
+RESULT step5-board        test-msym              OK
+RESULT step7-host         test                   OK
+RESULT step8-hw           test-xsim              OK
+RESULT step8-hw           test-session           OK
+RESULT step8-hw           test-rto               OK
+RESULT step8-hw           test-b                 OK
+RESULT step8-hw           test-b-session         OK
+RESULT step3b-splitter    test-real-xsim         OK
+RESULT step4a-order-table test-real-xsim         OK
+RESULT step4b-book        test-real-xsim         OK
+RESULT step5-board        test-real              OK
+RESULT step8-hw           test-real              OK
+
+29 targets, 29 OK, 0 FAIL.
+
+The probe's own numbers, read through the AXI window by tb_t2t_kernel:
+  test-xsim      (no replies)      st_ack_samples=0  st_ack_lost=0
+  test-session   (4 replies)       st_ack_samples=1  last=min=max=170 cycles
+  test-b         (no replies)      st_ack_samples=0  st_ack_lost=0
+  test-b-session (4 replies)       st_ack_samples=1  last=min=max=168 cycles
+
+One sample from four replies is the cumulative-ack rule: all four orders
+leave before any reply arrives, so only the first is timed. The cycle counts
+are the harness's turnaround, not a venue's.
+
+fMAX with the probe in, default directive: 220.7 MHz, 0 failing endpoints --
+the same number the same directive gave before it existed.

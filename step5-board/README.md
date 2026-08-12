@@ -62,9 +62,19 @@ make test              # synthetic .mold -> BBO, diffed vs golden (xsim)
 make test-msym         # two tracked books, each vs its own golden
 make test-real         # 5 M real AAPL messages end-to-end
 make stress            # same at gap=0 (synthetic over-drive; see below)
+
+make test-t2t          # the whole chain: wire frames in -> order frames out
+make test-units-xsim   # the self-checking unit tests (no goldens needed)
+make test-tcprx        # the venue's replies coming back up the session
+
 make synth             # out-of-context synthesis for xcu55c
 make impl              # + place & route
+make sweep-t2t         # 8 place-and-route runs; fMAX per directive set
 ```
+
+`test-t2t`, `test-units-xsim`, `test-tcprx` and `test-msym` are the four the
+top-level README lists as this step's suite; the first three above are the
+narrower feed-path runs this directory started from.
 
 ## Integration: `fh_core`
 
@@ -511,6 +521,15 @@ next move is a Pblock for the ladder, not more pipelining.
 The table is now an instantiated XPM/URAM macro at 2^16 x 8, the size every
 simulation runs, so the gap described below is closed — synthesis and
 simulation finally build the same design. What that costs:
+
+> **This sentence was half true for a long time, and the half that was false is
+> worth keeping visible.** The size gap closed here; the *description* gap did
+> not. `otable_mem` selected the macro on `` `ifdef OTABLE_XPM ``, which only
+> this directory's synthesis ever set — simulations and the Vitis card build
+> silently compiled a behavioural array instead, and the identical URAM count
+> hid it (FINDINGS §4.5). The `ifdef` is gone now and every flow instantiates
+> the macro, so the claim above finally means what it says. The numbers in this
+> table are unaffected: they were always measured on the macro.
 
 | | 2^9 table (inferred) | 2^16 table (URAM) |
 |---|---|---|

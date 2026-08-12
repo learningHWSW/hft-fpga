@@ -367,6 +367,39 @@ path — the replay only goes out when the path is idle. What is still the host'
 problem is *policy*: the timeout and the retry cap are registers, and nothing
 here measures what they should be against a real venue.
 
+### The instrument for that policy, built before the venue exists
+
+`cfg_rto_cycles` and `cfg_rto_retries` are the only two numbers in this design
+chosen without measurement, and they are now labelled as guesses wherever they
+appear rather than sitting unmarked beside measured values. What they need is
+the distribution of venue acknowledgement latency, which nothing here can supply
+— the only counterparty so far is a Python generator.
+
+`ack_latency.sv` is the measurement, waiting for something to measure. It takes
+no new taps: a send is `tcp_tx`'s `seq_num` advancing, an acknowledgement is
+`tcp_rx`'s `peer_ack` passing the value it took — the same two signals `tx_rto`
+already watches. Seven status registers carry last / min / max / samples, a
+64-bit sum for the mean, and the count of measurements discarded.
+
+Three things it deliberately refuses to measure, because each would be a number
+the wire never showed:
+
+- **frames sent while a measurement is running.** Acknowledgements are
+  cumulative: an ack covering the third frame covers the first two and says
+  nothing about when the venue saw either.
+- **a frame that was retransmitted while being timed.** The ack may be answering
+  either copy, and the difference between them is exactly the timeout under
+  test. Counted in `st_ack_lost`.
+- **anything at all when nothing answers.** Under GT loopback `peer_ack` never
+  moves and the probe reports zero samples forever, which is the honest output;
+  a latency of 0 and a latency never measured are opposite facts.
+
+`make test-acklat` covers the arithmetic, the sequence-space wrap and all four
+refusals. The end-to-end proof is step 8's `make test-session`, where the
+generated venue acknowledges what it answers and the probe times the first
+order: 170 cycles HBM-to-HBM, 168 through the MAC. Those are the harness's
+turnaround, not a venue's.
+
 **Flow control is satisfied by construction, not by logic.** The strategy's
 in-flight limiter caps outstanding orders at 4, i.e. 4 x 52 = 208 bytes of
 unacknowledged payload, far below any window a peer would advertise. The risk

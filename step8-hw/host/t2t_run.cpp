@@ -87,8 +87,10 @@ void usage() {
     "                 --gap must be at least this or samples are excluded\n"
     "  --clk-mhz <f>  ap_clk in MHz, for the cycles->ns report (default 300)\n"
     "  --rto <n>      enable automatic retransmission after n idle core\n"
-    "                 cycles (default 0 = disabled, host-initiated only)\n"
-    "  --rto-retries <n>  attempts per unacknowledged frame (default 3)\n"
+    "                 cycles (default 0 = disabled, host-initiated only).\n"
+    "                 ANY VALUE HERE IS A GUESS until a venue has answered:\n"
+    "                 the run's 'ack lat' line is what should choose it\n"
+    "  --rto-retries <n>  attempts per unacknowledged frame (default 3, a guess)\n"
     "  --sym <loc>:<base>:<STOCK>   track another symbol (repeatable, max 4);\n"
     "                 needs a bitstream built with NSYM > 1\n";
 }
@@ -483,6 +485,46 @@ int run(Options o) {
   if (d.rd_t2t(ST_RX_SESS_FRAMES))
     std::printf("          decode with: scripts/dump_session.py %s %u"
                 " --local-ip 10.0.0.2\n", o.capture.c_str(), o.records);
+
+  // How long the venue took to acknowledge an order (ack_latency.sv). This is
+  // the measurement tx_rto's timeout should have been chosen from, and on this
+  // bench it has nothing to report: GT loopback has no counterparty, so nothing
+  // acknowledges anything and samples stays 0. That case prints as "no
+  // counterparty" rather than as zeros, because a latency of 0 and a latency
+  // never measured look identical in a table and mean opposite things.
+  {
+    const uint32_t n = d.rd_t2t(ST_ACK_SAMPLES);
+    const uint32_t lost = d.rd_t2t(ST_ACK_LOST);
+    if (n == 0) {
+      std::printf("ack lat : no counterparty -- 0 samples%s\n",
+                  lost ? "" : " (expected under GT loopback)");
+      if (lost)
+        std::printf("          %u measurement(s) abandoned: a resend while"
+                    " timing, or nothing ever answered\n", lost);
+    } else {
+      const uint64_t sum = (static_cast<uint64_t>(d.rd_t2t(ST_ACK_SUM_HI)) << 32)
+                         |  static_cast<uint64_t>(d.rd_t2t(ST_ACK_SUM_LO));
+      const uint32_t mn = d.rd_t2t(ST_ACK_MIN);
+      const uint32_t mx = d.rd_t2t(ST_ACK_MAX);
+      const double   ns = 1000.0 / o.core_mhz;
+      std::printf("ack lat : n=%u  min=%.2f us  mean=%.2f us  max=%.2f us"
+                  "  last=%.2f us  lost=%u\n",
+                  n, mn * ns / 1000.0,
+                  (static_cast<double>(sum) / n) * ns / 1000.0,
+                  mx * ns / 1000.0,
+                  d.rd_t2t(ST_ACK_LAST) * ns / 1000.0, lost);
+      std::printf("          cycles min=%u mean=%llu max=%u at %.1f MHz;"
+                  " kernel to kernel, add the MAC's ~300 ns for wire time\n",
+                  mn, static_cast<unsigned long long>(sum / n), mx, o.core_mhz);
+      // The point of measuring: cfg_rto_cycles is a guess until this says
+      // otherwise, and a timeout under the observed maximum resends orders the
+      // venue already has.
+      if (o.rto && mx >= o.rto)
+        std::printf("WARN: rto_cycles=%u is at or below the SLOWEST observed"
+                    " ack (%u cycles) -- this session will resend orders the"
+                    " venue already has\n", o.rto, mx);
+    }
+  }
 
   if (phase_b) {
     const uint32_t unf = d.rd(K_C_UNF);

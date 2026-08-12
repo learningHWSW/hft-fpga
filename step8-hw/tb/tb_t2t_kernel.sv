@@ -393,7 +393,7 @@ module tb_t2t_kernel;
   int      fd, fo, c, nbytes;
   string   fname, capname;
   int      gap, quiet;
-  logic [31:0] v, id, st, ncap, ntx, nsess;
+  logic [31:0] v, id, st, ncap, ntx, nsess, nack;
   logic [31:0] nlat, lexcl, lmin, lmax, lsum;
   logic [31:0] nload, lmiss, lmax2, lsum2;
   int      guard;
@@ -543,7 +543,7 @@ module tb_t2t_kernel;
     axil_read(T2T + 13'h150, v);   $display("TB: st_bbo_late    = %0d", v);
     axil_read(T2T + 13'h154, v);   $display("TB: st_bbo_mismatch= %0d", v);
     if (v != 0) $display("FAIL: fast_bbo disagreed with the ladder %0d times", v);
-    axil_read(T2T + 13'h164, v);   $display("TB: st_rx_sess_frm = %0d", v);
+    axil_read(T2T + 13'h164, nsess); $display("TB: st_rx_sess_frm = %0d", nsess);
     axil_read(T2T + 13'h168, v);   $display("TB: st_rto_fired   = %0d", v);
     if (rto != 0 && v == 0)
       $display("FAIL: automatic retransmission was enabled and never fired");
@@ -594,6 +594,31 @@ module tb_t2t_kernel;
              v[7:0], v[15:8], v[23:16]);
     if (v[7:0] != t2t_geom_pkg::NSYM)
       $display("FAIL: built NSYM=%0d, expected %0d", v[7:0], t2t_geom_pkg::NSYM);
+
+    // Acknowledgement latency, and the check is which of two states it is in.
+    // The probe measures the gap between an order's sequence number going out
+    // and the venue's ack covering it, so it can only produce a sample when
+    // something answers -- which here means the SESSION run, where the harness
+    // injects replies. Every other run has no counterparty at all, and the
+    // right answer is zero samples rather than a number.
+    //
+    // Both directions are asserted, because "no samples" passing everywhere
+    // would also be what a probe wired to nothing reports.
+    axil_read(T2T + 13'h1A4, nack);   $display("TB: st_ack_samples = %0d", nack);
+    axil_read(T2T + 13'h1B0, v);      $display("TB: st_ack_lost    = %0d", v);
+    if (nsess != 0) begin
+      if (nack == 0)
+        $display("FAIL: the venue acknowledged orders and no latency was measured");
+      else begin
+        axil_read(T2T + 13'h198, v); $display("TB: st_ack_last    = %0d cycles", v);
+        axil_read(T2T + 13'h19C, v); $display("TB: st_ack_min     = %0d cycles", v);
+        if (v == 0)
+          $display("FAIL: an acknowledgement measured 0 cycles -- the probe is not timing anything");
+        axil_read(T2T + 13'h1A0, v); $display("TB: st_ack_max     = %0d cycles", v);
+      end
+    end else if (nack != 0) begin
+      $display("FAIL: %0d ack latency sample(s) with nothing acknowledging", nack);
+    end
     // st_frame_cnt counts the ORDER frames tcp_tx built; capture records
     // everything on the TX port, so the surplus is the IGMP reports (and any
     // ARP replies) the arbiter merged in. Capture may therefore exceed it, but

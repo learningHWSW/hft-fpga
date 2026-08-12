@@ -10,9 +10,11 @@ emits the price levels the book will move on as a book delta (the input to step
 
 ```sh
 make test              # xsim, synthetic test.itch (all types A/F/E/C/X/D/U), AAPL locate 1
-make test-verilator    # Verilator, same
+make test-multi        # two symbols sharing one table, both against the golden
+make test-clear        # the post-reset sweep, poked with garbage (no golden)
 make test-real         # real data 500k slice, AAPL locate 13
-make test-real-xsim    # the above, xsim
+make test-real-xsim    # the same run, spelled out -- test-real is an alias now
+                       # that xsim is the only simulator
 ```
 
 The golden is `scripts/dump_book.py` (exact map). An empty diff against the RTL's
@@ -75,11 +77,14 @@ a unit test disagrees with a system that works.
 
 ## Status / performance
 
-- xsim (Vivado 2025.2): synthetic test.itch PASS (10 records, all types), real
-  data 500k AAPL slice PASS.
-- Verilator: synthetic PASS, real data **5M AAPL slice PASS** (6740 records —
-  including real A/F/E/X/D/U, 0 drops, 0 overflow, miss = lookups for other
-  symbols).
+- xsim: synthetic test.itch PASS (10 records, all types), real data 500k AAPL
+  slice PASS, two symbols in one table PASS, clear sweep PASS. Re-run under both
+  Vivado 2023.2 and 2025.2.1 — worth doing since the memory is now a vendor
+  macro and nothing else, so the vendor's version is part of what is tested.
+- Real data **5M AAPL slice PASS** (6740 records — including real A/F/E/X/D/U,
+  0 drops, 0 overflow, miss = lookups for other symbols). Measured under
+  Verilator, a flow this project no longer runs; kept as the largest replay the
+  table has been through.
 - **Correctness-first FSM**: after IDLE accept, one cycle per set access -> simple
   ops 2 cy/msg, U 3 cy/msg. The 2-cycle spacing + same-cycle NBA writeback make
   the same-set hazard between messages disappear without forwarding. On the 64-bit
@@ -129,11 +134,29 @@ early silently loses its first `SETS` messages.
 That is not hypothetical. It is exactly what made this step's own testbench fail
 (below).
 
+**And the simulator will not tell you if the sweep is removed.** `otable_mem`
+used to carry a behavioural array that deliberately started at X, so a missing
+sweep showed up as X out of the first lookup. That array is gone — all three
+flows build the XPM macro now (FINDINGS §4.5) — and XPM's simulation model
+zeroes itself whatever `USE_MEM_INIT` says, which was measured rather than read
+off the source: an unwritten location reads `0`, not `X`. So the simulator now
+models URAM as coming up in exactly the state the sweep exists to create, and a
+build with the sweep deleted would pass every golden in this project.
+
+`make test-clear` replaces the accident with a test. It writes garbage into the
+memory model before reset is released and requires the table not to see it —
+and then, as the control, pokes the same garbage back in *after* the sweep and
+requires the same delete to find it. Only the second half makes the first half
+mean anything: a poke that landed somewhere the FSM never reads would produce
+the same clean miss, and the test would pass while checking nothing.
+
 ## Structure
 
 ```
 rtl/order_table.sv     — d-way set-assoc, filter, book-delta output (FSM)
+rtl/otable_mem.sv      — one way's storage: an xpm_memory_sdpram, URAM, RD_LAT deep
 tb/tb_order_table.sv   — file -> itch_decoder(64b) -> order_table, drop/overflow checks
+tb/tb_otable_clear.sv  — garbage in the memory before reset; the table must not see it
 scripts/dump_book.py   — golden (exact map, same record format)
 ```
 

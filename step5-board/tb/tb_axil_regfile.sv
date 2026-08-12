@@ -47,6 +47,8 @@ module tb_axil_regfile;
   logic [31:0] st_rto_fired, st_rto_gaveup;
   logic [31:0] st_rb_stored, st_rb_resent, st_rb_drop, st_blk_qty;
   logic [31:0] st_bbo_arb_drop;
+  logic [31:0] st_ack_last, st_ack_min, st_ack_max, st_ack_samples;
+  logic [31:0] st_ack_sum_lo, st_ack_sum_hi, st_ack_lost;
   logic        cfg_rto_en;
   logic [31:0] cfg_rto_cycles;
   logic [3:0]  cfg_rto_retries;
@@ -96,6 +98,9 @@ module tb_axil_regfile;
     .st_rb_stored(st_rb_stored), .st_rb_resent(st_rb_resent),
     .st_rb_drop(st_rb_drop), .st_blk_qty(st_blk_qty),
     .st_bbo_arb_drop(st_bbo_arb_drop),
+    .st_ack_last(st_ack_last), .st_ack_min(st_ack_min), .st_ack_max(st_ack_max),
+    .st_ack_samples(st_ack_samples), .st_ack_sum_lo(st_ack_sum_lo),
+    .st_ack_sum_hi(st_ack_sum_hi), .st_ack_lost(st_ack_lost),
     .cfg_rto_en(cfg_rto_en), .cfg_rto_cycles(cfg_rto_cycles),
     .cfg_rto_retries(cfg_rto_retries)
   );
@@ -148,7 +153,8 @@ module tb_axil_regfile;
      st_rx_peer_ack,st_rx_ooo,st_rx_dup,st_rx_sess_frames,
      st_rto_fired,st_rto_gaveup,
      st_rb_stored,st_rb_resent,st_rb_drop,st_blk_qty,
-     st_bbo_arb_drop} = '0;
+     st_bbo_arb_drop, st_ack_last, st_ack_min, st_ack_max, st_ack_samples,
+     st_ack_sum_lo, st_ack_sum_hi, st_ack_lost} = '0;
     st_init_done = 0;
 
     repeat (4) @(negedge aclk);
@@ -245,6 +251,22 @@ module tb_axil_regfile;
     st_bbo_arb_drop = 32'hBB00_0020;
     @(negedge aclk);
     axi_read('h190, rb); check_eq("st_bbo_arb_drop", rb, 32'hBB00_0020);
+
+    // The acknowledgement-latency block. Seven distinct values, because the
+    // failure this catches is a slice or an offset off by one, and identical
+    // test data would read back correctly through a wrong wire.
+    st_ack_last = 32'h0000_00AA; st_ack_min = 32'h0000_00BB;
+    st_ack_max  = 32'h0000_00CC; st_ack_samples = 32'h0000_00DD;
+    st_ack_sum_lo = 32'hEE00_0001; st_ack_sum_hi = 32'h0000_00FF;
+    st_ack_lost = 32'h0000_0011;
+    @(negedge aclk);
+    axi_read('h198, rb); check_eq("st_ack_last",    rb, 32'h0000_00AA);
+    axi_read('h19C, rb); check_eq("st_ack_min",     rb, 32'h0000_00BB);
+    axi_read('h1A0, rb); check_eq("st_ack_max",     rb, 32'h0000_00CC);
+    axi_read('h1A4, rb); check_eq("st_ack_samples", rb, 32'h0000_00DD);
+    axi_read('h1A8, rb); check_eq("st_ack_sum_lo",  rb, 32'hEE00_0001);
+    axi_read('h1AC, rb); check_eq("st_ack_sum_hi",  rb, 32'h0000_00FF);
+    axi_read('h1B0, rb); check_eq("st_ack_lost",    rb, 32'h0000_0011);
 
     // 4c) the retransmission config, which lives ABOVE ctrl rather than in the
     // config block, so this also proves adding it did not move ctrl or the

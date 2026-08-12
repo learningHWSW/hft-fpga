@@ -41,6 +41,16 @@
 // simulation in this repository, and the card on a bench -- would sit there
 // retransmitting into the void. So the timer only arms once peer_ack has MOVED at
 // least once, which is the hardware's evidence that something is listening.
+//
+// THE TWO CONSTANTS ARE GUESSES, AND THIS MODULE CANNOT FIX THAT. The mechanism
+// here was decided on evidence -- fast retransmit is unavailable for this
+// traffic pattern, a resend is idempotent at both layers, the host path is
+// milliseconds late -- but cfg_rto_cycles and cfg_max_retries were not, and
+// they are the only numbers in this design chosen without measurement. The
+// input they need is the distribution of venue acknowledgement latency, and
+// nothing has ever answered these orders. ack_latency.sv is the instrument that
+// will supply it; until st_ack_samples is nonzero, a value written here is
+// arbitrary. FINDINGS section 8.
 `timescale 1ns/1ps
 module tx_rto #(
   parameter int SLOTS   = 16,        // tx_replay_buf's ring depth

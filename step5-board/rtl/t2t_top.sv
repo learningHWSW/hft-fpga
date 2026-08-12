@@ -175,7 +175,20 @@ module t2t_top #(
   output logic [31:0]         st_rx_peer_ack,
   output logic [31:0]         st_rx_ooo,
   output logic [31:0]         st_rx_dup,
-  output logic [31:0]         st_rx_sess_frames
+  output logic [31:0]         st_rx_sess_frames,
+
+  // ---- how long the venue takes to acknowledge an order ----
+  // Core cycles, kernel to kernel. The number tx_rto's timeout should have been
+  // chosen from and could not be, because nothing has ever acknowledged these
+  // orders. See ack_latency.sv for exactly what the two endpoints are; on a
+  // bench with no counterparty st_ack_samples stays 0, which is the honest
+  // answer rather than a small number that looks like a measurement.
+  output logic [31:0]         st_ack_last,
+  output logic [31:0]         st_ack_min,
+  output logic [31:0]         st_ack_max,
+  output logic [31:0]         st_ack_samples,
+  output logic [63:0]         st_ack_sum,
+  output logic [31:0]         st_ack_lost
 );
   localparam int KEEP_W = DATA_W / 8;
 
@@ -447,6 +460,18 @@ module t2t_top #(
 
   wire       resend_req_any = cfg_resend_req | rto_req;
   wire [3:0] resend_age_any = rto_req ? rto_age : cfg_resend_age;
+
+  // The instrument for the two constants above. It taps nothing new: seq_num
+  // and peer_ack are the same pair tx_rto watches, and resend_req_any is how it
+  // learns that the frame it is timing was sent twice -- an ack after that
+  // answers one of two copies and is not a round trip.
+  ack_latency #(.PAYLD_B(52)) u_ack_lat (
+    .clk(core_clk), .rst_n(core_rst_n),
+    .seq_num(st_seq_num), .peer_ack(st_rx_peer_ack),
+    .cfg_load(cfg_load), .i_resend(resend_req_any),
+    .st_last(st_ack_last), .st_min(st_ack_min), .st_max(st_ack_max),
+    .st_samples(st_ack_samples), .st_sum(st_ack_sum), .st_lost(st_ack_lost)
+  );
 
   tx_replay_buf #(.DATA_W(DATA_W), .SLOTS(16), .BEATS(2)) u_replay (
     .clk(core_clk), .rst_n(core_rst_n),

@@ -10,9 +10,9 @@ price_ladder` chain against the step-1 C model.
 
 ```sh
 make test              # xsim, synthetic test.itch (AAPL locate 1, $150 band)
-make test-verilator    # Verilator, same
-make test-real         # real data 5M AAPL slice (Verilator, $280 band)
-make test-real-xsim    # the above, xsim
+make test-merge-xsim   # the fast/slow rejoin: bbo_merge against the ladder alone
+make test-real         # real data 5M AAPL slice ($280 band)
+make test-real-xsim    # the same, spelled out; test-real is an alias for it
 ```
 
 The golden `scripts/dump_bbo.py` re-emits the step-1 book model in the canonical
@@ -39,9 +39,13 @@ against the golden is PASS.
 
 ## Status / performance
 
-- xsim (Vivado 2025.2): synthetic PASS, real data 500k AAPL PASS.
-- Verilator: synthetic PASS, real data **5M AAPL PASS** (1779 BBO updates, 0
-  drops, 0 overflow). The whole chain matches the step-1 C model.
+- xsim: synthetic PASS, real data 500k AAPL PASS, and the fast/slow rejoin
+  (`test-merge-xsim`) PASS.
+- Real data **5M AAPL PASS** (1779 BBO updates, 0 drops, 0 overflow) — the whole
+  chain matches the step-1 C model. That figure was measured under Verilator,
+  which this project no longer runs; it is kept because it is the largest replay
+  the book has been through, and the xsim runs above reproduce it on the slices
+  they cover.
 - **Correctness-first FSM**: 3 cycles per record for rem/add/eval. The input is
   rate-limited by the decoder and order table, so 0 drops. Pipelining the best
   search and moving qty to BRAM (registered read) is the follow-on optimisation.

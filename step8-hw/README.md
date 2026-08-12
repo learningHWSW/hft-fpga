@@ -1698,6 +1698,41 @@ The card runs it drives are `make run-card-real` and `make run-card-b-real`
 `lat_probe` to attribute samples. Lower `RGAP` to sweep offered load; the
 saturation knee sits between `RGAP=24` and `RGAP=16`.
 
+## What makes a rebuild happen
+
+The `.xo` and the bitstream depend on a stamp file, `.geom-<geometry>-<hash>`,
+and the stamp is the answer to a failure mode this step has hit twice.
+
+**Geometry.** `NSYM` and the table shape are baked *into* the `.xo`, not into
+its name, so `make NSYM=2` asks for a different artefact from the one on disk
+and make cannot see the difference. The stamp carries the geometry, so changing
+a knob rebuilds. It also deletes `.ipcache` and the packaged kernels, because
+v++'s IP cache is keyed on the kernel's **interface** — which a parameter
+default does not move — and a rebuilt `.xo` carrying a new geometry once got
+linked against a cached copy of the *old* source. That produced a bitstream that
+reported `NSYM=2` and elaborated `NSYM=1`.
+
+**And the sources' content**, which is the newer half. A cache keyed on the
+interface is equally blind to a module whose *body* changes with every port
+identical — the exact shape of the edit that removed `otable_mem`'s `` `ifdef ``
+(FINDINGS §4.5). So the stamp also carries a checksum over the datapath
+sources, this step's RTL and the packaging scripts. Any edit to those rebuilds
+the `.xo` and clears the cache; the generated `rtl/t2t_geom_pkg.sv` is excluded,
+since it is produced *from* the stamp and hashing it would make the stamp's name
+depend on its own rule.
+
+`make xo` prints both halves:
+
+```
+kernel geometry: NSYM=1 OT_SETS_BITS=13 OT_WAYS=16
+  sources: 1257328779
+```
+
+The cost is that editing any RTL file forfeits the IP cache on the next link.
+That is the intended trade: the cache's whole failure mode is being reused when
+it should not be, and a link that takes its full 1 h 10 m is cheaper than a
+bitstream built from source that is no longer in the tree.
+
 ## Cleaning
 
 Three tiers, because they cost very different amounts to undo:
@@ -1742,6 +1777,19 @@ retransmission (`tx_rto`: on, timeout in core cycles, retry cap) and
 in simulation — the venue's frame arms the detector, acknowledges nothing, and
 the card re-sends the oldest order by itself; `scripts/check_resend.py` then
 proves the extra frames are byte-identical copies rather than new orders.
+
+**The timeout written there is a guess, and `+0x1198`–`+0x11B0` is the
+instrument that will replace it.** Those seven words are `ack_latency`: how long
+the venue took to acknowledge an order, in core cycles, as last / min / max /
+samples / a 64-bit sum for the mean / measurements discarded. Read
+`st_ack_samples` first — zero means nothing has ever acknowledged anything,
+which is every run on this bench, because GT loopback has no counterparty. The
+host prints that case as "no counterparty" rather than as a row of zeros, since
+a latency of 0 and a latency never measured look identical and mean opposite
+things. `make test-session` is where it has something to measure: the generated
+venue acknowledges the orders it answers, one per reply, and the probe times the
+first of them. The measurement is kernel-to-kernel and excludes the MAC's
+~300 ns round trip. See FINDINGS §8.
 
 The Phase B block is what says whether a run can be believed at all: `0x0200`
 carries `rx_aligned`/`link_up`, and beside it sit the TX underrun count (a frame

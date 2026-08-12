@@ -1,38 +1,34 @@
 // One way of the order table's storage: simple dual-port, registered read.
 //
-// This wrapper exists because the real memory is an `xpm_memory_sdpram` macro
-// and Verilator cannot compile Vivado's XPM library, while Verilator is what
-// runs the multi-million-message replays. So there are two implementations
-// behind one interface:
+// ONE IMPLEMENTATION, ON PURPOSE. This wrapper used to hold two -- the XPM
+// macro below and a behavioural array -- selected by `` `ifdef OTABLE_XPM ``.
+// The behavioural branch existed for one reason: Verilator cannot compile
+// Vivado's XPM library, and Verilator ran the multi-million-message replays.
+// Verilator is gone, and xsim elaborates the macro with `-L xpm`, so the
+// branch had no remaining purpose.
 //
-//   `OTABLE_XPM defined   -> xpm_memory_sdpram, MEMORY_PRIMITIVE "ultra"
-//   otherwise             -> a behavioural array with the SAME read latency
+// It also had a cost that was not visible until it was looked for. The define
+// reached exactly one of the three flows that build this file: step 5's
+// out-of-context synthesis honoured it, while every simulation and the Vitis
+// card build silently compiled the OTHER branch -- ipx::package_project
+// carries sources, not the packaging project's verilog_define. So the fMAX
+// sweeps and the card measurements, two things data/FINDINGS.md compares
+// directly, were built from different memory descriptions for the whole of
+// their history. It went unnoticed because both branches carried
+// ram_style="ultra" and therefore reported the same URAM count, which is the
+// check anyone would reach for and the one check that cannot tell them apart
+// (§4.5). Nothing is known to have been wrong because of it. The point is
+// that nothing could have told us if something had been.
 //
-// WHICH ONE YOU GET IS NOT WHAT THE NAME SUGGESTS. The define reaches only
-// step 5's out-of-context synthesis. Simulations never set it, and Vitis drops
-// it -- ipx::package_project carries sources, not the packaging project's
-// verilog_define -- so the CARD build compiles the behavioural branch. Both
-// carry ram_style="ultra" and therefore report the same URAM count, which is
-// exactly why this went unnoticed: the obvious check cannot tell them apart.
-// Measured and written up in data/FINDINGS.md §4.5. It is believed harmless --
-// the two are interchangeable by the contract just below -- but it means the
-// card and the fMAX sweeps are built from different memory descriptions.
+// A knob that one flow drops in silence is worse than no knob, so there is now
+// nothing to select: every flow gets the macro. Any xelab that reaches this
+// file needs `-L xpm`.
 //
-// The important property is that the two are interchangeable from the FSM's
-// point of view: identical depth, identical width, identical RD_LAT. The
-// earlier divergence this project is fixing was of a different kind — a table
-// 128x smaller in synthesis than in simulation. Here the size and the timing
-// match and only the primitive differs, which is the difference XPM's own
-// simulation model would introduce anyway.
-//
-// `make test-xsim` runs the real XPM path so the two are checked against each
-// other rather than assumed equivalent.
-//
-// NOTE ON INITIALISATION. UltraRAM has no INIT: contents come up
-// indeterminate on the device. The behavioural model below deliberately does
-// NOT zero itself either, so simulation cannot paper over a missing clear —
-// order_table sweeps every address after reset, and if that sweep were removed
-// the Verilator run would show garbage rather than passing quietly.
+// NOTE ON INITIALISATION. UltraRAM has no INIT: contents come up indeterminate
+// on the device, and USE_MEM_INIT(0) below makes the simulation model come up
+// indeterminate too. That is deliberate -- order_table sweeps every address
+// after reset, and if that sweep were ever removed, simulation must show
+// garbage rather than pass quietly on a memory that zeroed itself.
 `timescale 1ns/1ps
 module otable_mem #(
   parameter int WIDTH  = 130,
@@ -48,7 +44,6 @@ module otable_mem #(
   output logic [WIDTH-1:0] rdata
 );
 
-`ifdef OTABLE_XPM
   xpm_memory_sdpram #(
     .MEMORY_SIZE        (DEPTH * WIDTH),
     .MEMORY_PRIMITIVE   ("ultra"),
@@ -71,17 +66,5 @@ module otable_mem #(
     .injectsbiterra(1'b0), .injectdbiterra(1'b0),
     .sbiterrb(), .dbiterrb(), .sleep(1'b0)
   );
-`else
-  // Behavioural equivalent: read_first, then RD_LAT stages of output register.
-  (* ram_style = "ultra" *) logic [WIDTH-1:0] mem [DEPTH];
-  logic [WIDTH-1:0] pipe [RD_LAT];
-
-  always_ff @(posedge clk) begin
-    pipe[0] <= mem[raddr];                 // read_first: sees the old contents
-    if (we) mem[waddr] <= wdata;
-    for (int i = 1; i < RD_LAT; i++) pipe[i] <= pipe[i-1];
-  end
-  assign rdata = pipe[RD_LAT-1];
-`endif
 
 endmodule

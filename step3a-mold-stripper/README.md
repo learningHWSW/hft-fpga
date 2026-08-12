@@ -53,7 +53,7 @@ messages.
 
 ## Status
 
-- xsim (Vivado 2025.2): PASS — 19/21 msgs delivered, `gap_total=2`, `dup=1`,
+- xsim: PASS — 19/21 msgs delivered, `gap_total=2`, `dup=1`,
   `frame_err=0`, EOS detected. The two undelivered messages are the deliberate
   sequence gap, and they are MSFT noise, so the tracked symbol's book is
   unaffected — which is the point of that scenario.

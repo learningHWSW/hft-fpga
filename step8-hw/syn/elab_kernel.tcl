@@ -29,7 +29,7 @@ set srcs [list \
   $repo/step6-strategy/rtl/strategy.sv \
   $repo/step6-strategy/rtl/sweep_detect.sv \
   $repo/step6-strategy/rtl/ouch_builder.sv \
-  $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv $repo/step6-strategy/rtl/tx_rto.sv \
+  $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv $repo/step6-strategy/rtl/tx_rto.sv $repo/step6-strategy/rtl/ack_latency.sv \
   $repo/step5-board/rtl/feed_ab_arb.sv \
   $repo/step5-board/rtl/igmp_query_detect.sv \
   $repo/step5-board/rtl/tcp_rx.sv $repo/step5-board/rtl/t2t_top.sv \
@@ -47,7 +47,6 @@ set srcs [list \
 
 create_project -in_memory -part $part
 foreach f $srcs { read_verilog -sv $f }
-set_property verilog_define {OTABLE_XPM} [current_fileset]
 
 if {$mode eq "synth"} {
   set outdir $here/out_kernel

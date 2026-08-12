@@ -45,7 +45,7 @@ set srcs [list \
   $repo/step6-strategy/rtl/strategy.sv \
   $repo/step6-strategy/rtl/sweep_detect.sv \
   $repo/step6-strategy/rtl/ouch_builder.sv \
-  $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv $repo/step6-strategy/rtl/tx_rto.sv \
+  $repo/step6-strategy/rtl/tcp_tx.sv $repo/step6-strategy/rtl/tx_replay_buf.sv $repo/step6-strategy/rtl/tx_rto.sv $repo/step6-strategy/rtl/ack_latency.sv \
   $repo/step5-board/rtl/feed_ab_arb.sv \
   $repo/step5-board/rtl/igmp_query_detect.sv \
   $repo/step5-board/rtl/tcp_rx.sv $repo/step5-board/rtl/t2t_top.sv \
@@ -63,7 +63,6 @@ set srcs [list \
 
 create_project -force kernel_pack $tmp_proj -part $part
 add_files -norecurse $srcs
-# the order table's URAM instantiation, same as every synthesis run in step 5
 # The kernel geometry travels as rtl/t2t_geom_pkg.sv, first in the source list
 # above -- a GENERATED SOURCE, because that is the only thing that reaches v++.
 # Two other mechanisms were tried and both failed silently, each producing a
@@ -74,9 +73,12 @@ add_files -norecurse $srcs
 #   * set_property verilog_define here: it applies to THIS project's synthesis,
 #     and v++ re-synthesises the kernel in its own project where it is unset.
 # (OTABLE_XPM appeared to prove verilog_define worked. It did not prove it:
-#  both branches of otable_mem carry ram_style="ultra", so the URAM count is
-#  the same either way and says nothing about which branch was compiled.)
-set_property verilog_define {OTABLE_XPM} [current_fileset]
+#  both branches of otable_mem carried ram_style="ultra", so the URAM count was
+#  the same either way and said nothing about which branch was compiled. That
+#  define is gone -- otable_mem has one implementation now, the XPM macro, and
+#  the line that set it here has gone with it. It never reached v++ anyway,
+#  which is exactly how the card spent its whole history building the branch
+#  the fMAX sweeps did not. FINDINGS 4.5.)
 set_property top $kernel_name [current_fileset]
 
 update_compile_order -fileset sources_1

@@ -222,6 +222,16 @@ trade.
 | | Version used | Notes |
 |---|---|---|
 | Vivado / Vitis | **2025.2.1** | provides `vivado`, `v++`, `xvlog`, `xelab`, `xsim` — and all of them must come from the *same* install: a `.xo` packaged by one version and linked by another is refused if the linker is older, and silently accepted if it is newer. `make -C step8-hw which-tools` prints what the recipes will actually use |
+
+**Only step 8 enforces that.** Its recipes source `XILINX_SETTINGS` themselves
+and fail loudly if the tools are missing; steps 1–6 take whatever `xvlog` is on
+`PATH`, which on this machine is an older install that also happens to be
+present. The two halves of the suite have therefore been running on different
+simulators without saying so — harmless so far (step 4a's goldens and its clear
+sweep were re-run under both and agree), but it stopped being purely cosmetic
+once `otable_mem` became a vendor macro and nothing else, because the vendor's
+version is now part of what is under test. Source the settings script before
+running steps 1–6 if it matters to you; making them enforce it is an open task.
 | XRT | 2.18.179 (2024.2) | only for running on the card |
 | Python | 3.8+ | goldens and packing scripts; standard library only |
 | GCC | C++17 | host runner and the step-1 C model |
@@ -271,10 +281,10 @@ cd step4b-book && make test            # xsim
 | 1 | `make test` | the C golden parses a real day self-consistently |
 | 2 | `make test` | ITCH decode == golden |
 | 3a / 3b | `make test`, `make test-real-xsim` | MoldUDP64 strip and 512-bit realignment |
-| 4a | `make test`, `make test-real-xsim`, `make test-multi` | order table == golden, zero overflow, and two symbols share one table |
+| 4a | `make test`, `make test-real-xsim`, `make test-multi`, `make test-clear` | order table == golden, zero overflow, two symbols share one table, and the post-reset sweep clears what UltraRAM comes up holding |
 | 4b | `make test`, `make test-real-xsim`, `make test-merge-xsim` | BBO sequence == golden, and the fast/slow rejoin preserves it |
 | 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx`, `make test-msym` | the whole chain, two clocks, wire frames in and session frames back, and two tracked books each reproducing its own single-symbol golden |
-| 6 | `make test-xsim`, `make test-replay`, `make test-rto`, `make test-msym` | orders and OUCH/TCP bytes == golden, when a resend is decided, and that no per-book strategy state is shared between symbols |
+| 6 | `make test-xsim`, `make test-replay`, `make test-rto`, `make test-msym`, `make test-acklat` | orders and OUCH/TCP bytes == golden, when a resend is decided, that no per-book strategy state is shared between symbols, and that the acknowledgement-latency probe measures a round trip without inventing one |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
 | 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto`, `make test-real` | the Vitis kernel, HBM to HBM, through the MAC, the venue's replies back to the host, the card re-sending an unacknowledged order, and the real feed as far as the memory model holds |
 
@@ -418,6 +428,17 @@ Honest scope, all of it stated in the per-step READMEs.
   together by hand. The register map holds five symbols: 1–4 have a config block
   at `0x0C0`–`0x0FF` and positions at `0x180`–`0x18C`, while symbol 0 keeps the
   registers it always had, because moving it would repoint offsets that shipped.
+- **All three flows build the same order table, and did not used to.**
+  `otable_mem` selected between an XPM macro and a behavioural array on an
+  `` `ifdef `` that reached exactly one of the three flows that compile it: step
+  5's synthesis honoured it, while every simulation and the Vitis card build
+  silently compiled the other branch. Both carried `ram_style="ultra"`, so the
+  URAM count — the obvious check — was identical either way and could not tell
+  them apart. There is one implementation now (`FINDINGS` §4.5), and the whole
+  suite passes on it. The change also *cost* a property: the behavioural array
+  came up X, which is what would have caught the order table's post-reset clear
+  sweep being deleted, and XPM's model comes up zeroed instead. `step4a make
+  test-clear` replaces the accident with a test.
 - **One simulator, so no second opinion.** Everything now runs under xsim; the
   Verilator paths are gone, and with them a cross-check that had already earned
   its keep once. A testbench driving stimulus on the edge the DUT samples is a
@@ -436,6 +457,16 @@ Honest scope, all of it stated in the per-step READMEs.
   against generated replies, with the order frames byte-identical either way. What
   has not happened is a card run: nothing has answered these orders except a
   Python generator, and the QSFP cages are empty.
+- **Retransmission policy is two guessed numbers, and the instrument for them is
+  now built.** `cfg_rto_cycles` and `cfg_rto_retries` are the only values in this
+  design chosen without measurement — the mechanism was decided on evidence, the
+  constants were not — because what they need is the distribution of venue
+  acknowledgement latency. `ack_latency` measures it in hardware off the two
+  signals `tx_rto` already watches, publishes last/min/max/samples/sum/discarded
+  at `0x198`–`0x1B0`, and reports **zero samples** under GT loopback rather than
+  a plausible-looking zero. It is verified in both directions in the kernel
+  simulation (`FINDINGS` §8) and is waiting for a counterparty, not for more
+  simulation. The two constants are labelled as guesses wherever they appear.
 
 ### Signal
 

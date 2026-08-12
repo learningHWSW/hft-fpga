@@ -98,7 +98,13 @@ module t2t_axil #(
   // order matching register order would be all risk and no benefit.
   //   [1024:993]  st_bbo_arb_drop
   //   above that   one 32-bit position per symbol beyond the first
-  localparam int STW  = 1025 + (NSYM-1)*32;
+  //   above THAT   the seven words of acknowledgement latency, at ACKB
+  // The ack block sits above the per-symbol positions rather than below them so
+  // that 1025 -- the base every position slice on both sides is written against
+  // -- does not move. Growing only at the top is the rule this bus has followed
+  // since it had two fields.
+  localparam int ACKB = 1025 + (NSYM-1)*32;
+  localparam int STW  = ACKB + 224;   // 4 x 32 + 64 (sum) + 32
 
   // ================= AXI-Lite register file (axil_clk) =================
   logic [31:0] a_group_ip, a_max_spread, a_min_qty, a_order_qty;
@@ -178,7 +184,14 @@ module t2t_axil #(
     .st_rto_fired(st_bus_axil[864:833]), .st_rto_gaveup(st_bus_axil[832:801]),
     .st_rb_stored(st_bus_axil[896:865]), .st_rb_resent(st_bus_axil[928:897]),
     .st_rb_drop(st_bus_axil[960:929]),   .st_blk_qty(st_bus_axil[992:961]),
-    .st_bbo_arb_drop(st_bus_axil[1024:993])
+    .st_bbo_arb_drop(st_bus_axil[1024:993]),
+    .st_ack_last(st_bus_axil[ACKB +   0 +: 32]),
+    .st_ack_min(st_bus_axil[ACKB +  32 +: 32]),
+    .st_ack_max(st_bus_axil[ACKB +  64 +: 32]),
+    .st_ack_samples(st_bus_axil[ACKB +  96 +: 32]),
+    .st_ack_sum_lo(st_bus_axil[ACKB + 128 +: 32]),
+    .st_ack_sum_hi(st_bus_axil[ACKB + 160 +: 32]),
+    .st_ack_lost(st_bus_axil[ACKB + 192 +: 32])
   );
 
   // pack every config word into one bus (order is the contract with the unpack)
@@ -292,6 +305,13 @@ module t2t_axil #(
     .st_bbo_early(st_bus_core[800:769]), .st_bbo_late(st_bus_core[768:737]),
     .st_bbo_mismatch(st_bus_core[736:705]),
     .st_bbo_arb_drop(st_bus_core[1024:993]),
+    // acknowledgement latency, same slices as the axil side names above
+    .st_ack_last(st_bus_core[ACKB +   0 +: 32]),
+    .st_ack_min(st_bus_core[ACKB +  32 +: 32]),
+    .st_ack_max(st_bus_core[ACKB +  64 +: 32]),
+    .st_ack_samples(st_bus_core[ACKB +  96 +: 32]),
+    .st_ack_sum(st_bus_core[ACKB + 128 +: 64]),
+    .st_ack_lost(st_bus_core[ACKB + 192 +: 32]),
     .cfg_sweep_en(c_sweep_en), .cfg_sweep_min_levels(c_sweep_min_levels), .cfg_sweep_gap(c_sweep_gap),
     .cfg_token_prefix(c_token_prefix), .cfg_stock(c_stock), .cfg_firm(c_firm), .cfg_tif(c_tif),
     .cfg_ouch_min_qty(c_ouch_min_qty), .cfg_display(c_display), .cfg_capacity(c_capacity),
