@@ -1,0 +1,78 @@
+##### RGAP=48
+harness : injected=1127057 captured=9833 overflow=0 stalls=174470
+rx      : frames_in=1136893 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=674 drops(beat=0 msg=0 delta=0)
+position: sym0=800 sym1=-500
+strategy: sent=9833 pos=800 blocked(pos=14641 inflight=0 txfull=0 qty=0)
+tx      : frames=9833 next_seq=1007cd54 cdc_drop=0
+replay  : stored=9833 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=64392 late=26005 (71% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+mac     : tx=7948967 rx=7948967 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=9833 dropped=1127060 cap_cdc_drop=0 hwm(feed=7 ord=4)
+
+##### RGAP=40
+harness : injected=1127057 captured=9833 overflow=0 stalls=184700
+rx      : frames_in=1136895 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=674 drops(beat=0 msg=0 delta=0)
+position: sym0=800 sym1=-500
+strategy: sent=9833 pos=800 blocked(pos=14641 inflight=0 txfull=0 qty=0)
+tx      : frames=9833 next_seq=1007cd54 cdc_drop=0
+replay  : stored=9833 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=64392 late=26005 (71% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+mac     : tx=9085862 rx=9085862 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=9833 dropped=1127062 cap_cdc_drop=0 hwm(feed=7 ord=4)
+
+##### RGAP=36
+harness : injected=1127057 captured=9833 overflow=0 stalls=189221
+rx      : frames_in=1136893 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=674 drops(beat=0 msg=0 delta=0)
+position: sym0=800 sym1=-500
+strategy: sent=9833 pos=800 blocked(pos=14641 inflight=0 txfull=0 qty=0)
+tx      : frames=9833 next_seq=1007cd54 cdc_drop=0
+replay  : stored=9833 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=64392 late=26005 (71% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+mac     : tx=10222755 rx=10222755 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=9833 dropped=1127060 cap_cdc_drop=0 hwm(feed=7 ord=4)
+
+##### RGAP=32
+harness : injected=1127057 captured=9833 overflow=0 stalls=193069
+rx      : frames_in=1136895 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=674 drops(beat=0 msg=0 delta=0)
+position: sym0=800 sym1=-500
+strategy: sent=9833 pos=800 blocked(pos=14641 inflight=0 txfull=0 qty=0)
+tx      : frames=9833 next_seq=1007cd54 cdc_drop=0
+replay  : stored=9833 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=64392 late=26005 (71% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+mac     : tx=11359650 rx=11359650 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=9833 dropped=1127062 cap_cdc_drop=0 hwm(feed=7 ord=4)
+
+##### RGAP=28
+harness : injected=1127057 captured=25 overflow=0 stalls=6
+rx      : frames_in=1127085 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=666 drops(beat=0 msg=111370 delta=0)
+position: sym0=0 sym1=-500
+strategy: sent=25 pos=0 blocked(pos=9 inflight=0 txfull=0 qty=0)
+tx      : frames=25 next_seq=10000514 cdc_drop=0
+replay  : stored=25 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=937 late=444 (67% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+mac     : tx=12486735 rx=12486735 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=25 dropped=1127060 cap_cdc_drop=0 hwm(feed=7 ord=3)
+
+##### RGAP=24
+harness : injected=1127057 captured=14 overflow=0 stalls=0
+rx      : frames_in=1127076 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=591 drops(beat=0 msg=712250 delta=0)
+position: sym0=0 sym1=-1000
+strategy: sent=14 pos=0 blocked(pos=3 inflight=0 txfull=0 qty=0)
+tx      : frames=14 next_seq=100002d8 cdc_drop=0
+replay  : stored=14 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=601 late=150 (80% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+mac     : tx=13613811 rx=13613811 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=14 dropped=1127062 cap_cdc_drop=0 hwm(feed=7 ord=3)
+

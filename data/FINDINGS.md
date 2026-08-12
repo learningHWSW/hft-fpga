@@ -821,6 +821,43 @@ Four things this says that the model could not:
    byte-identical to the golden; the saturated one drops and counts. The design
    has no regime in which it emits a *wrong* order.
 
+**A second book lowers the saturation point, and the table is why.** Same card,
+same replay, same gap ladder, `NSYM=2` tracking AAPL and QQQ:
+
+| gap | offered | msg drops | orders | AAPL vs golden | loaded min / mean / max |
+|---|---|---|---|---|---|
+| 48 | 25.3 M msg/s | 0 | 9,833 | PASS | 13 / 54.8 / 483 cy |
+| 40 | 29.9 M msg/s | 0 | 9,833 | PASS | 16 / 80.8 / 749 cy |
+| 36 | 32.8 M msg/s | 0 | 9,833 | PASS | 16 / 99.9 / 885 cy |
+| 32 | 36.4 M msg/s | 0 | 9,833 | PASS | 16 / 121.2 / 1018 cy |
+| 28 | 40.9 M msg/s | **111,370** | 25 | — saturated — | |
+| 24 | 46.6 M msg/s | 712,250 | 14 | — saturated — | |
+
+**The knee moves from between gap 28/24 to between gap 32/28** — from ~46.6 to
+~40.9 M msg/s, about 12 % of absorbable rate for the second name. Single-symbol
+runs gap 28 with zero drops; two symbols drop 111,370 messages there.
+
+**That locates the bottleneck, which was the point of running this.** The
+ladders are replicated, so K books keep K ladders' throughput; if the ladders
+bound, a second one would cost nothing. The order table is *shared*, and it
+admits inserts for every tracked symbol — QQQ contributes roughly fifty times
+AAPL's book traffic — so its 2-3 cycles per message is doing far more work per
+unit time. **Adding a symbol is nearly free in fMAX (§4.4), costs 58 % in LUTs,
+and costs throughput at the table.** Those three are separate budgets and this
+is the one that was unmeasured.
+
+**The tail degrades much faster too.** Across the same 1.4× rise in offered rate
+the mean grows 2.2× (54.8 → 121.2 cycles) against 1.35× for one book, and the
+max reaches 1,018 cycles where one book reached 112 at the same gap. Two books
+means 9,833 orders instead of 70, so this is a busier machine at every point,
+not only a shorter-fused one.
+
+**Saturated, it still does not lie.** At gap 28 and 24 the AAPL diff fails —
+correctly, because messages were dropped and the golden covers a feed that was
+not delivered — but QQQ's prices are *still* every one inside its own band. The
+design degrades by dropping and counting, and even overloaded it did not emit a
+single order at a wrong price.
+
 **Re-measured with the fast book path.** The table above is the ladder-only
 datapath. Same card, same replay, same gap ladder, `fast_bbo` in place:
 

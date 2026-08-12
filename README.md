@@ -401,7 +401,11 @@ Honest scope, all of it stated in the per-step READMEs.
   `st_bbo_mismatch` and `st_bbo_arb_drop` were both zero across 90,397 BBO
   records. `NSYM = 1` is still what every *latency* figure in this README
   describes, and those are not comparable: a second book raises the order rate
-  140×. The cost is measured post-route in both halves (`FINDINGS` §4.4). The
+  140×. Load-swept too, which located a cost the area numbers do not show —
+  **the saturation knee moves from ~46.6 to ~40.9 M msg/s**, because the ladders
+  are replicated but the order table is *shared* and admits every tracked
+  symbol's inserts. Adding a name is nearly free in fMAX, costs 58 % in LUTs,
+  and costs ~12 % of absorbable message rate; those are three separate budgets. The cost is measured post-route in both halves (`FINDINGS` §4.4). The
   books are free: replicating the ladder, fast-BBO tracker and sweep detector
   costs **+32,687 LUTs (+58 %)** and **no measurable fMAX** — 220.7 MHz best of
   four directive sets against 220.0 at one symbol, inside the spread. The table
