@@ -225,6 +225,24 @@ void configure(Device& d, const Options& o) {
         " were configured. Rebuild with `make xclbin-b NSYM=" +
         std::to_string(o.syms.size() + 1) + " OT_SETS_BITS=14`.");
 
+  // EVERY symbol slot the build has is written, not just the ones asked for.
+  // Configuration registers survive a run: XRT does not reprogram the device
+  // when the same xclbin is already loaded, so a run that configures fewer
+  // symbols than the last one INHERITS the rest. That is not hypothetical --
+  // a single-symbol run immediately after a two-symbol one reproduced the
+  // two-symbol result exactly (9,833 orders, not 70) and would have been read
+  // as an AAPL-only measurement.
+  //
+  // Unused slots get locate 0xFFFF, which no NASDAQ stock has, rather than 0,
+  // which is a locate the order table would happily match. The datapath has no
+  // per-symbol enable bit; an unmatchable locate is what makes a slot inert.
+  for (unsigned k = static_cast<unsigned>(o.syms.size()) + 1u; k < T2T_SYM_MAX; ++k) {
+    d.wr_t2t(T2T_SYM(k) + 0,  0xFFFFu);   // a locate nothing will ever carry
+    d.wr_t2t(T2T_SYM(k) + 4,  0u);
+    d.wr_t2t(T2T_SYM(k) + 8,  0x20202020u);   // "    "
+    d.wr_t2t(T2T_SYM(k) + 12, 0x20202020u);
+  }
+
   // Extra tracked symbols. Symbol 0's locate/base/stock are the registers
   // above; these are 1.. in the per-symbol block, four words each.
   for (size_t i = 0; i < o.syms.size(); ++i) {

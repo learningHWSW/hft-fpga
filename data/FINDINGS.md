@@ -227,6 +227,19 @@ band by a factor of ten. Zero of 9,763 do. Together with AAPL's 70 orders being
 byte-for-byte the single-symbol result, that is the claim the whole multi-symbol
 design makes: each book behaves as though it were the only one.
 
+**An unconfigured symbol slot is inert only if something makes it inert.** The
+first single-symbol run taken *after* the two-symbol one reproduced the
+two-symbol result exactly -- 9,833 orders, not 70 -- because configuration
+registers survive a run: XRT does not reprogram the device when the same xclbin
+is already loaded, so a run configuring fewer symbols than the last one inherits
+the rest. Nothing was wrong with the datapath; the measurement was of a
+configuration nobody had asked for, and it would have been read as an AAPL-only
+number. `t2t_run` now writes EVERY slot the build has, giving unused ones locate
+0xFFFF -- a locate no NASDAQ stock carries -- rather than 0, which the order
+table would match. With that, the single-symbol run on the two-symbol bitstream
+gives 70 orders and 1,174/605 again, and switching between the two
+configurations is repeatable in both directions.
+
 **A second book is not a second AAPL.** QQQ produces 90,397 BBO records against
 AAPL's 1,779 over the identical replay, and 9,763 orders against 70. The first
 attempt at this run overflowed an 8,192-record capture that had been sized for
