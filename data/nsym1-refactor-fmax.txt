@@ -1,0 +1,19 @@
+NSYM=1 fMAX across the multi-symbol refactor (FAST=1, 4.618 ns target, 4 directive sets)
+Each row is one placed-and-routed build. All met timing (0 failing endpoints).
+
+dirset     34d1775      refactored   +cond. tag  
+---------- -----------  -----------  ----------- 
+default    225.5        218.6        220.7       
+explore    225.5        218.6        220.7       
+fanout     221.7        220.0        220.0       
+netdly     221.7        218.7        217.4       
+
+best       225.5        220.0        220.7       
+
+34d1775 was re-swept days after the original run and reproduced all eight
+builds (f0 and f1) to the decimal, so Vivado is deterministic here and the
+differences above are the designs, not the tool.
+
+The raw transcripts for the 34d1775 re-sweep were in a git worktree that has
+been removed; these are the summary lines from it. The refactored and
+conditional-tag transcripts are in step5-board/syn/sweep-f1-n1-*.log.
