@@ -206,11 +206,39 @@ enough for exactly one symbol — two need 2^14 × 16, i.e. **128 URAM instead o
 parameters move together for a reason the tool cannot see, and a build that
 silently resized the table would hide half the answer.
 
-**No synthesis-level timing cost**, and no claim is made about post-route from
-this. The two builds have identical core-clock WNS after synthesis, but §7.7 is
-exactly the lesson that one post-route build against one post-route build cannot
-measure a difference — a real answer needs `sweep-t2t` at both `NSYM`, and
-nobody has spent those eight runs.
+**Post-route, across four directive sets per configuration** (`make sweep-t2t
+SWEEP_FAST=1 SWEEP_NSYM="1 2"`, then the same at `OT_SETS_BITS=14`):
+
+| | best fMAX | worst | spread | builds that met timing |
+|---|---|---|---|---|
+| NSYM=1, 2^13 × 16 | 220.0 MHz | 218.6 | 1.4 MHz | 4 of 4 |
+| NSYM=2, 2^13 × 16 | **220.7 MHz** | 219.4 | 1.3 MHz | 4 of 4 |
+| NSYM=2, 2^14 × 16 | 217.9 MHz | **211.4** | **6.5 MHz** | **1 of 4** |
+
+**The books are free and the table is not.** Replicating the ladder, the fast-BBO
+tracker and the sweep detector for a second symbol costs −0.7 MHz best to best,
+inside a 1.4 MHz spread: not measurable. Doubling the order table to the geometry
+that second symbol actually *needs* costs 2.8 MHz at the best directive, blows the
+spread out from 1.3 to 6.5 MHz, and leaves **three of four builds missing timing**
+(7, 3 and 33 failing endpoints). Only `netdly` closes.
+
+**That is the URAM cascade, and §4.1 predicted it.** The worst paths in the failing
+builds are the message FIFO's BRAM and `u_otab/g_way[3].u_mem/.../mem_reg_uram_0`
+— the same cascaded-URAM region that made 2^16 × 8 unshippable and drove the
+choice of 2^13 × 16 in the first place. 2^14 is two URAM deep per way instead of
+one; it is survivable where 2^16 was not, but it is where the difficulty lives.
+
+**So the two parameters moving together is not bookkeeping, it is the whole
+result.** `order_table` refuses to imply `SETS_BITS` from `NSYM`, and
+`synth_t2t.tcl` refuses to raise it automatically, precisely so that a
+multi-symbol build cannot quietly become a timing problem nobody attributed. A
+two-symbol design is shippable — 217.9 MHz still clears the 195.3 MHz the wire
+demands — but it is directive-sensitive in a way the single-symbol build is not,
+and that is a fact worth knowing before committing to four names rather than
+after.
+
+Cell counts confirm the split: NSYM=1→2 at the same geometry is +32,687 LUTs and
++2 URAM; the resize adds a further **+64 URAM** (68 → 132) and eight LUTs.
 
 ## 5. Sweep (momentum ignition) signal — measured on real data (step 6 strategy)
 

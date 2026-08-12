@@ -1,0 +1,108 @@
+--- sweep-f1-n1-default.log  OT_SETS_BITS=2^13 ---
+  SUMMARY_BUILD: fast=1 dirset=default nsym=1 period=4.618 outdir=out_t2t-f1-default
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 218.6
+  SUMMARY_IMPL_WNS_core_clk: 0.044
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_fh/g_sym[0].u_ladder/r_add_diff_reg[11]/C ->  u_fh/g_sym[0].u_ladder/r_fwd_reg/D levels=17
+  SUMMARY_CELL_LUT: 55933
+  SUMMARY_CELL_FDRE: 33942
+  SUMMARY_CELL_URAM288: 66
+--- sweep-f1-n1-explore.log  OT_SETS_BITS=2^13 ---
+  SUMMARY_BUILD: fast=1 dirset=explore nsym=1 period=4.618 outdir=out_t2t-f1-explore
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 218.6
+  SUMMARY_IMPL_WNS_core_clk: 0.044
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_fh/g_sym[0].u_ladder/r_add_diff_reg[11]/C ->  u_fh/g_sym[0].u_ladder/r_fwd_reg/D levels=17
+  SUMMARY_CELL_LUT: 55933
+  SUMMARY_CELL_FDRE: 33942
+  SUMMARY_CELL_URAM288: 66
+--- sweep-f1-n1-fanout.log  OT_SETS_BITS=2^13 ---
+  SUMMARY_BUILD: fast=1 dirset=fanout nsym=1 period=4.618 outdir=out_t2t-f1-fanout
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 220.0
+  SUMMARY_IMPL_WNS_core_clk: 0.073
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_afifo/mem_reg_1/CLKARDCLK ->  u_ab/cur_target_reg[63]/D levels=17
+  SUMMARY_CELL_LUT: 55933
+  SUMMARY_CELL_FDRE: 33942
+  SUMMARY_CELL_URAM288: 66
+--- sweep-f1-n1-netdly.log  OT_SETS_BITS=2^13 ---
+  SUMMARY_BUILD: fast=1 dirset=netdly nsym=1 period=4.618 outdir=out_t2t-f1-netdly
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 218.7
+  SUMMARY_IMPL_WNS_core_clk: 0.046
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_fh/g_sym[0].u_ladder/r_rem_diff_reg[3]/C ->  u_fh/g_sym[0].u_ladder/r_rem_idx_reg[7]_rep__10/D levels=12
+  SUMMARY_CELL_LUT: 55933
+  SUMMARY_CELL_FDRE: 33942
+  SUMMARY_CELL_URAM288: 66
+--- sweep-f1-n2-default.log  OT_SETS_BITS=2^13 ---
+  SUMMARY_BUILD: fast=1 dirset=default nsym=2 period=4.618 outdir=out_t2t-f1-default-n2
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 219.4
+  SUMMARY_IMPL_WNS_core_clk: 0.060
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_replay/rp_slot_reg[0]/C ->  u_tx_cdc/mem_reg_3/DINADIN[19] levels=3
+  SUMMARY_CELL_LUT: 88620
+  SUMMARY_CELL_FDRE: 44482
+  SUMMARY_CELL_URAM288: 68
+--- sweep-f1-n2-explore.log  OT_SETS_BITS=2^13 ---
+  SUMMARY_BUILD: fast=1 dirset=explore nsym=2 period=4.618 outdir=out_t2t-f1-explore-n2
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 219.4
+  SUMMARY_IMPL_WNS_core_clk: 0.060
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_replay/rp_slot_reg[0]/C ->  u_tx_cdc/mem_reg_3/DINADIN[19] levels=3
+  SUMMARY_CELL_LUT: 88620
+  SUMMARY_CELL_FDRE: 44482
+  SUMMARY_CELL_URAM288: 68
+--- sweep-f1-n2-fanout.log  OT_SETS_BITS=2^13 ---
+  SUMMARY_BUILD: fast=1 dirset=fanout nsym=2 period=4.618 outdir=out_t2t-f1-fanout-n2
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 220.7
+  SUMMARY_IMPL_WNS_core_clk: 0.087
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_fh/g_sym[1].u_ladder/r_add_idx_reg[6]/C ->  u_fh/g_sym[1].u_ladder/askocc_reg[658]/D levels=4
+  SUMMARY_CELL_LUT: 88620
+  SUMMARY_CELL_FDRE: 44482
+  SUMMARY_CELL_URAM288: 68
+--- sweep-f1-n2-netdly.log  OT_SETS_BITS=2^13 ---
+  SUMMARY_BUILD: fast=1 dirset=netdly nsym=2 period=4.618 outdir=out_t2t-f1-netdly-n2
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 219.5
+  SUMMARY_IMPL_WNS_core_clk: 0.062
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_fh/g_sym[0].u_ladder/r_rem_diff_reg[7]/C ->  u_fh/g_sym[0].u_ladder/r_rem_idx_reg[6]_rep/D levels=12
+  SUMMARY_CELL_LUT: 88620
+  SUMMARY_CELL_FDRE: 44482
+  SUMMARY_CELL_URAM288: 68
+--- sweep-f1-n2-default.log  OT_SETS_BITS=2^14 ---
+  SUMMARY_BUILD: fast=1 dirset=default nsym=2 period=4.618 outdir=out_t2t-f1-default-n2
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 211.4
+  SUMMARY_IMPL_WNS_core_clk: -0.112
+  SUMMARY_IMPL_TNS: -1.215  SUMMARY_IMPL_FAILING: 33
+  SUMMARY_IMPL_WORST_core_clk: u_fh/u_msg_fifo/i___77_i_1_psbram_1/C ->  u_fh/u_otab/g_way[2].u_mem/u_xpm/xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_uram_3/CAS_IN_DIN_B[31] levels=10
+  SUMMARY_CELL_LUT: 88628
+  SUMMARY_CELL_FDRE: 44485
+  SUMMARY_CELL_URAM288: 132
+--- sweep-f1-n2-explore.log  OT_SETS_BITS=2^14 ---
+  SUMMARY_BUILD: fast=1 dirset=explore nsym=2 period=4.618 outdir=out_t2t-f1-explore-n2
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 215.5
+  SUMMARY_IMPL_WNS_core_clk: -0.022
+  SUMMARY_IMPL_TNS: -0.067  SUMMARY_IMPL_FAILING: 7
+  SUMMARY_IMPL_WORST_core_clk: u_fh/u_msg_fifo/i___77_i_1_psbram_1/C ->  u_fh/u_otab/g_way[2].u_mem/u_xpm/xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_uram_3/CAS_IN_DIN_B[31] levels=10
+  SUMMARY_CELL_LUT: 88628
+  SUMMARY_CELL_FDRE: 44485
+  SUMMARY_CELL_URAM288: 132
+--- sweep-f1-n2-fanout.log  OT_SETS_BITS=2^14 ---
+  SUMMARY_BUILD: fast=1 dirset=fanout nsym=2 period=4.618 outdir=out_t2t-f1-fanout-n2
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 215.0
+  SUMMARY_IMPL_WNS_core_clk: -0.034
+  SUMMARY_IMPL_TNS: -0.058  SUMMARY_IMPL_FAILING: 3
+  SUMMARY_IMPL_WORST_core_clk: u_fh/u_otab/g_way[3].u_mem/u_xpm/xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_uram_0/CLK ->  u_fh/u_otab/g_way[3].u_mem/u_xpm/xpm_memory_base_inst/gen_rd_b.gen_doutb_pipe.gen_stage.doutb_pipe_reg[0][66]/D levels=3
+  SUMMARY_CELL_LUT: 88628
+  SUMMARY_CELL_FDRE: 44485
+  SUMMARY_CELL_URAM288: 132
+--- sweep-f1-n2-netdly.log  OT_SETS_BITS=2^14 ---
+  SUMMARY_BUILD: fast=1 dirset=netdly nsym=2 period=4.618 outdir=out_t2t-f1-netdly-n2
+  SUMMARY_IMPL_FMAX_MHZ_core_clk: 217.9
+  SUMMARY_IMPL_WNS_core_clk: 0.029
+  SUMMARY_IMPL_TNS: 0.000  SUMMARY_IMPL_FAILING: 0
+  SUMMARY_IMPL_WORST_core_clk: u_fh/g_sym[0].u_ladder/bid_gany_reg[25]/C ->  u_fh/g_sym[0].u_ladder/q_bbi_reg[4]/D levels=16
+  SUMMARY_CELL_LUT: 88628
+  SUMMARY_CELL_FDRE: 44485
+  SUMMARY_CELL_URAM288: 132

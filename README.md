@@ -394,14 +394,19 @@ Honest scope, all of it stated in the per-step READMEs.
   shared state, and confirmed sensitive by temporarily sharing the edge detector
   and watching symbol 1 fall to zero orders. What has not happened is a
   bitstream. `NSYM = 1` is what every card measurement in this README describes,
-  and both halves of the cost are measured (`FINDINGS` §4.4): a second symbol is
-  **+32,687 LUTs (+58 %) and +2 DSP** with no BRAM change, and the table it
-  feeds has to grow from 64 URAM to 128, because 2¹³ × 16 holds exactly one
-  name. Four symbols would be ~12 % of the device's LUTs. The register map holds
-  five: symbols 1–4 have a config block at `0x0C0`–`0x0FF` and positions at
-  `0x180`–`0x18C`, while symbol 0 keeps the registers it always had, because
-  moving it would repoint offsets that shipped. A real multi-symbol build is a
-  sizing decision now, not a rebuild.
+  and the cost is measured post-route in both halves (`FINDINGS` §4.4). The
+  books are free: replicating the ladder, fast-BBO tracker and sweep detector
+  costs **+32,687 LUTs (+58 %)** and **no measurable fMAX** — 220.7 MHz best of
+  four directive sets against 220.0 at one symbol, inside the spread. The table
+  is not free: growing it to the 2¹⁴ × 16 a second name needs adds **+64 URAM**
+  and leaves **three of four builds missing timing**, because that is the
+  cascaded-URAM region that made the larger geometry unshippable in the first
+  place. Only one directive closes, at 217.9 MHz — still above the 195.3 MHz the
+  wire demands, but directive-sensitive in a way the single-symbol build is not.
+  That is exactly why `NSYM` and `OT_SETS_BITS` are separate knobs that move
+  together by hand. The register map holds five symbols: 1–4 have a config block
+  at `0x0C0`–`0x0FF` and positions at `0x180`–`0x18C`, while symbol 0 keeps the
+  registers it always had, because moving it would repoint offsets that shipped.
 - **One simulator, so no second opinion.** Everything now runs under xsim; the
   Verilator paths are gone, and with them a cross-check that had already earned
   its keep once. A testbench driving stimulus on the edge the DUT samples is a
