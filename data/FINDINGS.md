@@ -746,6 +746,47 @@ Four things this says that the model could not:
    byte-identical to the golden; the saturated one drops and counts. The design
    has no regime in which it emits a *wrong* order.
 
+**Re-measured with the fast book path.** The table above is the ladder-only
+datapath. Same card, same replay, same gap ladder, `fast_bbo` in place:
+
+| gap | offered | msg drops | golden | min | mean | max |
+|---|---|---|---|---|---|---|
+| 48 | 25.3 M msg/s | 0 | PASS | 23 → **14 cy** / 65.1 ns | 34.2 → **28.6 cy** / 132.9 ns | 71 → 73 cy / 339.5 ns |
+| 40 | 29.9 M msg/s | 0 | PASS | 23 → **14 cy** | 37.1 → **31.4 cy** / 146.0 ns | 77 → 78 cy / 362.8 ns |
+| 36 | 32.8 M msg/s | 0 | PASS | 23 → **14 cy** | 39.7 → **34.0 cy** / 158.1 ns | 93 → **84 cy** / 390.7 ns |
+| 32 | 36.4 M msg/s | 0 | PASS | 23 → **14 cy** | 44.3 → **38.6 cy** / 179.5 ns | 122 → **112 cy** / 520.9 ns |
+| 28 | 40.9 M msg/s | 0 | PASS | 23 → **14 cy** | 51.1 → **45.4 cy** / 211.3 ns | 157 → **148 cy** / 688.4 ns |
+| 24 | 46.6 M msg/s | **389,995** | DIFF | — saturated — | | |
+
+Three things, and the third is the one that matters:
+
+1. **The floor improves by the same 9 cycles at every load.** 23 → 14 cycles at
+   all five non-saturated points, exactly as the floor was itself load-independent
+   before. A shorter common path is shorter whatever else is happening.
+2. **The mean improves at every point** by 5.6 to 5.8 cycles — the same constant,
+   which is what a change to the common path should look like and not what a
+   change to queueing behaviour would.
+3. **The saturation knee did not move at all.** Still between gap 28 and gap 24,
+   and the saturated point drops **389,995** messages against the ladder-only
+   run's 389,994 — one message different across a 5 M-message replay on a
+   separately placed and routed bitstream. `fast_bbo` buys latency and buys
+   **no throughput whatsoever**, which in hindsight is exactly right: it runs
+   *beside* the ladder, gated on the ladder's own accept, so the ladder still
+   processes every delta and the rate the design can absorb is unchanged. The
+   task that produced this measurement asked whether the knee would move; it does
+   not, and that is a fact about where the bottleneck is, not a disappointment.
+
+**The tail diverges slightly less.** Over the same 1.6× rise in offered rate the
+mean now grows 1.59× (was 1.49×) while the max grows **2.03× (was 2.21×)**, so
+the tail-to-mean divergence falls from 1.48 to 1.28. The absolute worst case at
+40.9 M msg/s is **688 ns, down from 730**. The conclusion §7.5.1 drew — quoting a
+mean for this design misleads — survives; it is just marginally less extreme.
+
+**The gap ladder is recorded here because it was not recorded the first time.**
+The original table gave only derived message rates, so reproducing it meant
+re-deriving the gaps from the frame count and the clock. The independent variable
+belongs in the table with the results.
+
 The measured tail is **730 ns, not the ~10 µs §7.2's model predicted** — but the
 two are not measuring the same thing and the model is not thereby refuted. §7.2
 models a full trading day's worst 1 ms burst arriving at a server pipeline; this

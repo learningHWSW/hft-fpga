@@ -398,6 +398,22 @@ orders and 70 samples with 0 misses at every non-saturated point:
 | 40.6 M msg/s | 0 | PASS | 107.0 ns | **237.9 ns** | **730.2 ns** |
 | 46.3 M msg/s | 389,994 | DIFF | — saturated — | | |
 
+Re-measured with `fast_bbo` on the same gap ladder (48, 40, 36, 32, 28, 24 —
+recorded here because the first run recorded only the derived rates):
+
+| gap | offered | msg drops | golden | min | mean | max |
+|---|---|---|---|---|---|---|
+| 48 | 25.3 M msg/s | 0 | PASS | 65.1 ns | **132.9 ns** | 339.5 ns |
+| 40 | 29.9 M msg/s | 0 | PASS | 65.1 ns | **146.0 ns** | 362.8 ns |
+| 36 | 32.8 M msg/s | 0 | PASS | 65.1 ns | **158.1 ns** | 390.7 ns |
+| 32 | 36.4 M msg/s | 0 | PASS | 65.1 ns | **179.5 ns** | 520.9 ns |
+| 28 | 40.9 M msg/s | 0 | PASS | 65.1 ns | **211.3 ns** | **688.4 ns** |
+| 24 | 46.6 M msg/s | 389,995 | DIFF | — saturated — | | |
+
+The floor drops 23 → 14 cycles at every point and the mean by a near-constant
+5.7 cycles, which is what a shorter *common* path looks like. The knee does not
+move: the same gap saturates and drops 389,995 messages against 389,994.
+
 The floor never moves (23 cycles at every load), the mean grows 1.49× while the
 max grows 2.21× over the same range — the tail is the thing that degrades — and
 saturation arrives abruptly between 40.6 and 46.3 M msg/s. Every non-saturated

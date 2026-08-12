@@ -38,13 +38,19 @@ Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session
 | MAC frames passed | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |
 | Full chain post-route (out of context) | **225.5 MHz** best of four directive sets (221.7 worst), above the 195.3 MHz a 100 Gb/s wire demands |
 
-Under load the floor never moves (**14 core cycles**, down from 23 before the
-fast path), but from 25.1 to 40.6 M msg/s the mean grows 1.49× while the **max
-grows 2.21×, to 730 ns** —
-quoting a mean for this design would mislead. Saturation is a knee rather than a
-shoulder, between 40.6 and 46.3 M msg/s, which is 20–40× the real NASDAQ peak.
-Every non-saturated point is byte-identical to the golden: the pipeline degrades
-by **dropping and counting**, never by emitting a wrong order.
+Under load the floor never moves — **14 core cycles at every offered rate**,
+down from 23 before the fast path — but from 25 to 41 M msg/s the mean grows
+1.59× while the **max grows 2.03×, to 688 ns**: quoting a mean for this design
+would mislead. Saturation is a knee rather than a shoulder, between 41 and
+47 M msg/s, which is 20–40× the real NASDAQ peak. Every non-saturated point is
+byte-identical to the golden: the pipeline degrades by **dropping and
+counting**, never by emitting a wrong order.
+
+The fast path moved the whole latency curve down by a constant and **moved the
+saturation knee not at all** — the same gap saturates, dropping 389,995 messages
+against the earlier build's 389,994. It runs beside the ladder rather than
+replacing it, so the rate the design can absorb is unchanged; what it buys is
+latency, at every load (`FINDINGS` §7.5.1).
 
 **The wire-to-wire and loaded figures are now measured with `fast_bbo` in the
 datapath**, on the same real 5 M AAPL replay through the same MAC, so they are

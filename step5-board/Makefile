@@ -163,15 +163,23 @@ impl-t2t:
 # concurrent Vivados is comfortable on 32 cores; each is given 8.
 #   make sweep-t2t          # 8 impl runs, ~40 min
 #   make sweep-t2t-report   # re-print the table from existing runs
+# The axes are separate variables so the sweep can answer more than the one
+# question it was written for. SWEEP_FAST=1 SWEEP_NSYM="1 2" asks what a second
+# symbol costs in fMAX; the defaults ask what fast_bbo costs. Log names carry
+# every axis, for the same reason the output directories do.
 SWEEP_DIRSETS = default explore netdly fanout
+SWEEP_FAST   ?= 0 1
+SWEEP_NSYM   ?= 1
 sweep-t2t:
-	@for f in 0 1; do \
-	  for d in $(SWEEP_DIRSETS); do \
-	    echo "=== launching fast=$$f dirset=$$d ==="; \
-	    vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl \
-	      -tclargs $(T2T_ARGS) $$f $$d > syn/sweep-f$$f-$$d.log 2>&1 & \
+	@for n in $(SWEEP_NSYM); do \
+	  for f in $(SWEEP_FAST); do \
+	    for d in $(SWEEP_DIRSETS); do \
+	      echo "=== launching fast=$$f nsym=$$n dirset=$$d ==="; \
+	      vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl \
+	        -tclargs $(T2T_ARGS) $$f $$d $$n > syn/sweep-f$$f-n$$n-$$d.log 2>&1 & \
+	    done; \
+	    wait; \
 	  done; \
-	  wait; \
 	done
 	@$(MAKE) --no-print-directory sweep-t2t-report
 

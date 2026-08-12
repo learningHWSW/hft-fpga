@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Read a set of synth_t2t.tcl transcripts and answer one question: does
-USE_FAST_BBO cost fMAX, or does it cost nothing and the tool is noisy?
+"""Read a set of synth_t2t.tcl transcripts and answer one question: does the
+knob that varies across them cost fMAX, or does it cost nothing and the tool is
+noisy? The knob is USE_FAST_BBO or NSYM, whichever actually differs between the
+transcripts given.
 
 WHY THIS SCRIPT EXISTS. The fast book path was measured once against the ladder
 alone -- 218.6 MHz vs 209.1 MHz -- and that 9.5 MHz went into the README as the
@@ -18,7 +20,7 @@ sweep is for -- with the spread reported next to it so the reader can see
 whether the gap between the two bests is larger than the gap within either.
 
 Input is whatever synth_t2t.tcl printed. The lines it looks for:
-    SUMMARY_BUILD: fast=1 dirset=explore period=4.618 outdir=...
+    SUMMARY_BUILD: fast=1 dirset=explore nsym=1 period=4.618 outdir=...
     SUMMARY_IMPL_FMAX_MHZ_core_clk: 213.4
     SUMMARY_IMPL_WNS_core_clk: -0.062
     SUMMARY_IMPL_TNS: -4.195  SUMMARY_IMPL_FAILING: 105
@@ -36,11 +38,14 @@ import sys
 def parse(path):
     """One transcript -> a dict, or None if it never got to a build line."""
     txt = open(path, errors="replace").read()
-    m = re.search(r"SUMMARY_BUILD: fast=(\d+) dirset=(\S+) period=(\S+)", txt)
+    m = re.search(r"SUMMARY_BUILD: fast=(\d+) dirset=(\S+)(?: nsym=(\d+))? period=(\S+)",
+                  txt)
     if not m:
         return None
     r = {"path": path, "fast": int(m.group(1)), "dirset": m.group(2),
-         "period": float(m.group(3))}
+         # nsym is optional so transcripts written before it existed still parse
+         "nsym": int(m.group(3)) if m.group(3) else 1,
+         "period": float(m.group(4))}
 
     def grab(pat, cast=float):
         g = re.search(pat, txt)
@@ -80,38 +85,46 @@ def main(argv):
     period = runs[0]["period"]
     print(f"core_clk constrained at {period} ns "
           f"({1000.0/period:.1f} MHz); fMAX = 1000/(period - WNS)\n")
-    hdr = ("{:<8} {:<9} {:>9} {:>9} {:>9} {:>8}   {}"
-           .format("fast_bbo", "dirset", "fMAX MHz", "WNS ns", "TNS ns",
+    hdr = ("{:<8} {:>4} {:<9} {:>9} {:>9} {:>9} {:>8}   {}"
+           .format("fast_bbo", "nsym", "dirset", "fMAX MHz", "WNS ns", "TNS ns",
                    "failing", "worst core_clk path is in"))
     print(hdr)
     print("-" * len(hdr))
-    for r in sorted(runs, key=lambda x: (x["fast"], -x["fmax"])):
+    for r in sorted(runs, key=lambda x: (x["nsym"], x["fast"], -x["fmax"])):
         src = r["worst"].split(" -> ")[0]
-        print("{:<8} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8}   {}"
-              .format(r["fast"], r["dirset"], r["fmax"], r["wns"],
+        print("{:<8} {:>4} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8}   {}"
+              .format(r["fast"], r["nsym"], r["dirset"], r["fmax"], r["wns"],
                       r["tns"] if r["tns"] is not None else float("nan"),
                       r["failing"] if r["failing"] is not None else "?",
                       owner(src)))
 
     print()
+    # Group on whichever axis this sweep actually varied. A sweep that moved
+    # NSYM and a sweep that moved USE_FAST_BBO are asking different questions,
+    # and labelling both "fast_bbo / ladder only" would answer neither.
+    axis = "nsym" if len({r["nsym"] for r in runs}) > 1 else "fast"
+    labels = ({v: f"NSYM={v}" for v in sorted({r["nsym"] for r in runs})}
+              if axis == "nsym" else {0: "ladder only", 1: "fast_bbo"})
     best = {}
-    for f in (0, 1):
-        got = [r["fmax"] for r in runs if r["fast"] == f]
+    for v in sorted({r[axis] for r in runs}):
+        got = [r["fmax"] for r in runs if r[axis] == v]
         if not got:
             continue
-        best[f] = max(got)
-        name = "fast_bbo" if f else "ladder only"
+        best[v] = max(got)
         print("{:<13} n={}  best {:.1f} MHz  worst {:.1f} MHz  "
               "spread within config {:.1f} MHz"
-              .format(name, len(got), max(got), min(got), max(got) - min(got)))
+              .format(labels.get(v, str(v)), len(got), max(got), min(got),
+                      max(got) - min(got)))
 
-    if 0 in best and 1 in best:
-        cost = best[0] - best[1]
+    if len(best) == 2:
+        lo, hi = sorted(best)
+        cost = best[lo] - best[hi]
         spread = max(
-            (max(x["fmax"] for x in runs if x["fast"] == f)
-             - min(x["fmax"] for x in runs if x["fast"] == f))
-            for f in (0, 1))
-        print(f"\nbest-to-best cost of the fast path: {cost:+.1f} MHz")
+            (max(x["fmax"] for x in runs if x[axis] == v)
+             - min(x["fmax"] for x in runs if x[axis] == v))
+            for v in best)
+        what = ("a second symbol" if axis == "nsym" else "the fast path")
+        print(f"\nbest-to-best cost of {what}: {cost:+.1f} MHz")
         print(f"largest spread within a single configuration: {spread:.1f} MHz")
         # The comparison the whole sweep exists to make. A difference smaller
         # than the spread inside either configuration is not measurable here --
