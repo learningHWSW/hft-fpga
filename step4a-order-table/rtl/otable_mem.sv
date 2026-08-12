@@ -8,6 +8,16 @@
 //   `OTABLE_XPM defined   -> xpm_memory_sdpram, MEMORY_PRIMITIVE "ultra"
 //   otherwise             -> a behavioural array with the SAME read latency
 //
+// WHICH ONE YOU GET IS NOT WHAT THE NAME SUGGESTS. The define reaches only
+// step 5's out-of-context synthesis. Simulations never set it, and Vitis drops
+// it -- ipx::package_project carries sources, not the packaging project's
+// verilog_define -- so the CARD build compiles the behavioural branch. Both
+// carry ram_style="ultra" and therefore report the same URAM count, which is
+// exactly why this went unnoticed: the obvious check cannot tell them apart.
+// Measured and written up in data/FINDINGS.md §4.5. It is believed harmless --
+// the two are interchangeable by the contract just below -- but it means the
+// card and the fMAX sweeps are built from different memory descriptions.
+//
 // The important property is that the two are interchangeable from the FSM's
 // point of view: identical depth, identical width, identical RD_LAT. The
 // earlier divergence this project is fixing was of a different kind — a table

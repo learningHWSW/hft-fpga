@@ -1127,6 +1127,46 @@ That is consistent with `fast_bbo` taking work off the ladder's occupancy scan,
 which is what it was built to do, but four builds per configuration is not
 enough to assert a mechanism.
 
+### 4.5 `OTABLE_XPM` never reaches the card build (and the URAM count hid it)
+
+`otable_mem` selects between an instantiated `xpm_memory_sdpram` and a
+behavioural array on `` `ifdef OTABLE_XPM ``, and the stated purpose is that
+"synthesis builds the same table the simulations verify". Checked, because it
+was asserted here without ever being checked:
+
+| flow | what is actually built |
+|---|---|
+| simulation (every step) | behavioural array — no Makefile sets the define |
+| step 5 out-of-context synthesis and the fMAX sweeps | **XPM macro** |
+| step 8 Vitis card build | behavioural array |
+
+**The define reaches exactly one of the three.** `synth_t2t.tcl` sets it and
+plain Vivado honours it, so every fMAX number in §7.7 and §4.4 is an XPM build.
+Vitis does not: `ipx::package_project` carries sources, not the packaging
+project's `verilog_define`, and grepping the whole link tree finds `OTABLE_XPM`
+only as the `` `ifdef `` text in four copies of the source. The
+`xpm_memory_base` that does appear in the kernel's synthesis log comes from
+`cmac_usplus_0_fifo` → `xpm_fifo_sync` — the MAC IP's own FIFO.
+
+**Why nobody noticed, including me.** Both branches carry
+`(* ram_style = "ultra" *)`, so the URAM count is identical either way — 66 at
+2^13 × 16 whichever compiles. I used exactly that number as evidence the define
+was working, which it never was: the observation cannot distinguish the two
+cases, and I should have picked a check that could.
+
+**What it costs, honestly: probably nothing, and it is not nothing that it is
+unverified.** The module's header commits the two branches to identical depth,
+width and read latency, every golden passes either way, and both map to URAM.
+But the card measurements and the OOC fMAX sweeps are therefore built from
+*different* memory descriptions, which is a difference between two things this
+file compares. The behavioural branch also exists only because Verilator could
+not elaborate XPM, and Verilator is gone.
+
+The fix is to stop selecting on a define that one flow silently drops — xsim
+elaborates the XPM branch cleanly with `-L xpm`, so all three flows could build
+the same thing. Not done here: it touches a module every step depends on, and
+it deserves its own regression rather than riding along with a card run.
+
 ## Reproduce
 
 ```sh
