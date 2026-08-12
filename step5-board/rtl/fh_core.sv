@@ -272,7 +272,23 @@ module fh_core
   // interleaved so the field offsets the ladders slice out are the same numbers
   // they always were -- [185:138] is still the timestamp whatever NSYM is, and
   // at NSYM=1 the extra bit is a constant zero the synthesiser removes.
-  localparam int DELW = 48 + 8 + 1 + 32 + 32 + 1 + 32 + 32 + SYMW;   // 186 + SYMW
+  // The tag rides the FIFO only when there is more than one book to tell apart.
+  // At NSYM=1 SYMW is still 1 (a zero-width field cannot go in a packed vector),
+  // so including it unconditionally widened a 512-deep FIFO by a bit for no
+  // information -- and measurably: the single-symbol build lost 5.5 MHz across
+  // the multi-symbol refactor, and this was the only change inside t2t_top that
+  // added hardware rather than renaming it.
+  localparam int SYMB = (NSYM > 1) ? SYMW : 0;
+  localparam int DELW = 48 + 8 + 1 + 32 + 32 + 1 + 32 + 32 + SYMB;   // 186 + SYMB
+  logic [DELW-1:0] df_push;
+  localparam int   DELB = 48 + 8 + 1 + 32 + 32 + 1 + 32 + 32;   // the record itself
+  wire [DELB-1:0]  df_rec = {ot_ts, ot_side, ot_has_rem, ot_rem_price, ot_rem_qty,
+                             ot_has_add, ot_add_price, ot_add_qty};
+  generate
+    if (NSYM > 1) assign df_push = {ot_sym, df_rec};
+    else          assign df_push = df_rec;
+  endgenerate
+
   logic            df_pop_valid, df_pop_ready;
   logic [DELW-1:0] df_pop_data;
   logic [$clog2(DELTA_FIFO):0] df_level;
@@ -280,8 +296,7 @@ module fh_core
   drop_fifo #(.WIDTH(DELW), .DEPTH(DELTA_FIFO)) u_delta_fifo (
     .clk(clk), .rst_n(rst_n),
     .push_valid(ot_valid),
-    .push_data({ot_sym, ot_ts, ot_side, ot_has_rem, ot_rem_price, ot_rem_qty,
-                ot_has_add, ot_add_price, ot_add_qty}),
+    .push_data(df_push),
     .pop_valid(df_pop_valid), .pop_data(df_pop_data), .pop_ready(df_pop_ready),
     .drop_cnt(st_delta_drop), .level(df_level), .level_max(st_delta_level_max)
   );
@@ -298,7 +313,8 @@ module fh_core
   // The delta FIFO carries the symbol index alongside the record. It has to:
   // the demux reads it to route, and by then the order table has moved on.
   logic [SYMW-1:0] df_sym;
-  assign df_sym = df_pop_data[DELW-1 -: SYMW];
+  // one book means every delta belongs to it, so there is no tag to read
+  assign df_sym = (NSYM > 1) ? df_pop_data[DELW-1 -: SYMW] : '0;
 
   logic [NSYM-1:0]  lad_valid, lad_has_bid, lad_has_ask, lad_ready;
   logic [47:0]      lad_ts        [NSYM];

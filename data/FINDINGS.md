@@ -1108,6 +1108,44 @@ skips the standards-compliant pipeline, which is what the ultra-low-latency
 industry actually does and is a substantial project with real correctness risk. It
 should be entered deliberately, not as an optimisation pass.
 
+### 7.6.2 What multi-symbol costs the single-symbol build — real, and mostly structural
+
+Wiring `NSYM` through the datapath moved the `NSYM = 1` build from **225.5 to
+220.0 MHz** best-of-four. That is outside the spread within either
+configuration, so §7.7's standard says it has to be explained rather than
+waved at.
+
+**First: it is not the tool.** The pre-refactor commit was re-swept in an
+isolated worktree, days later, and reproduced *exactly* — 225.5 / 225.5 / 221.7
+/ 221.7 with the fast path and 222.5 / 218.3 / 218.3 / 217.2 without, matching
+the original run to the decimal on all eight builds. **Vivado is deterministic
+here**, which this project had asserted in a comment and never checked. Every
+conclusion drawn from a directive sweep rests on that, so it is worth having
+measured: a sweep is comparing designs, not sampling a random process.
+
+**One real cause found, and it is small.** The sweep synthesises `t2t_top`, so
+the status-bus growth is out of scope — that lives in `t2t_axil`. Inside
+`t2t_top` exactly one change added hardware rather than renaming it: the delta
+FIFO carries the symbol tag, and `SYMW` is 1 even at `NSYM = 1`, because a
+zero-width field cannot sit in a packed vector. A 512-deep FIFO was therefore a
+bit wider to carry no information. Making the tag conditional on `NSYM > 1`
+recovers **218.6 → 220.7 MHz** at the default and explore directives.
+
+**Most of it is not that.** Best-of-four goes 220.0 → 220.7, still ~4.8 MHz
+short of 225.5. What remains is the hierarchy: the ladder, `fast_bbo`,
+`bbo_merge` and `sweep_detect` now sit inside a `for (genvar k) begin : g_sym`
+generate, which renames every instance and redraws the boundaries the placer
+groups on. No logic was added — the worst path is in the ladder either way —
+but the placement is not the same placement.
+
+**So the honest accounting is that multi-symbol costs the single-symbol build
+about 5 MHz, and roughly one fifth of that is removable.** The rest is the price
+of the structure that makes a second book possible at all, and it is paid
+whether or not the second book exists. At 220.7 MHz against the 195.3 MHz the
+wire demands there is no pressure to reclaim it, and removing it would mean
+giving up the generate — but it is a cost, it is reproducible, and it should not
+be filed under noise the way the fast path's supposed 9.5 MHz was.
+
 ### 7.7 What the fast book path costs in fMAX — nothing measurable, and the README was wrong
 
 The README carried "**218.6 → 209.1 MHz**, the price of `fast_bbo`" from the day
