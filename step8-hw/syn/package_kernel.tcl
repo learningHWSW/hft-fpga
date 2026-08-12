@@ -65,6 +65,23 @@ add_files -norecurse $srcs
 # the order table's URAM instantiation, same as every synthesis run in step 5
 set_property verilog_define {OTABLE_XPM} [current_fileset]
 set_property top $kernel_name [current_fileset]
+
+# ---- kernel geometry as build knobs, not RTL edits ----
+# The same principle synth_t2t.tcl follows. It has to happen HERE rather than at
+# link time: ipx::remove_user_parameter below strips every user parameter from
+# the component, so whatever the fileset elaborates with is what the .xo carries
+# and what v++ links. Setting them on the fileset bakes them in.
+#
+# NSYM and OT_SETS_BITS are separate knobs on purpose -- 2^13 x 16 holds exactly
+# one symbol, and doubling the table is where the timing difficulty lives
+# (FINDINGS 4.4), so a multi-symbol build has to say both out loud.
+set gens {}
+foreach {gv gd} {NSYM 1 OT_SETS_BITS 13 OT_WAYS 16} {
+  lappend gens "$gv=[expr {[info exists ::env($gv)] ? $::env($gv) : $gd}]"
+}
+set_property generic $gens [current_fileset]
+puts "=== kernel generics: $gens ==="
+
 update_compile_order -fileset sources_1
 
 ipx::package_project -root_dir $packaged -vendor xilinx.com -library RTLKernel \

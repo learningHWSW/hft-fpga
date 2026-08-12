@@ -178,24 +178,47 @@ module axil_regfile #(
   // symbols, i.e. NSYM up to 5; beyond that the map needs extending, and so
   // does the order table (FINDINGS §4.4 sizes it).
   localparam int A_SYM  = 48;         // 0x0C0
+  localparam int SYM_MAX = 5;         // symbol 0 + four in the block (regmap.py)
   localparam int A_STAT = 64;         // 0x100 status base
   localparam int A_ID   = 127;        // 0x1FC
 
   // Padded to a power of two so an out-of-range write index can never touch it.
   logic [31:0] cfgw [64];
 
-  // Symbol k's position, or zero for a symbol this build does not have.
-  function automatic logic [31:0] pos_of(input int k);
-    return (k < NSYM) ? st_position[32*k +: 32] : 32'd0;
+  // Which word indices are backed by cfgw. The config block proper is 0..NCFG-1,
+  // and the per-symbol block is a SECOND range above it -- so this cannot be the
+  // single `idx < NCFG` comparison it used to be. It was, and the consequence was
+  // that every write to the per-symbol block was silently dropped: the address
+  // decoded, the bus returned OKAY, and symbol 1 stayed unconfigured. The write
+  // enable and the read mux both call this, so they cannot disagree about what
+  // is a register.
+  function automatic logic is_cfg(input logic [ADDR_W-3:0] idx);
+    return (idx < NCFG) || (idx >= A_SYM && idx < A_SYM + 4*(SYM_MAX-1));
   endfunction
-  // Named, not called inline in the read mux. step7's test_regmap.py parses
-  // these lines to check the RTL's offsets against the host's list, and it can
-  // only do that if each line SAYS which counter it returns -- `pos_of(2)`
-  // would be an offset the contract test cannot see.
-  wire [31:0] st_position_1 = pos_of(1);
-  wire [31:0] st_position_2 = pos_of(2);
-  wire [31:0] st_position_3 = pos_of(3);
-  wire [31:0] st_position_4 = pos_of(4);
+
+  // Positions widened to the map's fixed five slots, so the read mux can name
+  // any of them whatever NSYM the build has and no part-select is out of range.
+  //
+  // This was a function returning st_position[32*k +: 32], called from four
+  // continuous assigns, and it did not work: a function that reads a MODULE
+  // SIGNAL rather than taking it as an argument has no sensitivity to that
+  // signal in a continuous assign, so it evaluates once at time zero -- when
+  // st_position is still X -- and never again. step 3b hit the identical bug
+  // (mold_splitter.sv's note about w_be16 and `win`), which is why an
+  // always_comb is used here instead: it is sensitive to what it reads.
+  logic [SYM_MAX*32-1:0] pos_padded;
+  always_comb begin
+    pos_padded = '0;
+    pos_padded[NSYM*32-1:0] = st_position;
+  end
+  // Named rather than sliced inline in the read mux, because step7's
+  // test_regmap.py parses those lines to check the RTL's offsets against the
+  // host's list, and `pos_padded[32*2 +: 32]` would be an offset the contract
+  // test cannot see.
+  wire [31:0] st_position_1 = pos_padded[32*1 +: 32];
+  wire [31:0] st_position_2 = pos_padded[32*2 +: 32];
+  wire [31:0] st_position_3 = pos_padded[32*3 +: 32];
+  wire [31:0] st_position_4 = pos_padded[32*4 +: 32];
 
   // ---- write channel: accept when AW+W both offered and B is free ----
   logic [ADDR_W-3:0] widx;
@@ -224,7 +247,7 @@ module axil_regfile #(
       cfg_order_ack  <= 1'b0;
       cfg_resend_req <= 1'b0;
       if (do_wr) begin
-        if (widx < NCFG)
+        if (is_cfg(widx))
           cfgw[widx[5:0]] <= wmask(cfgw[widx[5:0]], s_axil_wdata, s_axil_wstrb);
         if (widx == A_CTRL) begin
           cfg_load       <= s_axil_wdata[0];
@@ -246,7 +269,7 @@ module axil_regfile #(
   assign s_axil_rresp   = 2'b00;
 
   function automatic logic [31:0] readmux(input logic [ADDR_W-3:0] idx);
-    if (idx < NCFG)          readmux = cfgw[idx[5:0]];
+    if (is_cfg(idx))         readmux = cfgw[idx[5:0]];
     else if (idx == A_ID)    readmux = ID_VALUE;
     else case (idx)
       A_STAT+0:  readmux = st_rx_drop;
@@ -264,7 +287,7 @@ module axil_regfile #(
       A_STAT+12: readmux = st_blk_pos;
       A_STAT+13: readmux = st_blk_inflight;
       A_STAT+14: readmux = st_blk_txfull;
-      A_STAT+15: readmux = st_position[31:0];   // symbol 0, its shipped offset
+      A_STAT+15: readmux = pos_padded[31:0];    // symbol 0, its shipped offset
       A_STAT+16: readmux = st_seq_num;
       A_STAT+17: readmux = st_frame_cnt;
       A_STAT+18: readmux = st_tx_drop;

@@ -120,7 +120,7 @@ PART ?= xcu55c-fsvh2892-2L-e
 XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
 
 .PHONY: help which-tools test-latprobe test test-xsim test-session test-b-session test-rto test-latency test-gap-independent test-real test-real-latency \
-        test-b test-b-latency test-b-real test-sffifo cmac gate-license xo-b xclbin-b run-card-b run-card-b-latency \
+        test-b test-b-latency test-b-real test-sffifo cmac gate-license xo-b xclbin-b run-card-b run-card-b-latency run-card-b-msym \
         golden clean clean-build distclean real-image run-card-real run-card-b-real elab synth xo xclbin host run-card run-card-latency card-info
 
 # alias: the xsim recipe is the only one now.
@@ -348,6 +348,27 @@ run-card-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase A, real 
 
 # Phase B: the same replay through the real MAC. Wire cycles are counted at the
 # CMAC's clock, not ap_clk, so the host has to be told which one the probe used.
+# Two tracked books on one card. Needs a bitstream built with NSYM=2 and
+# OT_SETS_BITS=14 -- 2^13 x 16 holds one name (FINDINGS 4.4), and the host
+# cannot tell what the bitstream has, so a NSYM=1 build silently ignores --sym
+# and check_msym.py says so when the second symbol produces nothing.
+#
+# The stimulus needs nothing new: itch_slice.py copies every message, so
+# real.eth already carries all symbols and only the tracking config differs.
+# QQQ (locate 6556) is the second name -- 118,913 messages in the 5 M slice and
+# a price range that fits one 4096-level ladder at base 2,100,000.
+SYM1 ?= 6556:2100000:QQQ
+run-card-b-msym: host/t2t_run real_replay.bin real_gold.log ## Card|Phase B, two tracked books  [SYM1=loc:base:STOCK]
+	$(call need_xclbin,t2t_b.xclbin,xclbin-b NSYM=2 OT_SETS_BITS=14,1 h 30 m)
+	./host/t2t_run --xclbin t2t_b.xclbin --replay real_replay.bin \
+	  --capture real_capture.bin --device $(BDF) --gap $(RGAP) \
+	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
+	  --clk-mhz 322.265625 --sym $(SYM1) \
+	  --core-mhz $(shell echo $(CORE_CLK_B) | awk '{print $$1/1000000}')
+	python3 scripts/pack_eth.py unpack real_capture.bin 8192 $(CARD_IP) > msym_hw.log
+	python3 scripts/check_msym.py msym_hw.log real_gold.log AAPL:2800000 \
+	  $(word 3,$(subst :, ,$(SYM1))):$(word 2,$(subst :, ,$(SYM1)))
+
 run-card-b-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase B, real 5M AAPL, through the MAC  [RGAP=512]
 	$(call need_xclbin,t2t_b.xclbin,xclbin-b,1 h 15 m)
 	./host/t2t_run --xclbin t2t_b.xclbin --replay real_replay.bin \
@@ -433,7 +454,27 @@ CU        = t2t_kernel_1
 # how the whole datapath ended up on the default 300 MHz twice over.
 REF_CLK_ID ?= 2
 
-t2t_kernel.xo: $(SRC) syn/kernel.xml syn/package_kernel.tcl syn/t2t_kernel_cdc.xdc
+# Kernel geometry. Exported so syn/package_kernel*.tcl can bake them into the
+# .xo -- the packager strips user parameters, so they cannot be set at link
+# time. NSYM and OT_SETS_BITS move together by hand: 2^13 x 16 holds one symbol
+# (FINDINGS 4.4), and a two-symbol build that forgot to resize would drop orders.
+NSYM         ?= 1
+OT_SETS_BITS ?= 13
+OT_WAYS      ?= 16
+export NSYM OT_SETS_BITS OT_WAYS
+
+# THE GEOMETRY IS BAKED INTO THE .xo AND NOT IN ITS NAME, so make cannot see
+# that `NSYM=2` wants a different artefact from the one on disk -- the same trap
+# step 8's replay image had before 6785cdc, and worse here, because a stale .xo
+# links into a bitstream that runs and silently tracks one symbol. The stamp
+# carries the geometry; the .xo depends on it, so changing any knob rebuilds.
+GEOM       = nsym$(NSYM)-ot$(OT_SETS_BITS)x$(OT_WAYS)
+GEOM_STAMP = .geom-$(GEOM)
+$(GEOM_STAMP):
+	@rm -f .geom-* && touch $@
+	@echo "kernel geometry: NSYM=$(NSYM) OT_SETS_BITS=$(OT_SETS_BITS) OT_WAYS=$(OT_WAYS)"
+
+t2t_kernel.xo: $(SRC) syn/kernel.xml syn/package_kernel.tcl syn/t2t_kernel_cdc.xdc $(GEOM_STAMP)
 	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/package_kernel.tcl
 
 xo: t2t_kernel.xo ## Build|package Phase A as a Vitis .xo
@@ -509,7 +550,7 @@ gate-license: ## Build|prove FlexLM grants cmac_usplus BEFORE an hour of build
 	    exit 1; }
 
 SRC_B_FILES = $(SRC_B) syn/kernel_b.xml syn/package_kernel_b.tcl syn/t2t_kernel_cdc.xdc
-t2t_kernel_b.xo: $(SRC_B_FILES)
+t2t_kernel_b.xo: $(SRC_B_FILES) $(GEOM_STAMP)
 	@$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/package_kernel_b.tcl
 
 xo-b: t2t_kernel_b.xo ## Build|package Phase B (CMAC inside) as a .xo

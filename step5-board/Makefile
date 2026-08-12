@@ -196,7 +196,7 @@ clean:
 	rm -rf xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 	rm -f  realsmall-*.itch realsmall-*.mold realsmall-*.eth
 
-.PHONY: test-msym test-tcprx test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
+.PHONY: test-msym test-tcprx test-axil-xsim test-axil-msym-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
 
 # The self-checking unit tests. These began as xsim twins of Verilator targets,
 # written because Verilator was absent on the machine with the actual U55C --
@@ -229,7 +229,12 @@ test-cdc-xsim:
 	$(call XSIM_UNIT,tb_cdc_fifo,rtl/cdc_fifo.sv tb/tb_cdc_fifo.sv)
 
 # every self-checking unit test
-test-units-xsim: test-axil-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim
+# The per-symbol config block, which only exists at NSYM>1 and which a
+# multi-symbol card run depends on entirely. See the testbench header.
+test-axil-msym-xsim:
+	$(call XSIM_UNIT,tb_axil_regfile_msym,rtl/axil_regfile.sv tb/tb_axil_regfile_msym.sv)
+
+test-units-xsim: test-axil-xsim test-axil-msym-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim
 	@echo "PASS: all self-checking unit tests ran under xsim"
 
 # alias: the xsim recipe is the only one now.

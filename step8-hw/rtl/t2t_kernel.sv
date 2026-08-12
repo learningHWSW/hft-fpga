@@ -43,7 +43,11 @@ module t2t_kernel #(
   parameter int DATA_W       = 512,
   parameter int ADDR_W       = 64,
   parameter int OT_SETS_BITS = 13,
-  parameter int OT_WAYS      = 16
+  parameter int OT_WAYS      = 16,
+  // Tracked symbols. Moves together with OT_SETS_BITS by hand and not by
+  // implication -- 2^13 x 16 holds exactly one name, and the resize is where
+  // the timing difficulty is (FINDINGS 4.4), so a build must state both.
+  parameter int NSYM         = 1
 )(
   // ---- Vitis kernel clocks and resets ----
   input  logic         ap_clk,
@@ -460,7 +464,8 @@ module t2t_kernel #(
   logic              sx_tvalid, sx_tlast;
 
   t2t_axil #(
-    .DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS), .AXIL_AW(12)
+    .DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS), .AXIL_AW(12),
+    .NSYM(NSYM)
   ) u_t2t (
     .cmac_clk(ap_clk), .cmac_rst_n(dp_rst_n),
     .rx_tdata(rx_tdata), .rx_tkeep(rx_tkeep), .rx_tvalid(rx_tvalid), .rx_tlast(rx_tlast),
