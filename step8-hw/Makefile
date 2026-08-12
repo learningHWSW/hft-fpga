@@ -405,14 +405,22 @@ run-card-real: host/t2t_run real_replay.bin real_gold.log ## Card|Phase A, real 
 # QQQ (locate 6556) is the second name -- 118,913 messages in the 5 M slice and
 # a price range that fits one 4096-level ladder at base 2,100,000.
 SYM1 ?= 6556:2100000:QQQ
+# A SECOND BOOK IS NOT A SECOND AAPL. QQQ produces two orders of magnitude more
+# BBO records than AAPL over the same replay (90,397 against 1,779), so the
+# 8,192-record capture that comfortably held a single-symbol run overflows: the
+# engine built 9,833 frames, the capture took 8,192, and 3,025 beats were lost
+# in the CDC behind it. That is a harness capacity limit, not a datapath fault,
+# and t2t_run says so -- but the golden diff cannot run through a hole, so the
+# capture is sized for the busier configuration here.
+MSYM_RECS ?= 32768
 run-card-b-msym: host/t2t_run real_replay.bin real_gold.log ## Card|Phase B, two tracked books  [SYM1=loc:base:STOCK]
 	$(call need_xclbin,t2t_b.xclbin,xclbin-b NSYM=2 OT_SETS_BITS=14,1 h 30 m)
 	./host/t2t_run --xclbin t2t_b.xclbin --replay real_replay.bin \
 	  --capture real_capture.bin --device $(BDF) --gap $(RGAP) \
-	  --loc 13 --base 2800000 --records 8192 --quiet 256 \
+	  --loc 13 --base 2800000 --records $(MSYM_RECS) --quiet 256 \
 	  --clk-mhz 322.265625 --sym $(SYM1) \
 	  --core-mhz $(shell echo $(CORE_CLK_B) | awk '{print $$1/1000000}')
-	python3 scripts/pack_eth.py unpack real_capture.bin 8192 $(CARD_IP) > msym_hw.log
+	python3 scripts/pack_eth.py unpack real_capture.bin $(MSYM_RECS) $(CARD_IP) > msym_hw.log
 	python3 scripts/check_msym.py msym_hw.log real_gold.log AAPL:2800000 \
 	  $(word 3,$(subst :, ,$(SYM1))):$(word 2,$(subst :, ,$(SYM1)))
 

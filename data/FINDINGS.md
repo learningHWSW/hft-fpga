@@ -206,6 +206,40 @@ enough for exactly one symbol — two need 2^14 × 16, i.e. **128 URAM instead o
 parameters move together for a reason the tool cannot see, and a build that
 silently resized the table would hide half the answer.
 
+**Run on the card.** A Phase B bitstream at `NSYM=2`, `OT_SETS_BITS=14` — real
+`cmac_usplus`, GT in near-end loopback — tracking AAPL (locate 13, band
+2,800,000) and QQQ (locate 6556, band 2,100,000) through the same real 5 M
+replay, with the second symbol configured over the per-symbol register block:
+
+| | |
+|---|---|
+| AAPL orders | **70, identical to the single-symbol golden** on side/shares/price, in order |
+| QQQ orders | 9,763, **every price inside its own ladder band** |
+| positions | sym0 **+800**, sym1 **−500** — independent |
+| BBO records | 90,397 (64,392 early / 26,005 late), `st_bbo_mismatch = 0` |
+| `st_bbo_arb_drop` | 0 |
+| frames | built 9,833, captured 9,833, `cdc_drop=0`, `rx_err=0` |
+
+**The band check is the one that matters.** A second book that had silently
+inherited symbol 0's configuration — the failure mode a shared ladder base would
+produce — emits *AAPL* prices under QQQ's name, and those fall outside QQQ's
+band by a factor of ten. Zero of 9,763 do. Together with AAPL's 70 orders being
+byte-for-byte the single-symbol result, that is the claim the whole multi-symbol
+design makes: each book behaves as though it were the only one.
+
+**A second book is not a second AAPL.** QQQ produces 90,397 BBO records against
+AAPL's 1,779 over the identical replay, and 9,763 orders against 70. The first
+attempt at this run overflowed an 8,192-record capture that had been sized for
+the single-symbol rate and lost 3,025 beats in the CDC behind it — a harness
+limit, correctly reported by `t2t_run` rather than diffed into a mystery. The
+latency figures from this run are therefore **not comparable** with the
+single-symbol ones (154 vs 152 cycles minimum, but at 140× the order rate).
+
+**It met timing at 300 MHz with no automatic frequency scaling**, which neither
+single-symbol build did — both were scaled for a sub-100 ps miss in the capture
+DMA. That is placement luck on a larger design rather than evidence that more
+logic closes more easily, and it is recorded as an observation, not a result.
+
 **Post-route, across four directive sets per configuration** (`make sweep-t2t
 SWEEP_FAST=1 SWEEP_NSYM="1 2"`, then the same at `OT_SETS_BITS=14`):
 

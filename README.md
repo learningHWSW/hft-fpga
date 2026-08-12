@@ -380,7 +380,7 @@ Honest scope, all of it stated in the per-step READMEs.
   fire-and-forget behaviour has it. What is still not automatic is *policy*: the
   timeout and retry count are numbers a host writes, and no measurement here says
   what they should be on a real venue.
-- **Multi-symbol is wired end to end and has never been built for the card.**
+- **Multi-symbol has run on the card.**
   `NSYM` runs the whole chain, not just the table: one order table tags each
   delta with its book, a demux feeds `NSYM` price ladders, `bbo_arb` merges
   their streams back with a symbol tag, and the strategy's edge detector,
@@ -392,9 +392,16 @@ Honest scope, all of it stated in the per-step READMEs.
   books each reproduce their own locate's golden, and the same BBO log driven
   into both symbols reproduces the order golden twice over — the worst case for
   shared state, and confirmed sensitive by temporarily sharing the edge detector
-  and watching symbol 1 fall to zero orders. What has not happened is a
-  bitstream. `NSYM = 1` is what every card measurement in this README describes,
-  and the cost is measured post-route in both halves (`FINDINGS` §4.4). The
+  and watching symbol 1 fall to zero orders. Then on silicon: a Phase B
+  bitstream at `NSYM = 2`, `OT_SETS_BITS = 14`, tracking AAPL and QQQ through
+  the real 5 M replay. **AAPL's 70 orders are identical to the single-symbol
+  golden**; QQQ produced 9,763 with **every price inside its own ladder band**
+  — the check that would catch a book silently inheriting another's
+  configuration; the two positions moved independently (+800 / −500); and
+  `st_bbo_mismatch` and `st_bbo_arb_drop` were both zero across 90,397 BBO
+  records. `NSYM = 1` is still what every *latency* figure in this README
+  describes, and those are not comparable: a second book raises the order rate
+  140×. The cost is measured post-route in both halves (`FINDINGS` §4.4). The
   books are free: replicating the ladder, fast-BBO tracker and sweep detector
   costs **+32,687 LUTs (+58 %)** and **no measurable fMAX** — 220.7 MHz best of
   four directive sets against 220.0 at one symbol, inside the spread. The table

@@ -1,0 +1,43 @@
+harness id  = 54324b32 (T2K2, Phase B: through the CMAC)
+datapath id = 54325430 (expect 54325430)
+replay  : 327040000 bytes (5110000 beats) at 0x0
+capture : 67108864 bytes (32768 records) at 0x20000000
+build   : NSYM=2 OT=2^14x16
+symbol 1: locate=6556 band=2100000 stock='QQQ     '
+order table initialised
+CMAC link   : aligned=1 link_up=1
+
+harness : injected=1127057 captured=9833 overflow=0 stalls=80298
+rx      : frames_in=1136893 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=674 drops(beat=0 msg=0 delta=0)
+position: sym0=800 sym1=-500
+strategy: sent=9833 pos=800 blocked(pos=14641 inflight=0 txfull=0 qty=0)
+tx      : frames=9833 next_seq=1007cd54 cdc_drop=0
+replay  : stored=9833 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=64392 late=26005 (71% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+mac     : tx=3410692 rx=3410692 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=9833 dropped=1127060 cap_cdc_drop=0 hwm(feed=7 ord=4)
+
+latency : samples=9829 excluded=4 orphans=0 (quiet=256 gap=512)
+          min=154 cyc (477.9 ns)  avg=189.6 cyc (588.5 ns)  max=297 cyc (921.6 ns)
+          hist[2^7..] = 9616
+          hist[2^8..] = 213
+WARNING: 4 latency samples excluded -- raise --gap above --quiet for an attributable measurement
+
+loaded  : samples=9813 misses=20
+          decode->order  min=16 cyc (80.0 ns)  avg=34.1 cyc (170.3 ns)  max=96 cyc (480.0 ns)
+          hist[2^4..] = 4899
+          hist[2^5..] = 4366
+          hist[2^6..] = 548
+capture image written to real_capture.bin
+python3 scripts/pack_eth.py unpack real_capture.bin 32768 10.0.0.2 > msym_hw.log
+orders=9833 replies=0 igmp=0 arp=0 other=0
+python3 scripts/check_msym.py msym_hw.log real_gold.log AAPL:2800000 \
+  QQQ:2100000
+PASS: every captured order carries a configured stock (0 did not)
+PASS: AAPL: 70 orders match the single-symbol golden's 70 on side/shares/price, in order
+PASS: QQQ: produced orders (9763)
+PASS: QQQ: every price inside its own ladder band [2100000, 2509600) (0 outside)
+
+9833 orders captured: AAPL=70, QQQ=9763
