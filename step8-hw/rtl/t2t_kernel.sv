@@ -42,20 +42,7 @@
 import t2t_geom_pkg::*;
 module t2t_kernel #(
   parameter int DATA_W       = 512,
-  parameter int ADDR_W       = 64,
-  // Geometry defaults come from a GENERATED PACKAGE, not from literals and not
-  // from `defines. Neither of the other two reaches v++: ipx::package_project
-  // packages SOURCES, so a `generic` on the fileset is not carried, the packager
-  // strips user parameters, and a verilog_define set on the packaging project is
-  // not seen by v++'s own synthesis of the kernel. A generated source file IS
-  // packaged into the .xo, so it travels with the design -- and the same file
-  // feeds the simulation, so there is one mechanism rather than two.
-  parameter int OT_SETS_BITS = t2t_geom_pkg::OT_SETS_BITS,
-  parameter int OT_WAYS      = t2t_geom_pkg::OT_WAYS,
-  // Tracked symbols. Moves together with OT_SETS_BITS by hand and not by
-  // implication -- 2^13 x 16 holds exactly one name, and the resize is where
-  // the timing difficulty is (FINDINGS 4.4), so a build must state both.
-  parameter int NSYM         = t2t_geom_pkg::NSYM
+  parameter int ADDR_W       = 64
 )(
   // ---- Vitis kernel clocks and resets ----
   input  logic         ap_clk,
@@ -136,6 +123,19 @@ module t2t_kernel #(
   input  logic                m_axi_gmem1_RVALID,
   output logic                m_axi_gmem1_RREADY
 );
+
+  // Geometry as LOCALPARAMS from the generated package, not as module
+  // parameters. The IP packager rejects a parameter whose default is a package
+  // reference ("does not match format long"), and nothing outside this module
+  // overrides them anyway -- the .xo is packaged with exactly one geometry, and
+  // rtl/t2t_geom_pkg.sv is what says which. See step8-hw/Makefile.
+  localparam int OT_SETS_BITS = t2t_geom_pkg::OT_SETS_BITS;
+  localparam int OT_WAYS      = t2t_geom_pkg::OT_WAYS;
+  // Tracked symbols. Moves together with OT_SETS_BITS by hand and not by
+  // implication -- 2^13 x 16 holds exactly one name, and the resize is where
+  // the timing difficulty is (FINDINGS 4.4), so a build must state both.
+  localparam int NSYM         = t2t_geom_pkg::NSYM;
+
   localparam int KEEP_W = DATA_W / 8;
 
   // register offsets within the harness window
