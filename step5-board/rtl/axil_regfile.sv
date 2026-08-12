@@ -35,6 +35,10 @@ module axil_regfile #(
   // asymmetry is deliberate -- moving symbol 0 into a uniform block would move
   // four shipped offsets to make the map prettier.
   parameter int NSYM   = 1,
+  // Reported read-only at A_STAT+37 so a host can ask the bitstream what
+  // geometry it is. Purely informational to the RTL; see the register below.
+  parameter int OT_SETS_BITS = 13,
+  parameter int OT_WAYS      = 16,
   parameter int ADDR_W = 12,          // 4 KB register page
   parameter logic [31:0] ID_VALUE = 32'h5432_5430  // "T2T0"
 )(
@@ -127,7 +131,7 @@ module axil_regfile #(
   // One signed position per symbol, packed. The readmux publishes symbol 0 at
   // the offset it has always had, and symbols 1..4 in a block appended at the
   // end -- see A_STAT+32 below.
-  input  logic [NSYM*32-1:0]  st_position,
+  input  logic [NSYM*32-1:0]  st_position_all,
   input  logic [31:0]         st_seq_num,
   input  logic [31:0]         st_frame_cnt,
   input  logic [31:0]         st_tx_drop,
@@ -209,12 +213,18 @@ module axil_regfile #(
   logic [SYM_MAX*32-1:0] pos_padded;
   always_comb begin
     pos_padded = '0;
-    pos_padded[NSYM*32-1:0] = st_position;
+    pos_padded[NSYM*32-1:0] = st_position_all;
   end
   // Named rather than sliced inline in the read mux, because step7's
   // test_regmap.py parses those lines to check the RTL's offsets against the
   // host's list, and `pos_padded[32*2 +: 32]` would be an offset the contract
   // test cannot see.
+  // Named, like the positions below and for the same reason: test_regmap.py
+  // parses these lines, so an offset the RTL does not say out loud is an offset
+  // the contract test cannot check.
+  wire [31:0] st_build_geom = {8'd0, 8'(OT_WAYS), 8'(OT_SETS_BITS), 8'(NSYM)};
+  // symbol 0, at the offset it has always had -- named so the read mux says it
+  wire [31:0] st_position   = pos_padded[32*0 +: 32];
   wire [31:0] st_position_1 = pos_padded[32*1 +: 32];
   wire [31:0] st_position_2 = pos_padded[32*2 +: 32];
   wire [31:0] st_position_3 = pos_padded[32*3 +: 32];
@@ -287,7 +297,7 @@ module axil_regfile #(
       A_STAT+12: readmux = st_blk_pos;
       A_STAT+13: readmux = st_blk_inflight;
       A_STAT+14: readmux = st_blk_txfull;
-      A_STAT+15: readmux = pos_padded[31:0];    // symbol 0, its shipped offset
+      A_STAT+15: readmux = st_position;         // symbol 0, its shipped offset
       A_STAT+16: readmux = st_seq_num;
       A_STAT+17: readmux = st_frame_cnt;
       A_STAT+18: readmux = st_tx_drop;
@@ -314,6 +324,14 @@ module axil_regfile #(
       A_STAT+34: readmux = st_position_3;
       A_STAT+35: readmux = st_position_4;
       A_STAT+36: readmux = st_bbo_arb_drop;
+      // BUILD GEOMETRY, read-only and constant: {8'0, OT_WAYS, OT_SETS_BITS, NSYM}.
+      // A bitstream that cannot say what it is gets configured as something it
+      // is not. That happened: a kernel packaged with the geometry set the wrong
+      // way produced a single-symbol build, accepted a second symbol's config
+      // without complaint, ran clean, and traded one name -- and the only reason
+      // it was caught was someone reading URAM counts out of a utilization
+      // report. One constant word makes it a question the host can just ask.
+      A_STAT+37: readmux = st_build_geom;
       default:   readmux = 32'd0;
     endcase
   endfunction

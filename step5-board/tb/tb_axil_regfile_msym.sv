@@ -58,7 +58,7 @@ module tb_axil_regfile_msym;
     .s_axil_rready(rready),
     .cfg_track_locate(cfg_track_locate), .cfg_band_base(cfg_band_base),
     .cfg_stock(cfg_stock),
-    .st_position(st_position),
+    .st_position_all(st_position),
     // everything else is exercised by tb_axil_regfile; tie it off
     .cfg_group_ip(), .cfg_udp_port(), .cfg_enable(), .cfg_max_spread(),
     .cfg_ratio_shift(), .cfg_min_qty(), .cfg_order_qty(), .cfg_pos_limit(),
@@ -152,6 +152,10 @@ module tb_axil_regfile_msym;
     axi_read('h180, rb); check_eq("st_position_1",            rb, 32'hFFFFFF9C);
     axi_read('h184, rb); check_eq("st_position_2 (absent)",   rb, 32'd0);
     axi_read('h18C, rb); check_eq("st_position_4 (absent)",   rb, 32'd0);
+
+    // The build geometry register: what the bitstream says it is.
+    axi_read('h194, rb);
+    check_eq("st_build_geom", rb, {8'd0, 8'd16, 8'd13, 8'd2});   // this build
 
     if (fails == 0) $display("PASS: per-symbol config block and positions, NSYM=2");
     else            $display("FAIL: %0d check(s) failed", fails);

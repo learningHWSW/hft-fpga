@@ -576,8 +576,24 @@ module tb_t2t_kernel;
     // Blocked for shares outside OUCH's legal range. The configured order_qty
     // is inside it, so anything here means the strategy asked for a size it
     // never should have computed.
+    axil_read(T2T + 13'h130, v);   $display("TB: st_blk_pos     = %0d", v);
+    axil_read(T2T + 13'h134, v);   $display("TB: st_blk_inflight= %0d", v);
+    axil_read(T2T + 13'h138, v);   $display("TB: st_blk_txfull  = %0d", v);
+    axil_read(T2T + 13'h190, v);   $display("TB: st_bbo_arb_drop= %0d", v);
+    axil_read(T2T + 13'h180, v);   $display("TB: st_position_1  = %0d", $signed(v));
     axil_read(T2T + 13'h17C, v);   $display("TB: st_blk_qty     = %0d", v);
     if (v != 0) $display("FAIL: %0d order(s) blocked on an illegal share count", v);
+    // What geometry did this build actually elaborate? Read, not assumed: the
+    // knobs reach the kernel through `defines, and a define that did not arrive
+    // produces a single-symbol design that runs perfectly and tracks one name.
+    // Read AFTER the check above, not before it -- putting it between a read
+    // and the `if` that tests it made this testbench report a million blocked
+    // orders that were really the geometry word.
+    axil_read(T2T + 13'h194, v);
+    $display("TB: build geom     = NSYM=%0d OT=2^%0dx%0d",
+             v[7:0], v[15:8], v[23:16]);
+    if (v[7:0] != `T2T_NSYM)
+      $display("FAIL: built NSYM=%0d, expected %0d", v[7:0], `T2T_NSYM);
     // st_frame_cnt counts the ORDER frames tcp_tx built; capture records
     // everything on the TX port, so the surplus is the IGMP reports (and any
     // ARP replies) the arbiter merged in. Capture may therefore exceed it, but

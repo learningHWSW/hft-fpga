@@ -63,24 +63,23 @@ set srcs [list \
 create_project -force kernel_pack $tmp_proj -part $part
 add_files -norecurse $srcs
 # the order table's URAM instantiation, same as every synthesis run in step 5
-set_property verilog_define {OTABLE_XPM} [current_fileset]
-set_property top $kernel_name [current_fileset]
-
 # ---- kernel geometry as build knobs, not RTL edits ----
-# The same principle synth_t2t.tcl follows. It has to happen HERE rather than at
-# link time: ipx::remove_user_parameter below strips every user parameter from
-# the component, so whatever the fileset elaborates with is what the .xo carries
-# and what v++ links. Setting them on the fileset bakes them in.
-#
-# NSYM and OT_SETS_BITS are separate knobs on purpose -- 2^13 x 16 holds exactly
-# one symbol, and doubling the table is where the timing difficulty lives
-# (FINDINGS 4.4), so a multi-symbol build has to say both out loud.
-set gens {}
+# Carried as `defines and NOT as generics. ipx::package_project packages
+# SOURCES: a `generic` set on the fileset is not carried into the component, and
+# the packager then strips user parameters, so the module's own defaults are
+# what v++ elaborates. That failed silently once -- the build reported the
+# generics it had set, produced a bitstream, ran, and tracked one symbol -- and
+# was caught only by reading URAM counts out of the utilization report.
+# verilog_define does survive, which is how OTABLE_XPM already reaches the order
+# table, so the geometry rides the proven path.
+set defs {OTABLE_XPM}
 foreach {gv gd} {NSYM 1 OT_SETS_BITS 13 OT_WAYS 16} {
-  lappend gens "$gv=[expr {[info exists ::env($gv)] ? $::env($gv) : $gd}]"
+  set val [expr {[info exists ::env($gv)] ? $::env($gv) : $gd}]
+  lappend defs "T2T_$gv=$val"
 }
-set_property generic $gens [current_fileset]
-puts "=== kernel generics: $gens ==="
+set_property verilog_define $defs [current_fileset]
+puts "=== kernel geometry: $defs ==="
+set_property top $kernel_name [current_fileset]
 
 update_compile_order -fileset sources_1
 

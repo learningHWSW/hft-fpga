@@ -127,7 +127,7 @@ XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_ge
 test: test-xsim  ## Simulate|full chain HBM->HBM, diffed against golden
 
 test-xsim: golden $(REPLAY) ## Simulate|same, in xsim -- the flow that works where the card is
-	@$(XSETUP) xvlog -sv $(SRC) $(TB)
+	@$(XSETUP) xvlog -sv $(XVLOG_DEFS) $(SRC) $(TB)
 	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
 	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=$(REPLAY) -testplusarg cap=capture.bin \
 	  -testplusarg gap=$(GAP) -testplusarg loc=$(LOC) -testplusarg base=$(BASE) -testplusarg quiet=$(QUIET)
@@ -156,7 +156,7 @@ test-session: golden ## Simulate|the venue's replies: RX -> capture -> host OUCH
 	python3 scripts/gen_session.py --count $(SESS_N) --eth session.eth --golden s_gold.log
 	cat $(ETH) session.eth > session_stim.eth
 	python3 scripts/pack_eth.py pack session_stim.eth session_replay.bin
-	@$(XSETUP) xvlog -sv $(SRC) $(TB)
+	@$(XSETUP) xvlog -sv $(XVLOG_DEFS) $(SRC) $(TB)
 	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
 	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=session_replay.bin \
 	  -testplusarg cap=session_capture.bin \
@@ -188,7 +188,7 @@ test-rto: golden ## Simulate|the card notices an unacknowledged order and re-sen
 	python3 scripts/gen_session.py --count 1 --eth session.eth --golden s_gold.log
 	cat $(ETH) session.eth > session_stim.eth
 	python3 scripts/pack_eth.py pack session_stim.eth session_replay.bin
-	@$(XSETUP) xvlog -sv $(SRC) $(TB)
+	@$(XSETUP) xvlog -sv $(XVLOG_DEFS) $(SRC) $(TB)
 	@$(XSETUP) xelab -debug typical $(TOP) -s $(TOP)_sim
 	@$(XSETUP) xsim $(TOP)_sim -runall -testplusarg eth=session_replay.bin \
 	  -testplusarg cap=session_capture.bin -testplusarg rto=$(RTO_CYCLES) \
@@ -458,6 +458,9 @@ REF_CLK_ID ?= 2
 # .xo -- the packager strips user parameters, so they cannot be set at link
 # time. NSYM and OT_SETS_BITS move together by hand: 2^13 x 16 holds one symbol
 # (FINDINGS 4.4), and a two-symbol build that forgot to resize would drop orders.
+# The same geometry the .xo bakes in, so a simulation can exercise a
+# multi-symbol build without a bitstream.
+XVLOG_DEFS = -d T2T_NSYM=$(NSYM) -d T2T_OT_SETS_BITS=$(OT_SETS_BITS) -d T2T_OT_WAYS=$(OT_WAYS)
 NSYM         ?= 1
 OT_SETS_BITS ?= 13
 OT_WAYS      ?= 16

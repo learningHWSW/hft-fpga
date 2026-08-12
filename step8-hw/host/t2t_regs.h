@@ -106,6 +106,7 @@
 #define ST_POSITION_3        0x188u
 #define ST_POSITION_4        0x18Cu
 #define ST_BBO_ARB_DROP      0x190u
+#define ST_BUILD_GEOM        0x194u
 
 // ---- harness registers, from step8-hw/rtl/t2t_kernel.sv ----
 #define K_ID                 0x040u

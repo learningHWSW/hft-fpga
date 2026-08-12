@@ -130,6 +130,11 @@ STATUS = [
     # construction (bbo_arb does the arithmetic); published because the
     # alternative is a silent hole in one symbol's stream.
     "st_bbo_arb_drop",
+    # Build geometry, read-only and constant: byte 0 NSYM, byte 1 OT_SETS_BITS,
+    # byte 2 OT_WAYS. Not a counter -- it is here because a bitstream that
+    # cannot say what it is gets configured as something it is not, and the
+    # status page is the one place a host already reads.
+    "st_build_geom",
 ]
 STATUS_OFFSET = {name: STATUS_BASE + 4 * i for i, name in enumerate(STATUS)}
 

@@ -50,15 +50,30 @@
 // back at us, and the design has to be honest about which returning frames are
 // the feed and which are its own.
 `timescale 1ns/1ps
+`ifndef T2T_NSYM
+  `define T2T_NSYM 1
+`endif
+`ifndef T2T_OT_SETS_BITS
+  `define T2T_OT_SETS_BITS 13
+`endif
+`ifndef T2T_OT_WAYS
+  `define T2T_OT_WAYS 16
+`endif
 module t2t_kernel_b #(
   parameter int DATA_W       = 512,
   parameter int ADDR_W       = 64,
-  parameter int OT_SETS_BITS = 13,
-  parameter int OT_WAYS      = 16,
+  // Geometry defaults come from `defines, not from literals, because that is the
+  // only override that survives Vitis packaging. ipx::package_project packages
+  // SOURCES -- it does not carry a `generic` set on the fileset, and the
+  // packager then strips user parameters, so the module's own defaults are what
+  // v++ elaborates. verilog_define does survive (it is how OTABLE_XPM reaches
+  // the order table today), so the geometry rides the same path.
+  parameter int OT_SETS_BITS = `T2T_OT_SETS_BITS,
+  parameter int OT_WAYS      = `T2T_OT_WAYS,
   // Tracked symbols. Moves together with OT_SETS_BITS by hand and not by
   // implication -- 2^13 x 16 holds exactly one name, and the resize is where
   // the timing difficulty is (FINDINGS 4.4), so a build must state both.
-  parameter int NSYM         = 1
+  parameter int NSYM         = `T2T_NSYM
 )(
   // ---- Vitis kernel clocks and resets ----
   input  logic         ap_clk,

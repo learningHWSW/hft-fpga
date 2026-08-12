@@ -210,6 +210,21 @@ void configure(Device& d, const Options& o) {
   // Retransmission. These three sit above the config block rather than inside
   // it, so they are written directly and are not part of the LOAD commit -- but
   // writing them before the commit keeps the whole setup in one place.
+  // What geometry is this bitstream, actually? Asked rather than assumed,
+  // because a build whose NSYM did not take accepts a second symbol's config
+  // without complaint, runs clean, and trades one name. That happened once and
+  // was caught only by reading URAM counts out of a utilization report.
+  const uint32_t geom = d.rd_t2t(ST_BUILD_GEOM);
+  const unsigned bnsym = geom & 0xFFu;
+  std::printf("build   : NSYM=%u OT=2^%ux%u\n", bnsym,
+              (geom >> 8) & 0xFFu, (geom >> 16) & 0xFFu);
+  if (o.syms.size() + 1 > bnsym)
+    throw std::runtime_error(
+        "this bitstream tracks " + std::to_string(bnsym) +
+        " symbol(s); " + std::to_string(o.syms.size() + 1) +
+        " were configured. Rebuild with `make xclbin-b NSYM=" +
+        std::to_string(o.syms.size() + 1) + " OT_SETS_BITS=14`.");
+
   // Extra tracked symbols. Symbol 0's locate/base/stock are the registers
   // above; these are 1.. in the per-symbol block, four words each.
   for (size_t i = 0; i < o.syms.size(); ++i) {

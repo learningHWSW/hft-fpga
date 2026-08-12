@@ -86,7 +86,7 @@ module tb_axil_regfile;
     .st_pl_oob(st_pl_oob), .st_beat_drop(st_beat_drop), .st_msg_drop(st_msg_drop),
     .st_delta_drop(st_delta_drop), .st_sent(st_sent), .st_blk_pos(st_blk_pos),
     .st_blk_inflight(st_blk_inflight), .st_blk_txfull(st_blk_txfull),
-    .st_position(st_position), .st_seq_num(st_seq_num),
+    .st_position_all(st_position), .st_seq_num(st_seq_num),
     .st_frame_cnt(st_frame_cnt), .st_tx_drop(st_tx_drop),
     .st_bbo_early(st_bbo_early), .st_bbo_late(st_bbo_late),
     .st_bbo_mismatch(st_bbo_mismatch),

@@ -136,7 +136,8 @@ module t2t_axil #(
     assign st_pos_axil[32*k +: 32] = st_bus_axil[1025 + 32*(k-1) +: 32];
   end
 
-  axil_regfile #(.ADDR_W(AXIL_AW), .NSYM(NSYM)) u_regs (
+  axil_regfile #(.ADDR_W(AXIL_AW), .NSYM(NSYM),
+                 .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS)) u_regs (
     .aclk(axil_clk), .aresetn(axil_rst_n),
     .s_axil_awaddr(s_axil_awaddr), .s_axil_awvalid(s_axil_awvalid), .s_axil_awready(s_axil_awready),
     .s_axil_wdata(s_axil_wdata), .s_axil_wstrb(s_axil_wstrb), .s_axil_wvalid(s_axil_wvalid), .s_axil_wready(s_axil_wready),
@@ -167,7 +168,7 @@ module t2t_axil #(
     .st_beat_drop(st_bus_axil[351:320]), .st_msg_drop(st_bus_axil[319:288]),
     .st_delta_drop(st_bus_axil[287:256]), .st_sent(st_bus_axil[255:224]),
     .st_blk_pos(st_bus_axil[223:192]), .st_blk_inflight(st_bus_axil[191:160]),
-    .st_blk_txfull(st_bus_axil[159:128]), .st_position(st_pos_axil),
+    .st_blk_txfull(st_bus_axil[159:128]), .st_position_all(st_pos_axil),
     .st_seq_num(st_bus_axil[95:64]), .st_frame_cnt(st_bus_axil[63:32]),
     .st_tx_drop(st_bus_axil[31:0]),
     .st_bbo_early(st_bus_axil[800:769]), .st_bbo_late(st_bus_axil[768:737]),
