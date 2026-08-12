@@ -10,10 +10,8 @@ step 3b. The output follows the step-2 decoder input contract exactly, so
 ## Run
 
 ```sh
-make test              # xsim, synthetic test.mold (with gap+dup+hb+eos)
-make test-verilator    # Verilator, same
-make test-real         # real data 1M msg (Verilator)
-make test-real-xsim    # real data 1M msg (xsim)
+make test              # synthetic test.mold (with gap+dup+hb+eos)
+make test-real         # real data, 1M messages
 ```
 
 Real data is BinaryFILE format, so it does not stimulate realignment as-is.
@@ -61,13 +59,26 @@ but suppresses output (the DROP state).
   function that reads the module signal `win` in a non-argument way
   (`assign msglen = w_be16(0)`) does not re-evaluate in xsim because `win` is not
   in its sensitivity list, so `msglen` sticks at X -> an infinite stall.
-  Verilator inlines the function and happens to work. Fix: use a direct bit-select
-  in the continuous assign (`{win[7:0], win[15:8]}`). **Lesson: a function used in
-  a continuous assign must depend only on its arguments.** A stall watchdog is a
-  permanent fixture in the TB to catch such a line immediately.
+  Verilator inlined the function and happened to work, which is how it survived
+  to be found here. Fix: use a direct bit-select in the continuous assign
+  (`{win[7:0], win[15:8]}`). **Lesson: a function used in a continuous assign
+  must depend only on its arguments.** A stall watchdog is a permanent fixture
+  in the TB to catch such a line immediately.
+
+  **This recurred.** `axil_regfile`'s per-symbol position readback was written
+  the same way — a function reading the module signal `st_position`, called from
+  four continuous assigns — and behaved identically: evaluated once at time zero
+  while the input was X, never again. Found by a testbench, not by review, some
+  59 commits after the lesson was written down here. A rule that is only
+  in a README is a rule that gets re-broken; the fix there is an `always_comb`,
+  which is sensitive to what it reads whether or not the author remembered why.
 
 ## Status
 
-- **xsim (Vivado 2025.2)**: synthetic test.mold PASS, real data 50k msg PASS
-- **Verilator**: synthetic PASS, real data 1M msg PASS (2019-12-30)
-- Both flows verify gap/dup/hb/eos + 512-b realignment. len_err / frame_err 0.
+- **xsim (Vivado 2025.2)**: synthetic test.mold PASS, real data PASS
+- Verifies gap / dup / hb / eos and 512-bit realignment; `len_err` and
+  `frame_err` are 0.
+- Historically also run under Verilator (synthetic PASS, real data 1M msg PASS,
+  2019-12-30 capture). That flow is gone — the project runs on xsim alone — but
+  the result is kept because it is what caught the trap above: the two
+  simulators disagreed, and only one of them was wrong.

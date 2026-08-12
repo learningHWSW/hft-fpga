@@ -8,7 +8,7 @@ actually chains the decoder for an integration check.
 ## Run
 
 ```sh
-make test            # xsim (Vivado/Vitis environment)
+make test            # xsim
 ```
 
 If test.mold is missing it is generated automatically by step 1's
@@ -39,15 +39,24 @@ messages.
   to ~1.14× slower than the input because of padding, so an absorption FIFO
   (overflow drop + counter) is mandatory behind the real wire — the same
   principle of never backpressuring the MAC.
-- **This module is a behavioural reference**: a byte-granular random-access
-  buffer, so its synthesis footprint is large. The 512-bit line-rate version
-  (step 3b) replaces it using this as the golden.
+- **This module is a behavioural reference and is not instantiated anywhere.**
+  It is a byte-granular random-access buffer, so its synthesis footprint is
+  large; the 512-bit line-rate version (step 3b) replaces it in the datapath and
+  was written against this as the golden. It is the only module in the
+  repository with a testbench and no instantiation, and that is deliberate — the
+  two are diffed against the same `dump_mold.py`, so keeping the simple one
+  runnable is what makes the fast one trustworthy. Deleting it would save a file
+  and lose the reference.
 - **frame_err_cnt**: a counter for framing anomalies (short header / length
   mismatch / buffer overrun). It must be 0 on a clean stream, which the TB checks
   at the end.
 
 ## Status
 
-- xsim (Vivado 2025.2): PASS
-- Verilator: PASS
-- Both deliver 19/21 msgs, gap_total=2, dup=1, frame_err=0, EOS detected
+- xsim (Vivado 2025.2): PASS — 19/21 msgs delivered, `gap_total=2`, `dup=1`,
+  `frame_err=0`, EOS detected. The two undelivered messages are the deliberate
+  sequence gap, and they are MSFT noise, so the tracked symbol's book is
+  unaffected — which is the point of that scenario.
+- Historically also PASS under Verilator, on the same numbers. That flow is gone
+  (the project runs on xsim alone); the agreement is recorded because two
+  independent simulators reaching the same 19/21 is worth more than one.
