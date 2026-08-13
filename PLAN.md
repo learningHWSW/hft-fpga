@@ -181,7 +181,7 @@ board". This is that, done properly.
   zero receive errors, and the project's first **wire-to-wire** figure:
   **518.2 ns** minimum, 579.4 ns mean.
 - **Load swept on the card**, not modelled: the floor never moves, the max grows
-  2.21× to 730 ns, and saturation is a knee between 40.6 and 46.3 M msg/s — 20–40×
+  2.21× to 730 ns, and saturation is a knee between 40.9 and 46.6 M msg/s — 20–40×
   the real NASDAQ peak. Every non-saturated point is byte-identical to the golden.
 - **DoD met**, and it replaced the original one: the plan asked for
   MAC-receive-to-BBO latency; what exists is wire-to-order through a real MAC,

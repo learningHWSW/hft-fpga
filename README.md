@@ -329,7 +329,7 @@ make run-card-b-real    # Phase B, the same replay through the real MAC
 
 Both diff the captured order frames against the golden and print `PASS` only on
 a byte-identical match. `RGAP=<n>` varies the injector spacing to sweep offered
-load; the saturation knee is between `RGAP=24` and `RGAP=16`.
+load; the saturation knee is between `RGAP=28` and `RGAP=24`.
 
 ### Cleaning
 
@@ -352,16 +352,18 @@ Honest scope, all of it stated in the per-step READMEs.
   on four lanes, recovered, aligned and FCS-checked. That is the same
   `D + T_tx + T_rx` a real wire gives, but a cabled two-port measurement against a
   live feed is still the honest end state, and the QSFP cages here are empty.
-- **Post-route frequency is only sweep-backed at one design point.** The fMAX
-  figures here are the best of four implementation directive sets, because one
+- **Post-route frequency is sweep-backed, and one configuration is fragile.** The
+  fMAX figures here are the best of four implementation directive sets, because one
   build against one build cannot measure place & route — that lesson cost a
   wrong claim in this README, which asserted a 9.5 MHz penalty for `fast_bbo`
   that a sweep does not reproduce and attributed it to a specific carry chain
-  that is not critical in any of the eight builds (`FINDINGS` §7.7). What is
-  swept is `NSYM = 1`, both `USE_FAST_BBO` settings. `NSYM = 2` has been
-  synthesised but not placed and routed, so its area cost is measured and its
-  timing cost is not — and by the standard this project now holds itself to,
-  that means no timing claim is made about it at all.
+  that is not critical in any of the eight builds (`FINDINGS` §7.7). What is swept
+  is `NSYM = 1` at both `USE_FAST_BBO` settings, and `NSYM = 2` at both order-table
+  geometries (`FINDINGS` §4.4). Three of those four configurations close on all
+  four directives; `NSYM = 2` at 2¹⁴ × 16 closes on **one**, at 217.9 MHz, with the
+  spread blown out from 1.3 to 6.5 MHz. That still clears the 195.3 MHz the wire
+  demands, so the two-symbol design is shippable — but a single-directive result
+  is a thinner piece of evidence than the others here, and it is quoted as one.
 - **The MAC is the larger half of the latency, and untouched.** ~207 ns in the
   fabric against **~300 ns** in MAC, SerDes and framing. It is close to
   irreducible: ~285 ns sits inside `cmac_usplus` and the GT, already generated with
@@ -378,19 +380,28 @@ Honest scope, all of it stated in the per-step READMEs.
   ([step4b-book](step4b-book/)): drive the fast path from the ladder's accept so
   a record cannot overtake a deferred one, and merge on value against a shared
   baseline so the duplicate suppression falls out of the same change-detection
-  the ladder already does. Setting aside the design tops (`t2t_kernel`,
-  `t2t_kernel_b`), the only module with a testbench and no instantiation is
-  `mold_stripper`, and that is on purpose — it is step 3a's 64-bit reference,
-  superseded by `mold_splitter` at CMAC width and kept because the two are
-  diffed against the same golden.
+  the ladder already does. Walking instantiations from every design top
+  (`t2t_kernel`, `t2t_kernel_b`, `t2t_user_322mhz`, `t2t_axil`, `t2t_top`), exactly
+  two RTL modules are left in no hierarchy, and both are deliberate:
+  `mold_stripper` is step 3a's 64-bit reference, superseded by `mold_splitter` at
+  CMAC width and kept because the two are diffed against the same golden; and
+  `gt_gate` is the Phase B feasibility kernel, a control slave and four
+  differential lane groups built to ask whether `v++` would wire a user kernel to
+  `io_gt_qsfp0_00` before the MAC work was committed to. It is packaged as its own
+  `.xo` ([step8-hw/gtgate](step8-hw/gtgate/)) rather than instantiated, and its GT
+  pins are undriven on purpose.
 - **The fast path has run on the card, in both phases.** Both bitstreams were
   rebuilt with `fast_bbo` and re-run on the real 5 M AAPL replay: 70/70 order
   frames byte-identical either way, `st_bbo_mismatch = 0` across 1.13 M frames,
   wire-to-wire 515.1 → 471.7 ns and in-fabric 206.7 → 166.7 ns at the minimum
-  (`FINDINGS` §7.6.0). What has *not* been re-measured is the load sweep — the
-  saturation knee and the burst-tail figures in §7.5.1 are still ladder-only, so
-  the "max grows 2.21×, to 730 ns" above describes a datapath that is now nine
-  core cycles shorter at the floor.
+  (`FINDINGS` §7.6.0). The load sweep has been re-run on it too, so the burst-tail
+  figures above are the shipped datapath and not the ladder-only one: the floor is
+  nine core cycles lower at *every* offered rate, the max grows 2.03× to 688.4 ns
+  rather than 2.21× to 730 ns, and the saturation knee does not move at all —
+  389,995 messages dropped at the same gap against the earlier build's 389,994
+  (§7.5.1). The `NSYM = 2` half of that sweep was run with the fast path already
+  in, so nothing in §7.5.1 is ladder-only now except the original single-symbol
+  table, kept as the before-and-after.
 - **Retransmission is automatic, and off by default.** `tx_rto` watches the
   acknowledgement number `tcp_rx` tracks and asks `tx_replay_buf` for the oldest
   unacknowledged frame when it stops advancing. It arms only after the venue has

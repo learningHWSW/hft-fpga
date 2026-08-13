@@ -796,16 +796,26 @@ the probe being checked against a known answer before it is asked an unknown one
 
 Run on the card against the real 5 M-message AAPL replay, sweeping `--gap` (idle
 `ap_clk` cycles between injected frames) to vary offered load. 70 orders, 70
-samples, 0 misses at every non-saturated point; core 215 MHz, 4.651 ns/cycle:
+samples, 0 misses at every non-saturated point; core 215 MHz, 4.651 ns/cycle.
+
+Offered rate is a property of the injector, not the datapath, so it is the same
+in every table below at the same gap:
+
+    rate = RMSGS x f_ap / (beats + frames x gap)
+         = 5,000,000 x 300 MHz / (5,110,000 + 1,127,057 x gap)
+
+`RMSGS = 5,000,000` (step5-board/Makefile), and the beat and frame counts are the
+ones `t2t_run` prints for `real_replay.bin`. Recorded because the rates were once
+derived twice from different message counts and the two tables disagreed by 0.8 %:
 
 | offered | msg drops | golden | min | mean | max |
 |---|---|---|---|---|---|
-| 25.1 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 34.2 cy / **159.2 ns** | 71 cy / 330.2 ns |
-| 29.6 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 37.1 cy / **172.7 ns** | 77 cy / 358.1 ns |
-| 32.6 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 39.7 cy / **184.5 ns** | 93 cy / 432.6 ns |
-| 36.1 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 44.3 cy / **206.1 ns** | 122 cy / 567.4 ns |
-| 40.6 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 51.1 cy / **237.9 ns** | 157 cy / **730.2 ns** |
-| 46.3 M msg/s | 389,994 | DIFF | — saturated — | | |
+| 25.3 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 34.2 cy / **159.2 ns** | 71 cy / 330.2 ns |
+| 29.9 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 37.1 cy / **172.7 ns** | 77 cy / 358.1 ns |
+| 32.8 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 39.7 cy / **184.5 ns** | 93 cy / 432.6 ns |
+| 36.4 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 44.3 cy / **206.1 ns** | 122 cy / 567.4 ns |
+| 40.9 M msg/s | 0 | PASS | 23 cy / 107.0 ns | 51.1 cy / **237.9 ns** | 157 cy / **730.2 ns** |
+| 46.6 M msg/s | 389,994 | DIFF | — saturated — | | |
 
 Four things this says that the model could not:
 
@@ -815,8 +825,8 @@ Four things this says that the model could not:
    in offered rate the mean grows 1.49× (159 → 238 ns) while the max grows 2.21×
    (330 → 730 ns). That divergence is the burst tail, and it is why quoting a mean
    for this design would be misleading.
-3. **Saturation is sharp, not gradual** — zero drops at 40.6 M msg/s, then 389,994
-   dropped messages at 46.3 M. There is no soft shoulder to operate on.
+3. **Saturation is sharp, not gradual** — zero drops at 40.9 M msg/s, then 389,994
+   dropped messages at 46.6 M. There is no soft shoulder to operate on.
 4. **Degradation is by dropping, never by lying.** Every non-saturated point is
    byte-identical to the golden; the saturated one drops and counts. The design
    has no regime in which it emits a *wrong* order.
@@ -858,8 +868,11 @@ not delivered — but QQQ's prices are *still* every one inside its own band. Th
 design degrades by dropping and counting, and even overloaded it did not emit a
 single order at a wrong price.
 
-**Re-measured with the fast book path.** The table above is the ladder-only
-datapath. Same card, same replay, same gap ladder, `fast_bbo` in place:
+**Re-measured with the fast book path.** This re-runs the *single-symbol* sweep at
+the top of this section, which was the ladder-only datapath — not the `NSYM = 2`
+table immediately above, which already has `fast_bbo` in it (`bbo early=64,392
+late=26,005`). Same card, same replay, same gap ladder
+([card-loadsweep-fastbbo.txt](card-loadsweep-fastbbo.txt)):
 
 | gap | offered | msg drops | golden | min | mean | max |
 |---|---|---|---|---|---|---|
@@ -943,7 +956,7 @@ Both probes report from the same run, so subtracting is legitimate. Phase A, rea
 That 99.7 ns is RX, CDC, splitter and decode on the way in, plus builder, framer
 and TX CDC on the way out — the part that does not queue. So **wire-to-order under
 load = `lat_loaded` + 99.7 ns**, which composes the two tables in this section
-rather than leaving them incommensurable. At the 40.6 M msg/s point the tail
+rather than leaving them incommensurable. At the 40.9 M msg/s point the tail
 becomes 730.2 + 99.7 ≈ **830 ns** in-fabric, and adding the measured MAC term from
 §7.6 puts a fully loaded wire-to-wire worst case near 1.1 µs.
 

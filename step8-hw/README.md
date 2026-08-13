@@ -391,12 +391,12 @@ orders and 70 samples with 0 misses at every non-saturated point:
 
 | offered | msg drops | golden | min | mean | max |
 |---|---|---|---|---|---|
-| 25.1 M msg/s | 0 | PASS | 107.0 ns | **159.2 ns** | 330.2 ns |
-| 29.6 M msg/s | 0 | PASS | 107.0 ns | **172.7 ns** | 358.1 ns |
-| 32.6 M msg/s | 0 | PASS | 107.0 ns | **184.5 ns** | 432.6 ns |
-| 36.1 M msg/s | 0 | PASS | 107.0 ns | **206.1 ns** | 567.4 ns |
-| 40.6 M msg/s | 0 | PASS | 107.0 ns | **237.9 ns** | **730.2 ns** |
-| 46.3 M msg/s | 389,994 | DIFF | — saturated — | | |
+| 25.3 M msg/s | 0 | PASS | 107.0 ns | **159.2 ns** | 330.2 ns |
+| 29.9 M msg/s | 0 | PASS | 107.0 ns | **172.7 ns** | 358.1 ns |
+| 32.8 M msg/s | 0 | PASS | 107.0 ns | **184.5 ns** | 432.6 ns |
+| 36.4 M msg/s | 0 | PASS | 107.0 ns | **206.1 ns** | 567.4 ns |
+| 40.9 M msg/s | 0 | PASS | 107.0 ns | **237.9 ns** | **730.2 ns** |
+| 46.6 M msg/s | 389,994 | DIFF | — saturated — | | |
 
 Re-measured with `fast_bbo` on the same gap ladder (48, 40, 36, 32, 28, 24 —
 recorded here because the first run recorded only the derived rates):
@@ -416,7 +416,7 @@ move: the same gap saturates and drops 389,995 messages against 389,994.
 
 The floor never moves (23 cycles at every load), the mean grows 1.49× while the
 max grows 2.21× over the same range — the tail is the thing that degrades — and
-saturation arrives abruptly between 40.6 and 46.3 M msg/s. Every non-saturated
+saturation arrives abruptly between 40.9 and 46.6 M msg/s. Every non-saturated
 point is byte-identical to the golden: the design degrades by dropping and
 counting, never by emitting a wrong order. Full analysis in `FINDINGS §7.5.1`.
 

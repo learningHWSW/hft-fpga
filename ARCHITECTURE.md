@@ -472,10 +472,10 @@ part that does not queue. Wire-to-order under load is the queueing figure plus
 that constant.
 
 **Under load** the floor never moves — 23 core cycles at every offered rate — but
-from 25.1 to 40.6 M msg/s the mean grows 1.49× while the **max grows 2.21×, to
+from 25.3 to 40.9 M msg/s the mean grows 1.49× while the **max grows 2.21×, to
 730 ns**. That divergence is the queueing tail, and it is why quoting a mean for
 this design would mislead. Saturation is a knee rather than a shoulder, between
-40.6 and 46.3 M msg/s, which is 20–40× the real NASDAQ peak the design was sized
+40.9 and 46.6 M msg/s, which is 20–40× the real NASDAQ peak the design was sized
 against. Every non-saturated point is byte-identical to the golden: the pipeline
 degrades by **dropping and counting**, never by emitting a wrong order.
 
