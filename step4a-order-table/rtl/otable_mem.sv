@@ -34,7 +34,22 @@ module otable_mem #(
   parameter int WIDTH  = 130,
   parameter int DEPTH  = 65536,
   parameter int AW     = 16,
-  parameter int RD_LAT = 3
+  parameter int RD_LAT = 3,
+  // How deep the tool may cascade URAMs for one way. 0 would let it choose, and
+  // what it chooses gets slower the taller the table gets: a URAM cascade
+  // carries address and data through each site in turn, so depth is delay.
+  //
+  // The arithmetic, for a 130-bit entry (2 URAM wide, URAM288 being 4096x72):
+  //
+  //   2^13 x 16   8192 deep -> 2 URAM deep -> 4/way -> 64 URAM   closes 4 of 4
+  //   2^14 x 16  16384 deep -> 4 URAM deep -> 8/way -> 128 URAM  closes 1 of 4
+  //
+  // and the failing builds' worst path runs message FIFO -> URAM write port
+  // with THREE URAM288 in its logic levels and 70-75 % of the delay in route
+  // (FINDINGS 4.4). So 2 is not an arbitrary cap: it is the cascade depth of
+  // the geometry that is known to close, imposed on the one that is not. At
+  // 2^13 it changes nothing, because 2 is what that build already needs.
+  parameter int CASCADE = 2
 )(
   input  logic            clk,
   input  logic            we,
@@ -47,6 +62,7 @@ module otable_mem #(
   xpm_memory_sdpram #(
     .MEMORY_SIZE        (DEPTH * WIDTH),
     .MEMORY_PRIMITIVE   ("ultra"),
+    .CASCADE_HEIGHT     (CASCADE),
     .CLOCKING_MODE      ("common_clock"),
     .MEMORY_INIT_FILE   ("none"),
     .USE_MEM_INIT       (0),
