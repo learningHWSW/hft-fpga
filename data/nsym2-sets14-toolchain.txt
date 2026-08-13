@@ -1,0 +1,24 @@
+NSYM=2, OT_SETS_BITS=14 (2^14 x 16), USE_FAST_BBO=1, core_clk 4.618 ns
+Four implementation directive sets, two Vivado versions, identical RTL.
+2023.2 builds: 2026-08-12, before the toolchain pin (73c5e34).
+2025.2.1 builds: 2026-08-13, pinned via mk/xilinx.mk.
+
+--- Vivado 2023.2 ---
+dirset      WNS ns  failing  fMAX MHz   closes 
+default     -0.112       33     211.4   no     
+explore     -0.022        7     215.5   no     
+fanout      -0.034        3     215.0   no     
+netdly       0.029        0     217.9   yes    
+
+--- Vivado 2025.2.1 ---
+dirset      WNS ns  failing  fMAX MHz   closes 
+default     -0.054       22     214.0   no     
+explore     -0.134       63     210.4   no     
+fanout       0.018        0     217.4   yes    
+netdly      -0.153       58     209.6   no     
+
+The design closes on exactly one of four directives under BOTH tools,
+but not the SAME one: netdly under 2023.2, fanout under 2025.2.1.
+netdly goes from best (+0.029 ns, 0 failing) to worst (-0.153 ns, 58 failing).
+Best-of-four is unchanged within noise: 217.9 -> 217.4 MHz, both above the
+195.3 MHz the wire demands.
