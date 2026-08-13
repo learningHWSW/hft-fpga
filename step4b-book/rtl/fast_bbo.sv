@@ -129,6 +129,22 @@ module fast_bbo (
   wire add_improves  = i_has_add && (!cur_has || better(is_bid, i_add_price, cur_px));
   wire add_at_best   = i_has_add && cur_has && (i_add_price == cur_px);
 
+  // The quantity the best level ends up with, as ONE arithmetic expression.
+  // Written the obvious way -- subtract the removal, then add the add -- it is
+  // two 32-bit carry chains in SERIES, and that series is the path out of the
+  // delta FIFO into these registers. At one symbol it closed on every directive;
+  // at two, with the delta bus fanning out to a second lane, it became the
+  // binding path (FINDINGS 4.4).
+  //
+  // Selecting the operands first is the same arithmetic at half the depth:
+  // rem_hits_best and add_at_best are comparisons that resolve in parallel with
+  // each other anyway, so this trades two chained adds for two muxes and one
+  // fused a - b + c. Identical in every case, including both-at-once, which is
+  // the one the sequential form made look ordered when it is not.
+  wire [31:0] q_sub = rem_hits_best ? i_rem_qty : 32'd0;
+  wire [31:0] q_add = add_at_best   ? i_add_qty : 32'd0;
+  wire [31:0] q_net = cur_qty - q_sub + q_add;
+
   // The one case that needs the ladder. An add in the same delta does NOT rescue
   // it: U replaces an order, and the new level may be worse than some other
   // resting level this module cannot see.
@@ -170,16 +186,16 @@ module fast_bbo (
           o_has_bid <= eff_has_bid; o_bid_price <= eff_bid_px; o_bid_qty <= eff_bid_q;
           o_has_ask <= eff_has_ask; o_ask_price <= eff_ask_px; o_ask_qty <= eff_ask_q;
         end else begin
-          automatic logic [31:0] nq = cur_qty;
+          // q_net already carries the partial removal (partial by defer above)
+          // and the add-at-best, both of them or neither.
+          automatic logic [31:0] nq = q_net;
           automatic logic [31:0] npx = cur_px;
           automatic logic        nh  = cur_has;
 
-          if (rem_hits_best) nq = cur_qty - i_rem_qty;   // partial, by defer above
-
+          // An add better than the current best defines the level outright, so
+          // it replaces the accumulated quantity rather than joining it.
           if (add_improves) begin
             nh = 1'b1; npx = i_add_price; nq = i_add_qty;
-          end else if (add_at_best) begin
-            nq = nq + i_add_qty;
           end
 
           // The BBO record describes the book AFTER this delta, so the outputs

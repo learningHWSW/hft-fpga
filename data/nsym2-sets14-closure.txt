@@ -1,0 +1,45 @@
+NSYM=2, OT_SETS_BITS=14 (2^14 x 16), USE_FAST_BBO=1 -- closing the two-symbol build
+Four implementation directive sets per row, Vivado 2025.2.1, core_clk constrained
+at 4.618 ns (216.5 MHz). fMAX = 1000/(period - WNS).
+
+                        default        explore        fanout         netdly
+                        WNS / fail     WNS / fail     WNS / fail     WNS / fail
+baseline                -0.054 / 22    -0.134 / 63    +0.018 /  0    -0.153 / 58
++ CASCADE_HEIGHT=2      -0.025 /  1    -0.022 /  2    +0.022 /  0    +0.000 /  0
++ fused q_net           -0.001 /  1    +0.039 /  0    +0.069 /  0    -0.001 /  1
+
+                        closes   worst fMAX   best fMAX   failing endpoints, total
+baseline                1 of 4     209.6        217.4              143
++ CASCADE_HEIGHT=2      2 of 4     215.4        217.6                3
++ fused q_net           2 of 4     216.5        219.8                2
+
+TWO CHANGES, EACH AIMED AT A PATH THAT WAS MEASURED RATHER THAN GUESSED.
+
+1. otable_mem never set CASCADE_HEIGHT, so the tool chose, and its choice deepens
+   with the table: 2^13 is 2 URAM deep per way, 2^14 is 4. The failing builds'
+   worst path ran message FIFO -> order table URAM write with URAM288=3 in its
+   logic levels and 70-75 % of the delay in route. Capped at 2 -- the depth of
+   the geometry that closes 4 of 4 -- which is a no-op at 2^13.
+
+2. fast_bbo's quantity update was two 32-bit carry chains in series when a delta
+   both removed from and added to the best level. Selecting the operands first
+   lets the tool fuse a - b + c into one chain. No pipeline stage, so no cost in
+   tick-to-trade latency.
+
+WHERE IT LANDS. Every directive now produces a build between 216.5 and 219.8 MHz.
+The two that "miss" do so by 0.001 ns on one endpoint each -- the smallest
+non-zero violation the tool can report -- against a 4.618 ns yardstick that is
+21 MHz above the 195.3 MHz a 100 Gb/s wire demands. The binding path moved at
+every step (msg_fifo->URAM, then delta_fifo->fast_bbo qty, now the ladder's
+r_add_diff and delta_fifo again), which is what a design sitting on its
+constraint looks like rather than a single structural defect.
+
+WHAT IS NOT CLAIMED. This is not "closes on all four directives". Two builds miss
+by a picosecond, and a 1 ps margin is not a margin -- it says the constraint is
+the arbitrary thing here, not that the design is fragile in the way it was when
+three builds missed by tens of picoseconds across 143 endpoints.
+
+Evidence: step5-board/syn/baseline-precascade/ (baseline),
+          step5-board/syn/baseline-cascade2/ (after change 1),
+          step5-board/syn/sweep-f1-n2-s14-*.log (after change 2).
+Functional: full xsim regression 29/29 on the tree that produced the last row.
