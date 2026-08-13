@@ -183,6 +183,12 @@ board". This is that, done properly.
 - **Load swept on the card**, not modelled: the floor never moves, the max grows
   2.21× to 730 ns, and saturation is a knee between 40.9 and 46.6 M msg/s — 20–40×
   the real NASDAQ peak. Every non-saturated point is byte-identical to the golden.
+- *Both figures above are what step 8 measured when it closed, and are kept as
+  written. The datapath has moved since: `fast_bbo` landed, both bitstreams were
+  rebuilt, and the shipped design gives **471.7 ns** wire-to-wire with the floor at
+  14 core cycles and the max growing 2.03× to 688 ns. The knee did not move. See
+  `ARCHITECTURE.md` for the current design and `FINDINGS` §7.5.1 / §7.6.0 for the
+  measurements.*
 - **DoD met**, and it replaced the original one: the plan asked for
   MAC-receive-to-BBO latency; what exists is wire-to-order through a real MAC,
   golden-verified, with the load curve behind it.

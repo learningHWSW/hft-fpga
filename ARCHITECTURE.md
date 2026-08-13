@@ -459,21 +459,24 @@ endpoints failing. Kernel resources with the real MAC included: 52,387 LUT,
 
 | | |
 |---|---|
-| Wire-to-wire, through a real 100 G MAC | **518.2 ns** min / 579.4 ns mean, 70 samples |
-| In fabric only (first RX beat to first TX beat) | 206.7 ns min |
-| Decoder to order (the queueing part) | 107.0 ns min |
+| Wire-to-wire, through a real 100 G MAC | **471.7 ns** min / 551.9 ns mean, 70 samples |
+| In fabric only (first RX beat to first TX beat) | 166.7 ns min |
+| Decoder to order (the queueing part) | 65.1 ns min |
 | Order frames vs. the software golden | **70 / 70 byte-identical**, zero drops |
 | MAC frames | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |
 
 The three intervals are **not** comparable as-is, and the constant between them is
-measured rather than assumed: 206.7 − 107.0 = **99.7 ns** of fixed front and back
+measured rather than assumed: 166.7 − 65.1 = **101.6 ns** of fixed front and back
 end (RX, CDC, splitter, decode inbound; builder, framer, TX CDC outbound), the
 part that does not queue. Wire-to-order under load is the queueing figure plus
-that constant.
+that constant. It is a genuine invariant, not a subtraction that happens to work:
+`fast_bbo` sits between the two probes, so this constant had to survive its
+arrival, and across four separately placed and routed bitstreams it moved 99.7 →
+101.6 ns (`FINDINGS` §7.6.0).
 
-**Under load** the floor never moves — 23 core cycles at every offered rate — but
-from 25.3 to 40.9 M msg/s the mean grows 1.49× while the **max grows 2.21×, to
-730 ns**. That divergence is the queueing tail, and it is why quoting a mean for
+**Under load** the floor never moves — 14 core cycles at every offered rate — but
+from 25.3 to 40.9 M msg/s the mean grows 1.59× while the **max grows 2.03×, to
+688 ns**. That divergence is the queueing tail, and it is why quoting a mean for
 this design would mislead. Saturation is a knee rather than a shoulder, between
 40.9 and 46.6 M msg/s, which is 20–40× the real NASDAQ peak the design was sized
 against. Every non-saturated point is byte-identical to the golden: the pipeline
@@ -502,7 +505,10 @@ attacks the smaller term.
 - **Nothing proven is left unintegrated.** `fast_bbo`, `tx_replay_buf` and
   `tcp_rx` were the three modules with a self-checking testbench and no
   instantiation (§6, §9); all three are now in `t2t_top`, and the goldens are
-  byte-identical across the change. What the fast path has not had is a card run.
+  byte-identical across the change. The fast path has since had its card run, in
+  both phases: 70/70 order frames byte-identical either way, `st_bbo_mismatch = 0`
+  across 1.13 M frames, and the wire-to-wire and in-fabric figures above are
+  measured with it in the datapath (`FINDINGS` §7.6.0).
 - **Cut-through decode was evaluated and dropped.** At 512-bit width every ITCH
   message (max 50 B) arrives in one 64-byte beat, so there is no partial-message
   window left: it could only collapse the decoder's single register stage, 1 cycle

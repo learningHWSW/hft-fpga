@@ -414,9 +414,12 @@ The floor drops 23 → 14 cycles at every point and the mean by a near-constant
 5.7 cycles, which is what a shorter *common* path looks like. The knee does not
 move: the same gap saturates and drops 389,995 messages against 389,994.
 
-The floor never moves (23 cycles at every load), the mean grows 1.49× while the
-max grows 2.21× over the same range — the tail is the thing that degrades — and
-saturation arrives abruptly between 40.9 and 46.6 M msg/s. Every non-saturated
+The shape is the same in both tables, and it is the shape that matters. In the
+ladder-only run the floor never moves (23 cycles at every load), the mean grows
+1.49× while the max grows 2.21× over the same range; with the fast path the floor
+sits at 14 cycles and the mean and max grow 1.59× and 2.03×. Either way the tail
+is the thing that degrades, and saturation arrives abruptly between 40.9 and
+46.6 M msg/s. Every non-saturated
 point is byte-identical to the golden: the design degrades by dropping and
 counting, never by emitting a wrong order. Full analysis in `FINDINGS §7.5.1`.
 

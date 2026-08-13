@@ -661,10 +661,12 @@ single digits.
 
 **The limit this section used to end on — "measured latency needs a card" — has
 been removed.** There is an Alveo in a slot, and [step 8](../step8-hw/) replays a
-real 5 M-message session on it: **206.7 ns** minimum in fabric, and **518.2 ns**
+real 5 M-message session on it: **166.7 ns** minimum in fabric, and **471.7 ns**
 wire-to-wire through a real 100 G MAC, with 70 of 70 order frames byte-identical
 to the golden. Cycle counts are still not nanoseconds, which is precisely why that
-step exists.
+step exists. (Those are the shipped datapath. The first Phase B run measured
+518.2 ns, a rebuilt ladder-only bitstream 515.1, and `fast_bbo` took it to 471.7 —
+`FINDINGS` §7.6.0.)
 
 Two things measured there reflect back on the reasoning above:
 

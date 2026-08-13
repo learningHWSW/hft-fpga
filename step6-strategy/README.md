@@ -539,20 +539,31 @@ tb/tb_sweep.sv           self-checking TB for the sweep detector
 
 The chain now runs wire → book → decision → order bytes. What it does not have:
 
-1. **Retransmission.** The hot path still fires and forgets, but the buffer that
-   makes recovery possible is built and proven:
-   [`tx_replay_buf.sv`](rtl/tx_replay_buf.sv), `make test-replay`. The spec makes
-   it far smaller than it looks — an Enter Order carrying a previously used token
-   is *ignored*, so a resend cannot double-fill and needs no dedup protocol. It is
-   **not wired into `t2t_top`**.
+1. ~~**Retransmission.**~~ **Done.** The buffer that makes recovery possible
+   ([`tx_replay_buf.sv`](rtl/tx_replay_buf.sv), `make test-replay`) is wired into
+   `t2t_top`, and `tx_rto` drives it: it watches the acknowledgement number
+   `tcp_rx` tracks and asks for the oldest unacknowledged frame when it stops
+   advancing. The spec makes this far smaller than it looks — an Enter Order
+   carrying a previously used token is *ignored*, so a resend cannot double-fill
+   and needs no dedup protocol. It is **off by default** (`cfg_rto_en` starts at
+   0), so the old fire-and-forget behaviour is still available. What is *not*
+   settled is policy: the timeout and retry count are two guessed numbers, and the
+   `ack_latency` probe that would ground them needs a real venue.
 2. **The handshake itself.** Written — [step 7](../step7-host/) establishes the
    connection over SoupBinTCP, logs in, loads the shadow registers and pulses
-   `cfg_load`. What still has no answer is the *inbound* direction on hardware:
-   acks arrive at the card's MAC and the FPGA does not parse TCP.
+   `cfg_load`. The inbound direction is now answered in hardware too: `tcp_rx` is
+   in `t2t_top`, the acknowledgement number `tcp_tx` sends is live rather than the
+   handshake's initial value, and the replies reach the host through the shared
+   capture area. What has *not* happened is a run against a real venue — nothing
+   has answered these orders except a Python generator, and the QSFP cages are
+   empty.
 3. **Real fills.** The host reports back (item above); the FPGA's own position
    stays deliberately optimistic, which errs only toward suppressing trades.
 4. **Measured latency.** Measured. [Step 8](../step8-hw/) puts the chain on an
-   Alveo U55C: **206.7 ns** in fabric and **518.2 ns** wire-to-wire through a real
+   Alveo U55C: **166.7 ns** in fabric and **471.7 ns** wire-to-wire through a real
    100 G MAC, 70 of 70 order frames byte-identical to the golden. The sweep and
    imbalance paths were 19 and 28 core cycles in this document's budget; on
-   silicon the whole in-fabric path measures 62 cycles at the probe's clock.
+   silicon the whole in-fabric path measures 50 cycles at the probe's clock.
+   (Those are the shipped datapath, with `fast_bbo` in it. The first Phase B
+   measurement was 518.2 ns, then 515.1 on a rebuilt ladder-only bitstream, and
+   the fast path took it to 471.7 — `FINDINGS` §7.6.0.)
