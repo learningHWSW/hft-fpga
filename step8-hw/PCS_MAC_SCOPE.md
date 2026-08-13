@@ -53,7 +53,38 @@ promise a beat every cycle until `tlast`. That trade stays rejected.
 
 So the question is entirely about the ~285 ns inside the vendor IP.
 
-## 3. The thing we do not know, and must measure first
+## 3. The thing we did not know — now measured
+
+**ANSWERED, 2026-08-13.** The gate below was built and run
+([../data/pma-vs-pcs-loopback.txt](../data/pma-vs-pcs-loopback.txt)). The GT PMA
+round trip is **9.3 ns**, three cycles at 322.265625 MHz, reproduced exactly
+across two independent bring-ups. So the split is:
+
+| | ns | share | |
+|---|---|---|---|
+| GT PMA — serializer, deserializer, CDR, elastic buffer | ~9.3 | 3 % | irreducible |
+| **CMAC MAC + PCS** | **~276** | **90 %** | **what a custom block replaces** |
+| ours (core-clock crossing, `axis_sf_fifo`, frame filter) | ~19 | 6 % | already rejected in §7.6.1 |
+
+That is the *opposite* of the pessimistic case this section was written to guard
+against. The PMA is not the obstacle; near enough all of the vendor term is in
+the standards-compliant MAC and PCS pipeline, which is exactly what a thin
+custom block replaces. The prize is ~276 ns against a 471.7 ns wire-to-wire
+minimum — well over half the path.
+
+It bounds the prize, not the winnings. A custom block still has to frame,
+encode, scramble, lock and deskew; what it can drop is worst-case provisioning,
+above all a deskew buffer sized for the skew budget 100GBASE-R demands rather
+than the skew a short link presents. §4 and §5 stand unchanged, and so does the
+recommendation in §6.3: the central trade is deskew sized to a real link, and
+there is still no real link here.
+
+The original reasoning is kept below, because it is why the measurement was
+worth taking.
+
+---
+
+## 3a. The thing we did not know, and had to measure first
 
 **~285 ns is not one number, it is two, and only one of them is attackable.**
 

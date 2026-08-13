@@ -1,0 +1,110 @@
+GT PMA vs CMAC MAC+PCS split, measured by loopback bracketing
+Same bitstream, same replay, same gap -- one register write apart, so
+placement, routing and the fabric front/back end all cancel in the difference.
+Card: U55C 0000:08:00.1, real 5 M AAPL, gap 512, 70 samples, 0 excluded.
+Built 2026-08-13, Vivado 2025.2.1.
+
+########## --loopback pma ##########
+harness id  = 54324b32 (T2K2, Phase B: through the CMAC)
+datapath id = 54325430 (expect 54325430)
+replay  : 327040000 bytes (5110000 beats) at 0x0
+capture : 16777216 bytes (8192 records) at 0x20000000
+loopback: pma (gt_loopback_in=002 per lane)
+build   : NSYM=1 OT=2^13x16
+order table initialised
+CMAC link   : aligned=1 link_up=1
+
+harness : injected=1127057 captured=70 overflow=0 stalls=0
+rx      : frames_in=1127127 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=465 drops(beat=0 msg=0 delta=0)
+strategy: sent=70 pos=800 blocked(pos=36 inflight=0 txfull=0 qty=0)
+tx      : frames=70 next_seq=10000e38 cdc_drop=0
+replay  : stored=70 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=1174 late=605 (65% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+ack lat : no counterparty -- 0 samples (expected under GT loopback)
+mac     : tx=3381401 rx=3381396 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=70 dropped=1127057 cap_cdc_drop=0 hwm(feed=7 ord=3)
+
+latency : samples=70 excluded=0 orphans=0 (quiet=256 gap=512)
+          min=153 cyc (474.8 ns)  avg=179.1 cyc (555.7 ns)  max=241 cyc (747.8 ns)
+          hist[2^7..] = 70
+
+loaded  : samples=70 misses=0
+          decode->order  min=14 cyc (70.0 ns)  avg=27.2 cyc (135.8 ns)  max=64 cyc (320.0 ns)
+          hist[2^3..] = 16
+          hist[2^4..] = 29
+          hist[2^5..] = 24
+          hist[2^6..] = 1
+capture image written to real_capture.bin
+
+########## --loopback pcs ##########
+harness id  = 54324b32 (T2K2, Phase B: through the CMAC)
+datapath id = 54325430 (expect 54325430)
+replay  : 327040000 bytes (5110000 beats) at 0x0
+capture : 16777216 bytes (8192 records) at 0x20000000
+loopback: pcs (gt_loopback_in=001 per lane)
+build   : NSYM=1 OT=2^13x16
+order table initialised
+CMAC link   : aligned=1 link_up=1
+
+harness : injected=1127057 captured=70 overflow=0 stalls=0
+rx      : frames_in=1127130 kept=1122567 cdc_drop=0 hwm=5
+feed    : gap=0 ot_overflow=0 oob=465 drops(beat=0 msg=0 delta=0)
+strategy: sent=70 pos=800 blocked(pos=36 inflight=0 txfull=0 qty=0)
+tx      : frames=70 next_seq=10000e38 cdc_drop=0
+replay  : stored=70 resent=0 refused=0  rto(off fired=0 gaveup=0)
+book    : bbo early=1174 late=605 (65% early) mismatch=0
+session : frames=0 peer_ack=00000000 ooo=0 dup=0
+ack lat : no counterparty -- 0 samples (expected under GT loopback)
+mac     : tx=4508533 rx=4508526 rx_err=0 underrun=0 overflow=0
+loopback: filter passed=70 dropped=1127060 cap_cdc_drop=0 hwm(feed=7 ord=3)
+
+latency : samples=70 excluded=0 orphans=0 (quiet=256 gap=512)
+          min=150 cyc (465.5 ns)  avg=176.0 cyc (546.1 ns)  max=237 cyc (735.4 ns)
+          hist[2^7..] = 70
+
+loaded  : samples=70 misses=0
+          decode->order  min=14 cyc (70.0 ns)  avg=27.2 cyc (135.8 ns)  max=64 cyc (320.0 ns)
+          hist[2^3..] = 16
+          hist[2^4..] = 29
+          hist[2^5..] = 24
+          hist[2^6..] = 1
+capture image written to real_capture.bin
+
+
+================================ RESULT ================================
+wire-to-wire minimum, lat_probe, 322.265625 MHz (3.1031 ns/cycle):
+
+  pair   near-end PMA      near-end PCS      difference
+  1st    152 cy 471.7 ns   149 cy 462.4 ns   3 cy   9.31 ns
+  2nd    153 cy 474.8 ns   150 cy 465.5 ns   3 cy   9.31 ns
+
+Two independent bring-ups, both exactly 3 cycles. The absolute minimum moves a
+cycle between runs -- it is the best of 70 samples and depends on which frame
+catches the pipeline empty -- but the bracket does not.
+
+CONTROL: the loaded probe (decode->order, inside the fabric, never crosses the
+MAC) reads 14 / 27.2 / 64 cycles in ALL FOUR runs. If the difference above were
+an artefact of anything other than the MAC path, this would have moved too.
+
+  GT PMA round trip (serializer + deserializer + CDR + elastic buffer)
+      = 9.3 ns
+
+Against the MAC term measured in FINDINGS 7.6.0 (305.0 ns, of which ~19 ns is
+our own fabric -- core-clock crossing, axis_sf_fifo fill, frame filter):
+
+  GT PMA            ~9.3 ns    3 %    irreducible: any design driving a QSFP
+                                      cage pays this
+  CMAC MAC + PCS   ~276 ns    90 %    framing, FCS, 64B/66B, scramble,
+                                      alignment markers, deskew, block lock
+  ours              ~19 ns     6 %    already accounted for in 7.6.1
+
+So the term a custom PCS/MAC would attack is ~276 ns, not the ~85 ns the
+pessimistic case in PCS_MAC_SCOPE.md 3 imagined. The PMA is not the obstacle.
+
+WHAT THIS DOES NOT SAY. It does not say 276 ns is recoverable. A custom block
+still has to frame, encode, scramble, lock and deskew; what it can drop is the
+standards-compliant pipeline's worst-case provisioning, above all a deskew
+buffer sized for the skew budget 100GBASE-R requires rather than the skew a
+short link presents. This measurement bounds the PRIZE, not the winnings.

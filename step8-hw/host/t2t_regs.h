@@ -173,6 +173,14 @@
 #define K_CTRL_CLEAR_CAPTURE 0x2u
 #define K_CTRL_SOFT_RESET    0x4u
 #define K_CTRL_CLEAR_LATENCY 0x8u
+// GT loopback select. Bit 5 is the write-enable, bit 4 the on/off, and bits
+// [7:6] pick which near-end loopback -- so LB_WE|LB_ON alone still means PMA,
+// the mode every Phase B measurement before this was taken in.
+#define K_CTRL_LB_ON         0x10u
+#define K_CTRL_LB_WE         0x20u
+#define K_CTRL_LB_PMA        0x00u  // with LB_ON: through the SerDes (default)
+#define K_CTRL_LB_PCS        0x40u  // with LB_ON: turns back before the serializer
+#define K_CTRL_LB_MODE_SHIFT 8      // readback: mode at [10:8]
 #define K_STATUS_BUSY        0x1u
 #define K_STATUS_DONE        0x2u
 

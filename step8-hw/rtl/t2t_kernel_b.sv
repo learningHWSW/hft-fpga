@@ -217,7 +217,7 @@ module t2t_kernel_b #(
   logic [15:0] rp_gap;
   logic        rp_start, cp_clear;
   logic [7:0]  soft_rst_cnt;
-  logic        loopback_en;
+  logic [2:0]  loopback_mode;
 
   logic        rp_busy, rp_done;
   logic [31:0] rp_frames, rp_beats_out;
@@ -275,7 +275,7 @@ module t2t_kernel_b #(
     .gt_refclk_p(gt_refclk_p), .gt_refclk_n(gt_refclk_n),
     .gt_rxp_in(gt_rxp_in), .gt_rxn_in(gt_rxn_in),
     .gt_txp_out(gt_txp_out), .gt_txn_out(gt_txn_out),
-    .init_clk(init_clk), .sys_rst(!ap_rst_n), .loopback_en(loopback_en),
+    .init_clk(init_clk), .sys_rst(!ap_rst_n), .loopback_mode(loopback_mode),
     .tx_clk(wire_clk), .tx_rst_n(wire_rst_n_raw),
     .s_tdata(mac_tx_tdata), .s_tkeep(mac_tx_tkeep),
     .s_tvalid(mac_tx_tvalid), .s_tlast(mac_tx_tlast), .s_tready(mac_tx_tready),
@@ -358,7 +358,7 @@ module t2t_kernel_b #(
       rp_base <= '0; cp_base <= '0; rp_beats <= '0; cp_recs <= '0; rp_gap <= '0;
       rp_start <= 1'b0; cp_clear <= 1'b0; soft_rst_cnt <= 8'hFF;
       l_quiet <= 16'd512; l_clear <= 1'b0;
-      loopback_en <= 1'b1;                      // cages are empty: loopback by default
+      loopback_mode <= 3'b010;                  // cages are empty: near-end PMA by default
     end else begin
       rp_start <= 1'b0;
       cp_clear <= 1'b0;
@@ -384,7 +384,14 @@ module t2t_kernel_b #(
                 if (s_axi_control_WDATA[1])             cp_clear <= 1'b1;
                 if (s_axi_control_WDATA[2])             soft_rst_cnt <= 8'hFF;
                 if (s_axi_control_WDATA[3])             l_clear  <= 1'b1;
-                if (s_axi_control_WDATA[5])             loopback_en <= s_axi_control_WDATA[4];
+                // Loopback select. Bit 5 is the write-enable and bit 4 the
+                // on/off, both unchanged; bits [7:6] pick WHICH near-end
+                // loopback, so a legacy write of bit5|bit4 still means near-end
+                // PMA and nothing that used to work changes meaning.
+                if (s_axi_control_WDATA[5])
+                  loopback_mode <= !s_axi_control_WDATA[4]        ? 3'b000 :
+                                    s_axi_control_WDATA[7:6] == 2'b01 ? 3'b001
+                                                                      : 3'b010;
               end
               R_L_QUIET:   l_quiet        <= s_axi_control_WDATA[15:0];
               R_RP_BASE_L: rp_base[31:0]  <= s_axi_control_WDATA;
@@ -437,7 +444,10 @@ module t2t_kernel_b #(
           end else begin
             case (s_axi_control_ARADDR)
               R_ID:        rd_data <= KERNEL_ID;
-              R_CTRL:      rd_data <= {27'b0, loopback_en, 4'b0};
+              // bit 4 reads back as "loopback on" exactly as before; the mode
+              // itself is exposed at [10:8] so a run can record which one it used.
+              R_CTRL:      rd_data <= {21'b0, loopback_mode, 3'b0,
+                                       |loopback_mode, 4'b0};
               R_RP_BASE_L: rd_data <= rp_base[31:0];
               R_RP_BASE_H: rd_data <= rp_base[63:32];
               R_RP_BEATS:  rd_data <= rp_beats;

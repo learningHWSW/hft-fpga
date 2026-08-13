@@ -1121,6 +1121,35 @@ skips the standards-compliant pipeline, which is what the ultra-low-latency
 industry actually does and is a substantial project with real correctness risk. It
 should be entered deliberately, not as an optimisation pass.
 
+**How much of the vendor term a custom block could even address — measured.**
+"~285 ns is inside `cmac_usplus` and the GT" is two quantities, and only one of
+them is reachable: the GT's PMA is a hard block that any design driving a QSFP
+cage pays for. Bracketing it needs no new probe, only the GT's own loopback
+modes: near-end PMA goes through the serializer and CDR, near-end PCS turns back
+before them, so the difference between the same run taken both ways *is* the PMA.
+`gt_loopback_in` was already wired; making it runtime-selectable and rebuilding
+one Phase B bitstream put both numbers in one build, so placement, routing and
+the fixed front end all cancel
+([pma-vs-pcs-loopback.txt](pma-vs-pcs-loopback.txt)):
+
+| wire-to-wire min | near-end PMA | near-end PCS | difference |
+|---|---|---|---|
+| first bring-up | 152 cy / 471.7 ns | 149 cy / 462.4 ns | 3 cy / **9.31 ns** |
+| second bring-up | 153 cy / 474.8 ns | 150 cy / 465.5 ns | 3 cy / **9.31 ns** |
+
+The absolute minimum moves a cycle between bring-ups — it is the best of 70
+samples — but the bracket is exactly three cycles both times. The control is the
+loaded probe: `decode→order` reads 14 / 27.2 / 64 cycles in all four runs,
+because it lives in the fabric and never crosses the MAC. Had the difference come
+from anything but the MAC path, that would have moved too.
+
+So of the 305.0 ns term, **~9.3 ns is GT PMA and ~276 ns is the CMAC's own MAC
+and PCS** — 90 % of it, and 58 % of the whole 471.7 ns wire-to-wire minimum. The
+pessimistic case, where the PMA dominates and a custom block is chasing scraps,
+is excluded. What this does *not* say is that 276 ns is recoverable: a custom
+block still frames, encodes, scrambles, locks and deskews. It bounds the prize,
+not the winnings ([step8-hw/PCS_MAC_SCOPE.md](../step8-hw/PCS_MAC_SCOPE.md)).
+
 ### 7.6.2 What multi-symbol costs the single-symbol build — real, and mostly structural
 
 Wiring `NSYM` through the datapath moved the `NSYM = 1` build from **225.5 to

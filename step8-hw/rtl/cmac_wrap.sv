@@ -58,7 +58,8 @@ module cmac_wrap #(
   // ---- housekeeping ----
   input  logic              init_clk,       // free-running 100 MHz, also DRP
   input  logic              sys_rst,        // active high
-  input  logic              loopback_en,    // 1 = near-end PMA loopback
+  input  logic [2:0]        loopback_mode,  // GT loopback, per lane: 000 off,
+                                            // 001 near-end PCS, 010 near-end PMA
 
   // ---- the stream clock the MAC produces; everything below is in it ----
   output logic              tx_clk,         // gt_txusrclk2, 322.265625 MHz
@@ -138,8 +139,17 @@ module cmac_wrap #(
 
 `ifndef CMAC_SIM
   // ================= the real MAC =================
-  // Near-end PMA loopback is three bits per lane, four lanes: 010 repeated.
-  wire [11:0] loopback = loopback_en ? 12'b010_010_010_010 : 12'b000_000_000_000;
+  // gt_loopback_in is three bits per lane, four lanes: the mode repeated.
+  //
+  // 010 near-end PMA is what every Phase B measurement uses -- it goes through
+  // the full transmit and receive PMA, so the SerDes, the CDR and the elastic
+  // buffer are all inside the number. 001 near-end PCS turns back BEFORE the
+  // serializer, so the same measurement taken both ways brackets the PMA:
+  // (PMA round trip) - (PCS round trip) is the serializer, deserializer, CDR and
+  // elastic buffer, which is the part of the MAC term no custom PCS/MAC could
+  // ever recover. That is the point of making this selectable rather than fixed
+  // -- see step8-hw/PCS_MAC_SCOPE.md.
+  wire [11:0] loopback = {4{loopback_mode}};
 
   // rx_clk is driven from gt_txusrclk2 because the IP is generated with the RX
   // elastic buffer enabled (RX_GT_BUFFER=1); that is what puts the RX stream in

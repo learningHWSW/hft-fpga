@@ -64,6 +64,12 @@ struct Options {
   // the card, which would make publishing them a decoration.
   unsigned    rto     = 0;                // cfg_rto_cycles, 0 = disabled
   unsigned    rto_retries = 3;            // attempts per unacknowledged frame
+  // Which GT loopback Phase B runs in. "pma" is the default and what every
+  // measurement before this used. "pcs" turns back before the serializer, so
+  // the same run taken both ways brackets the PMA term -- see
+  // step8-hw/PCS_MAC_SCOPE.md. Same bitstream either way, so the difference is
+  // not contaminated by placement.
+  std::string loopback = "pma";           // pma | pcs | off
   // Extra tracked symbols, "<locate>:<band_base>:<STOCK>", repeatable. Symbol 0
   // is --loc/--base and always AAPL; these are symbols 1.. in the per-symbol
   // register block. A bitstream built with NSYM=1 has nowhere to put them, so
@@ -79,6 +85,9 @@ void usage() {
     "  --capture <f>  where to write the capture image (default capture.bin)\n"
     "  --device <bdf> card to use (default 0000:08:00.1)\n"
     "  --gap <n>      idle cycles between injected frames (default 48)\n"
+    "  --loopback <m> Phase B GT loopback: pma (default, through the SerDes),\n"
+    "                 pcs (turns back before the serializer), or off. The PMA\n"
+    "                 minus PCS difference is the SerDes/CDR term\n"
     "  --loc <n>      tracked locate (default 13; use 1 for the synthetic feed)\n"
     "  --base <n>     price band base (default 2800000; 1500000 synthetic)\n"
     "  --records <n>  capture capacity in records (default 8192)\n"
@@ -341,6 +350,34 @@ int run(Options o) {
   d.wr(K_CP_RECS,     o.records);
   d.wr(K_L_QUIET,     o.quiet);
   d.wr(K_CTRL,        K_CTRL_CLEAR_CAPTURE | K_CTRL_CLEAR_LATENCY);
+
+  // GT loopback select, written before the link is allowed to train: changing
+  // it afterwards would mean re-aligning, and the point of doing it here is
+  // that PMA and PCS runs differ in nothing but this register.
+  if (phase_b) {
+    uint32_t lb = K_CTRL_LB_WE;
+    if      (o.loopback == "pma") lb |= K_CTRL_LB_ON | K_CTRL_LB_PMA;
+    else if (o.loopback == "pcs") lb |= K_CTRL_LB_ON | K_CTRL_LB_PCS;
+    else if (o.loopback == "off") lb |= 0;
+    else {
+      std::cerr << "FAIL: --loopback must be pma, pcs or off (got \""
+                << o.loopback << "\")\n";
+      return 1;
+    }
+    d.wr(K_CTRL, lb);
+    const uint32_t mode = (d.rd(K_CTRL) >> K_CTRL_LB_MODE_SHIFT) & 0x7u;
+    std::printf("loopback: %s (gt_loopback_in=%03o per lane)\n",
+                o.loopback.c_str(), mode);
+    // A silent disagreement here would put the wrong label on the measurement,
+    // which is the one failure this whole comparison cannot tolerate.
+    const uint32_t want = (o.loopback == "pcs") ? 1u
+                        : (o.loopback == "pma") ? 2u : 0u;
+    if (mode != want) {
+      std::cerr << "FAIL: loopback readback " << mode << " != requested "
+                << want << " -- the bitstream predates --loopback\n";
+      return 1;
+    }
+  }
 
   configure(d, o);
 
@@ -669,6 +706,7 @@ int main(int argc, char** argv) {
       else if (a == "--loc")     o.locate  = std::stoul(next());
       else if (a == "--base")    o.band    = std::stoul(next());
       else if (a == "--records") o.records = std::stoul(next());
+      else if (a == "--loopback") o.loopback = next();
       else if (a == "--rto") o.rto = std::stoul(next());
       else if (a == "--rto-retries") o.rto_retries = std::stoul(next());
       else if (a == "--sym") o.syms.push_back(next());

@@ -92,6 +92,7 @@ step8-hw/syn/vitis_b.ini
 
 # build products and host binary
 *.xclbin
+*.xclbin.*
 *.xclbin.info
 *.xclbin.link_summary
 *.xo
