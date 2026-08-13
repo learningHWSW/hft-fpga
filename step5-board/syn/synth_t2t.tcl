@@ -64,7 +64,17 @@ lassign $dirsets($dset) d_place d_phys d_route
 set here   [file dirname [file normalize [info script]]]
 set root   [file dirname $here]
 set repo   [file dirname $root]
-set outdir $here/out_t2t-f$fast-$dset[expr {$nsym > 1 ? "-n$nsym" : ""}]
+
+# The order table geometry. Read HERE rather than beside its use below, because
+# it is part of the build's identity and so has to be in the directory name:
+# NSYM=2 at 2^13 and NSYM=2 at 2^14 are different builds that answer different
+# questions, and until this was in the name they wrote to the same directory.
+# That is not hypothetical -- the 2^14 sweep behind FINDINGS 4.4 was one command
+# away from being overwritten by its own re-run.
+set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
+set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
+
+set outdir $here/out_t2t-f$fast-$dset[expr {$nsym > 1 ? "-n$nsym" : ""}][expr {$ot_sets_bits != 13 ? "-s$ot_sets_bits" : ""}]
 file mkdir $outdir
 
 set srcs [list \
@@ -115,8 +125,8 @@ read_xdc $gen_xdc
 # same 2^16 x 8 the simulations verify -- and since otable_mem no longer
 # selects between two descriptions (FINDINGS 4.5), that is now true of the card
 # build as well, which it was not when this comment first claimed it.
-set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
-set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
+# (ot_sets_bits and ot_ways are read near the top, with the output directory
+# name that depends on them.)
 
 puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} fast_bbo=$fast nsym=$nsym ==="
 synth_design -top t2t_top -part $part -mode out_of_context \
@@ -195,5 +205,5 @@ if {$mode eq "impl"} {
   write_checkpoint -force $outdir/post_route.dcp
   summarize IMPL $period
 }
-puts "SUMMARY_BUILD: fast=$fast dirset=$dset nsym=$nsym period=$period outdir=[file tail $outdir]"
+puts "SUMMARY_BUILD: fast=$fast dirset=$dset nsym=$nsym sets=$ot_sets_bits ways=$ot_ways period=$period outdir=[file tail $outdir]"
 puts "=== DONE mode=$mode ==="

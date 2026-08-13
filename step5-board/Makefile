@@ -172,13 +172,18 @@ impl-t2t:
 SWEEP_DIRSETS = default explore netdly fanout
 SWEEP_FAST   ?= 0 1
 SWEEP_NSYM   ?= 1
+# The order-table geometry is part of a build's identity too, and it was NOT in
+# these names: a NSYM=2 sweep at 2^13 and one at 2^14 wrote to the same logs and
+# the same output directories. Tagged the same way synth_t2t.tcl tags the
+# directory -- omitted at the default so existing artefacts keep their names.
+SWEEP_SETS_TAG = $(if $(filter-out 13,$(OT_SETS_BITS)),-s$(OT_SETS_BITS))
 sweep-t2t:
 	@$(XSETUP) for n in $(SWEEP_NSYM); do \
 	  for f in $(SWEEP_FAST); do \
 	    for d in $(SWEEP_DIRSETS); do \
 	      echo "=== launching fast=$$f nsym=$$n dirset=$$d ==="; \
 	      vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl \
-	        -tclargs $(T2T_ARGS) $$f $$d $$n > syn/sweep-f$$f-n$$n-$$d.log 2>&1 & \
+	        -tclargs $(T2T_ARGS) $$f $$d $$n > syn/sweep-f$$f-n$$n$(SWEEP_SETS_TAG)-$$d.log 2>&1 & \
 	    done; \
 	    wait; \
 	  done; \

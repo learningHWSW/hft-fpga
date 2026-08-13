@@ -4,5 +4,10 @@
 
 # Vivado synth/impl outputs
 syn/out*/
+# Preserved sweep artefacts: a baseline kept next to the run that replaced it,
+# so a before/after is still a before/after after the rebuild. Same reason
+# syn/out*/ is ignored -- checkpoints are ~50 MB each. The NUMBERS that matter
+# go to data/ as text.
+syn/baseline-*/
 *.hex
 *.frames

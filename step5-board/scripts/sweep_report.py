@@ -38,14 +38,20 @@ import sys
 def parse(path):
     """One transcript -> a dict, or None if it never got to a build line."""
     txt = open(path, errors="replace").read()
-    m = re.search(r"SUMMARY_BUILD: fast=(\d+) dirset=(\S+)(?: nsym=(\d+))? period=(\S+)",
-                  txt)
+    m = re.search(r"SUMMARY_BUILD: fast=(\d+) dirset=(\S+)(?: nsym=(\d+))?"
+                  r"(?: sets=(\d+))?(?: ways=\d+)? period=(\S+)", txt)
     if not m:
         return None
     r = {"path": path, "fast": int(m.group(1)), "dirset": m.group(2),
          # nsym is optional so transcripts written before it existed still parse
          "nsym": int(m.group(3)) if m.group(3) else 1,
-         "period": float(m.group(4))}
+         # ...and so is sets, which reached this line even later. Deliberately
+         # NOT defaulted to 13: a transcript that predates the field could have
+         # been any geometry, and the 2^14 sweep behind FINDINGS 4.4 is exactly
+         # such a transcript. Backfilling the default would print a specific
+         # wrong number where the honest answer is that the build did not say.
+         "sets": int(m.group(4)) if m.group(4) else None,
+         "period": float(m.group(5))}
 
     def grab(pat, cast=float):
         g = re.search(pat, txt)
@@ -101,56 +107,97 @@ def main(argv):
         print("!! experiment. Delete syn/sweep-f*.log and re-run the whole set.\n")
     else:
         print(f"built by Vivado {tools[0]}\n")
-    hdr = ("{:<8} {:>4} {:<9} {:>9} {:>9} {:>9} {:>8} {:<9}  {}"
-           .format("fast_bbo", "nsym", "dirset", "fMAX MHz", "WNS ns", "TNS ns",
-                   "failing", "tool", "worst core_clk path is in"))
+    unknown = [r for r in runs if r["sets"] is None]
+    if unknown:
+        print(f"!! {len(unknown)} transcript(s) predate the sets= field, so their table")
+        print("!! geometry is unknown and shown as '?'. Two builds differing only in")
+        print("!! geometry are indistinguishable here -- re-run them to get it labelled.\n")
+    hdr = ("{:<8} {:>4} {:>5} {:<9} {:>9} {:>9} {:>9} {:>8} {:<9}  {}"
+           .format("fast_bbo", "nsym", "sets", "dirset", "fMAX MHz", "WNS ns",
+                   "TNS ns", "failing", "tool", "worst core_clk path is in"))
     print(hdr)
     print("-" * len(hdr))
-    for r in sorted(runs, key=lambda x: (x["nsym"], x["fast"], -x["fmax"])):
+    for r in sorted(runs, key=lambda x: (x["nsym"], x["sets"] or 0, x["fast"], -x["fmax"])):
         src = r["worst"].split(" -> ")[0]
-        print("{:<8} {:>4} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8} {:<9}  {}"
-              .format(r["fast"], r["nsym"], r["dirset"], r["fmax"], r["wns"],
+        print("{:<8} {:>4} {:>5} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8} {:<9}  {}"
+              .format(r["fast"], r["nsym"], (f"2^{r['sets']}" if r["sets"] else "?"), r["dirset"],
+                      r["fmax"], r["wns"],
                       r["tns"] if r["tns"] is not None else float("nan"),
                       r["failing"] if r["failing"] is not None else "?",
                       r["tool"], owner(src)))
 
     print()
-    # Group on whichever axis this sweep actually varied. A sweep that moved
-    # NSYM and a sweep that moved USE_FAST_BBO are asking different questions,
-    # and labelling both "fast_bbo / ladder only" would answer neither.
-    axis = "nsym" if len({r["nsym"] for r in runs}) > 1 else "fast"
-    labels = ({v: f"NSYM={v}" for v in sorted({r["nsym"] for r in runs})}
-              if axis == "nsym" else {0: "ladder only", 1: "fast_bbo"})
-    best = {}
-    for v in sorted({r[axis] for r in runs}):
-        got = [r["fmax"] for r in runs if r[axis] == v]
-        if not got:
-            continue
-        best[v] = max(got)
-        print("{:<13} n={}  best {:.1f} MHz  worst {:.1f} MHz  "
-              "spread within config {:.1f} MHz"
-              .format(labels.get(v, str(v)), len(got), max(got), min(got),
-                      max(got) - min(got)))
+    # A CONFIGURATION is every knob except the directive set -- the directive is
+    # what a sweep varies to sample the tool, everything else defines what is
+    # being built. Grouping on one knob at a time was wrong the moment two could
+    # move together: a table holding NSYM=1 at 2^13 and NSYM=2 at 2^14 was
+    # reported as the cost of "a second symbol", when the geometry had moved too.
+    KNOBS = (("fast_bbo", "fast"), ("NSYM", "nsym"), ("sets", "sets"))
 
-    if len(best) == 2:
-        lo, hi = sorted(best)
-        cost = best[lo] - best[hi]
-        spread = max(
-            (max(x["fmax"] for x in runs if x[axis] == v)
-             - min(x["fmax"] for x in runs if x[axis] == v))
-            for v in best)
-        what = ("a second symbol" if axis == "nsym" else "the fast path")
-        print(f"\nbest-to-best cost of {what}: {cost:+.1f} MHz")
-        print(f"largest spread within a single configuration: {spread:.1f} MHz")
-        # The comparison the whole sweep exists to make. A difference smaller
-        # than the spread inside either configuration is not measurable here --
-        # which is a real finding, not a failure to find one.
-        if abs(cost) <= spread:
-            print("=> the difference is within the tool's own run-to-run "
-                  "spread: not a measurable cost at this sample size.")
+    def key(r):
+        return tuple(r[k] for _, k in KNOBS)
+
+    def label(k):
+        return "  ".join(
+            f"{name}={v}" if name != "sets"
+            else (f"table=2^{v}" if v else "table=?")
+            for (name, _), v in zip(KNOBS, k))
+
+    groups = {}
+    for r in runs:
+        groups.setdefault(key(r), []).append(r)
+
+    # Builds that MISSED TIMING are not part of a spread. A configuration where
+    # three of four directives fail is not "noisy", it is a configuration that
+    # does not close, and averaging the failures in reports a closure problem as
+    # tool variance. They are counted and named instead.
+    stats = {}
+    for k in sorted(groups, key=lambda t: tuple(x or 0 for x in t)):
+        g = groups[k]
+        closing = [r for r in g if r["failing"] == 0]
+        failed = [r for r in g if r["failing"] != 0]
+        line = "{:<34} n={}".format(label(k), len(g))
+        if closing:
+            f = [r["fmax"] for r in closing]
+            stats[k] = (max(f), max(f) - min(f))
+            line += ("  closes {}/{}  best {:.1f} MHz  worst {:.1f} MHz  "
+                     "spread {:.1f} MHz".format(len(closing), len(g),
+                                                max(f), min(f), max(f) - min(f)))
         else:
-            print("=> the difference exceeds the spread within either "
-                  "configuration: a real cost.")
+            line += "  closes 0/{}  NO DIRECTIVE MEETS TIMING".format(len(g))
+        print(line)
+        if failed:
+            print("{:<34}    missed timing: {}".format(
+                "", ", ".join(f"{r['dirset']}({r['failing']})" for r in
+                              sorted(failed, key=lambda x: x["dirset"]))))
+
+    if len(groups) == 2:
+        a, b = sorted(groups, key=lambda t: tuple(x or 0 for x in t))
+        moved = [name for (name, _), va, vb in zip(KNOBS, a, b) if va != vb]
+        print()
+        if len(moved) > 1:
+            # The guard that would have caught the misreading above.
+            print("!! these two configurations differ in " + " AND ".join(moved) +
+                  ", so no")
+            print("!! single-knob cost can be attributed. Re-run varying one.")
+        elif len(stats) < 2:
+            print("no best-to-best comparison: a configuration has no build "
+                  "that meets timing,")
+            print("which is the finding -- it is not a slower build, it is not "
+                  "a shippable one.")
+        else:
+            cost = stats[a][0] - stats[b][0]
+            spread = max(s[1] for s in stats.values())
+            print(f"best-to-best cost of {moved[0]}: {cost:+.1f} MHz")
+            print(f"largest spread within a single configuration: {spread:.1f} MHz")
+            # A difference smaller than the spread inside either configuration is
+            # not measurable here -- a real finding, not a failure to find one.
+            if abs(cost) <= spread:
+                print("=> the difference is within the tool's own run-to-run "
+                      "spread: not a measurable cost at this sample size.")
+            else:
+                print("=> the difference exceeds the spread within either "
+                      "configuration: a real cost.")
 
     if incomplete:
         print("\nincomplete runs (no post-route summary):")
