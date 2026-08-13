@@ -1,4 +1,4 @@
-// Self-checking TB for feed_ab_arb. Runs under xsim and Verilator.
+// Self-checking TB for feed_ab_arb. Runs under xsim.
 //
 // Drives the two redundant lines concurrently (each line's frames from
 // gen_ab.py, with different drops) and checks the merged output equals the

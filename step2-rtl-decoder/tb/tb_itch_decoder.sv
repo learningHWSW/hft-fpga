@@ -5,8 +5,7 @@
 // every decoded message to decode_rtl.log in a canonical text format. The
 // Makefile diffs that log against scripts/dump_itch.py output (golden).
 //
-// Runs unmodified under xsim (xvlog/xelab/xsim) and Verilator --binary
-// --timing.
+// Runs under xsim (xvlog/xelab/xsim).
 `timescale 1ns/1ps
 
 module tb_itch_decoder;

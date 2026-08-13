@@ -10,7 +10,7 @@
 // are cycles apart by construction), but GAP is logged before HB since a
 // heartbeat can reveal a gap in the same header cycle.
 //
-// Runs unmodified under xsim and Verilator --binary --timing.
+// Runs under xsim.
 `timescale 1ns/1ps
 
 module tb_mold_stripper;

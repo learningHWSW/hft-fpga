@@ -86,8 +86,8 @@ module mold_splitter #(
   // NOTE: use a direct bit-select, not w_be16(0). A function that reads the
   // module signal `win` (not an argument) has no `win` in its sensitivity
   // when called from a continuous assign, so xsim never re-evaluates it and
-  // msglen sticks at X. (Verilator inlines and happens to track it.) The
-  // big-endian length prefix is win bytes 0..1: {byte0, byte1}.
+  // msglen sticks at X. The big-endian length prefix is win bytes 0..1:
+  // {byte0, byte1}.
   // msglen is REGISTERED, not read out of `win` combinationally. Reading it
   // from the window put win -> length -> readiness compare -> consume -> vcnt
   // arithmetic in one cycle, which became the critical path once the book was

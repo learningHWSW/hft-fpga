@@ -1,4 +1,4 @@
-// Self-checking TB for igmp_query_detect. Runs under xsim and Verilator.
+// Self-checking TB for igmp_query_detect. Runs under xsim.
 //
 // Drives crafted first-beat frames and checks o_query fires for exactly the
 // queries RFC 2236 says to answer, and for nothing else:

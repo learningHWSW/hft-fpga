@@ -2,7 +2,7 @@
 //
 // The real t2t_core_clk is a Vivado Clocking Wizard IP (see
 // create_t2t_core_clk.tcl) that generates 200 MHz core_clk from the 322.265625
-// MHz cmac_clk. Verilator cannot elaborate the IP, so this stub with identical
+// MHz cmac_clk. Lint runs without generating the IP, so this stub with identical
 // ports lets `make lint-opennic` prove the box wiring. It is NOT used in the
 // Vivado build -- there the IP of the same module name wins.
 `timescale 1ns/1ps

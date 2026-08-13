@@ -3,7 +3,7 @@
 // Drives s0 (2-beat "order" frames) and s1 (1-beat "report" frames) offered at
 // the same time and checks the merged stream is frame-atomic: between a beat
 // with tlast=0 and the next beat, the source never changes. Also checks both
-// sources drain and s0 (priority) is not starved. Runs under Verilator/xsim.
+// sources drain and s0 (priority) is not starved. Runs under xsim.
 `timescale 1ns/1ps
 module tb_axis_tx_arb;
   localparam int DATA_W = 512;

@@ -1,4 +1,4 @@
-// Self-checking TB for axil_regfile. Runs under xsim and Verilator --binary.
+// Self-checking TB for axil_regfile. Runs under xsim.
 //
 // Proves the register file without a card: write every config word with a
 // distinct pattern and read it back (round-trip), check the assembled wide

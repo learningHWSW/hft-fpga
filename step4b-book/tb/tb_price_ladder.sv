@@ -7,7 +7,7 @@
 // no order-table output is dropped by the ladder (rate is decoder-limited),
 // overflow_cnt==0 (table sized), and oob_cnt==0 (price band wide enough).
 //
-// Runs unmodified under xsim and Verilator --binary --timing.
+// Runs under xsim.
 `timescale 1ns/1ps
 
 module tb_price_ladder;

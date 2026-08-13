@@ -1,4 +1,4 @@
-// Self-checking TB for arp_responder. Runs under xsim and Verilator.
+// Self-checking TB for arp_responder. Runs under xsim.
 //
 // Drives ARP frames on the RX tap and checks the reply is byte-exact and only
 // fires for the right thing:

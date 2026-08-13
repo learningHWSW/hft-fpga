@@ -1,4 +1,4 @@
-// Self-checking TB for igmp_join. Runs under xsim and Verilator --binary.
+// Self-checking TB for igmp_join. Runs under xsim.
 //
 // Proves the membership report is correct to the byte and that each trigger
 // produces the right number of them. gen_igmp.py writes the golden frame as

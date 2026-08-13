@@ -9,7 +9,7 @@
 // AAPL). Asserts no decoded message is dropped (table always ready in time)
 // and overflow_cnt==0 (table sized for the symbol, FINDINGS §4.2).
 //
-// Runs unmodified under xsim and Verilator --binary --timing.
+// Runs under xsim.
 `timescale 1ns/1ps
 
 module tb_order_table;

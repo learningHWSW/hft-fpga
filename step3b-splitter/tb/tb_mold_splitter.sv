@@ -8,7 +8,7 @@
 // GAP/HB/EOS events to splitter_rtl.log; the Makefile diffs it against
 // scripts/dump_mold.py (same golden as step 3a — format is width-agnostic).
 //
-// Runs unmodified under xsim and Verilator --binary --timing.
+// Runs under xsim.
 `timescale 1ns/1ps
 
 module tb_mold_splitter;
