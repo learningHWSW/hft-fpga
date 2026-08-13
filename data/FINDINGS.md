@@ -284,6 +284,65 @@ demands — but it is directive-sensitive in a way the single-symbol build is no
 and that is a fact worth knowing before committing to four names rather than
 after.
 
+*That last sentence no longer describes the design — §4.4.1 fixed it. The table
+and reasoning above are kept as the finding that motivated the fix, and because
+the capacity numbers in them are unaffected.*
+
+#### 4.4.1 The directive that closes was a property of the tool, so it got fixed
+
+The table above was built on **2023.2**, before the toolchain was pinned (§7.6.4).
+Re-running the same configuration on **2025.2.1** still closed on exactly one
+directive of four — a *different* one
+([nsym2-sets14-toolchain.txt](nsym2-sets14-toolchain.txt)):
+
+| dirset | 2023.2 WNS / failing | 2025.2.1 WNS / failing |
+|---|---|---|
+| default | −0.112 / 33 | −0.054 / 22 |
+| explore | −0.022 / 7 | −0.134 / 63 |
+| fanout | −0.034 / 3 | **+0.018 / 0** |
+| netdly | **+0.029 / 0** | −0.153 / 58 |
+
+`netdly` goes from best in the set to worst. That kills the cheap answer: pinning
+the working directive in the Makefile would have silently produced a
+58-failing-endpoint build the day the toolchain pin landed, with no RTL change and
+no warning. Whichever directive is pinned, a tool upgrade can invalidate it.
+
+**So it was fixed structurally, at two paths that were measured rather than
+guessed** ([nsym2-sets14-closure.txt](nsym2-sets14-closure.txt)):
+
+1. `otable_mem` never set `CASCADE_HEIGHT`, so the tool chose, and its choice
+   deepens with the table — 2¹³ is 2 URAM deep per way, 2¹⁴ is 4. Capped at 2, the
+   depth of the geometry that closes 4 of 4, which makes it a no-op at 2¹³.
+2. With that gone the binding path moved off the table entirely, to `fast_bbo`'s
+   quantity update: `cur_qty - i_rem_qty` chained into `+ i_add_qty` is two 32-bit
+   carry chains in series whenever a delta both removes from and adds to the best
+   level, which is what a `U` does. Selecting the operands first lets the tool
+   fuse `a - b + c` into one chain — no pipeline stage, so no tick-to-trade cost.
+
+|  | closes | worst WNS | failing endpoints | fMAX range |
+|---|---|---|---|---|
+| baseline (2025.2.1) | 1 of 4 | −0.153 | 143 | 209.6–217.4 |
+| + `CASCADE_HEIGHT=2` | 2 of 4 | −0.025 | 3 | 215.4–217.6 |
+| + fused `q_net` | 2 of 4 | **−0.001** | **2** | **216.5–219.8** |
+
+**It is not 4 of 4, and the honest reading is that this no longer matters.**
+`default` and `netdly` miss by **0.001 ns on one endpoint each** — the smallest
+non-zero violation the tool can report — against a 4.618 ns out-of-context
+yardstick that sits **21 MHz above the 195.3 MHz the wire demands**. Every
+directive now produces a shippable build; what two of them fail is a reference
+line, not a requirement.
+
+The binding path moved at every step — message FIFO → URAM, then delta FIFO →
+`fast_bbo` quantity, now the ladder's `r_add_diff` and the delta FIFO again. That
+is what a design sitting on its constraint looks like, not one structural defect
+left unfixed, and it is why the next step was not another iteration: the remaining
+lever is a pipeline stage, which would spend a core cycle of tick-to-trade to buy
+a picosecond nothing depends on.
+
+What survives from §4.4 unchanged is the reason `NSYM` and `OT_SETS_BITS` are
+separate knobs. The table still costs what it costs; it is now merely no longer
+directive-sensitive about it.
+
 Cell counts confirm the split: NSYM=1→2 at the same geometry is +32,687 LUTs and
 +2 URAM; the resize adds a further **+64 URAM** (68 → 132) and eight LUTs.
 

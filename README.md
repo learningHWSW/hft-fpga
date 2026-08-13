@@ -359,11 +359,15 @@ Honest scope, all of it stated in the per-step READMEs.
   that a sweep does not reproduce and attributed it to a specific carry chain
   that is not critical in any of the eight builds (`FINDINGS` §7.7). What is swept
   is `NSYM = 1` at both `USE_FAST_BBO` settings, and `NSYM = 2` at both order-table
-  geometries (`FINDINGS` §4.4). Three of those four configurations close on all
-  four directives; `NSYM = 2` at 2¹⁴ × 16 closes on **one**, at 217.9 MHz, with the
-  spread blown out from 1.3 to 6.5 MHz. That still clears the 195.3 MHz the wire
-  demands, so the two-symbol design is shippable — but a single-directive result
-  is a thinner piece of evidence than the others here, and it is quoted as one.
+  geometries (`FINDINGS` §4.4). All four configurations now produce a shippable
+  build on every directive. `NSYM = 2` at 2¹⁴ × 16 used to close on **one**
+  directive of four — and on a *different* one after the toolchain was pinned,
+  which is what ruled out simply pinning the directive that worked. Two structural
+  fixes took it from 143 failing endpoints to 2 (§4.4.1); what remains is two
+  builds missing the out-of-context yardstick by **0.001 ns on one endpoint** —
+  the smallest violation the tool can report — against a constraint sitting 21 MHz
+  above the 195.3 MHz the wire demands. Quoted as what it is: a reference line
+  those builds miss, not a requirement.
 - **The MAC is the larger half of the latency, and untouched.** ~207 ns in the
   fabric against **~300 ns** in MAC, SerDes and framing. It is close to
   irreducible: ~285 ns sits inside `cmac_usplus` and the GT, already generated with
@@ -440,13 +444,18 @@ Honest scope, all of it stated in the per-step READMEs.
   books are free: replicating the ladder, fast-BBO tracker and sweep detector
   costs **+32,687 LUTs (+58 %)** and **no measurable fMAX** — 220.7 MHz best of
   four directive sets against 220.0 at one symbol, inside the spread. The table
-  is not free: growing it to the 2¹⁴ × 16 a second name needs adds **+64 URAM**
-  and leaves **three of four builds missing timing**, because that is the
-  cascaded-URAM region that made the larger geometry unshippable in the first
-  place. Only one directive closes, at 217.9 MHz — still above the 195.3 MHz the
-  wire demands, but directive-sensitive in a way the single-symbol build is not.
-  That is exactly why `NSYM` and `OT_SETS_BITS` are separate knobs that move
-  together by hand. The register map holds five symbols: 1–4 have a config block
+  is not free: growing it to the 2¹⁴ × 16 a second name needs adds **+64 URAM**,
+  and it used to leave **three of four builds missing timing** — the cascaded-URAM
+  region that made the larger geometry unshippable in the first place. That has
+  been fixed at two measured paths rather than worked around: capping the order
+  table's URAM cascade at the depth the shipping geometry already uses, and fusing
+  `fast_bbo`'s quantity update from two serial carry chains into one. **143 failing
+  endpoints became 2**, and every directive now builds between 216.5 and
+  219.8 MHz (`FINDINGS` §4.4.1). Neither fix costs a cycle. What is *not* claimed
+  is four of four: two builds still miss the out-of-context yardstick by a
+  picosecond, which says more about the yardstick than the design. `NSYM` and
+  `OT_SETS_BITS` remain separate knobs that move together by hand, because the
+  table still costs what it costs. The register map holds five symbols: 1–4 have a config block
   at `0x0C0`–`0x0FF` and positions at `0x180`–`0x18C`, while symbol 0 keeps the
   registers it always had, because moving it would repoint offsets that shipped.
 - **All three flows build the same order table, and did not used to.**
