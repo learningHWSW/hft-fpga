@@ -3,90 +3,56 @@
 A low-latency **tick-to-trade** pipeline in SystemVerilog RTL: NASDAQ **ITCH 5.0**
 market data in off the wire, an order out to the exchange, entirely on the FPGA.
 
-## Introduction
-
 The FPGA parses the feed, maintains an L2 order book, runs two measured trading
 signals, and assembles the OUCH / SoupBinTCP / TCP order frame — wire to wire,
-with no host in the hot path. The software half owns only what is stateful and
-not latency-critical: session login, heartbeats, order-acknowledgement feedback
-and register configuration.
+with no host in the hot path. Software owns only what is stateful and not
+latency-critical: session login, heartbeats, ack/fill feedback, register config.
 
-Two commitments shape the whole project:
+Two commitments shape the project:
 
-**Every stage is diffed against a software golden.** A C or Python reference
-emits a canonical log, the self-checking testbench emits the same format, and the
-Makefile diffs them. An empty diff is the only pass. The OUCH/TCP output is
-checked a third time by an independent decoder, so a mistake shared by the RTL
-and its golden cannot agree with itself unnoticed.
+- **Every stage is diffed against a software golden.** A C or Python reference
+  emits a canonical log, the self-checking testbench emits the same format, and
+  `make test` diffs them; an empty diff is the only pass. The OUCH/TCP output is
+  checked a third time by an independent decoder.
+- **Every design parameter is measured, not guessed.** FIFO depths, hash
+  function, table geometry, price-band width and the strategy thresholds all come
+  from a full trading day of NASDAQ data ([`data/FINDINGS.md`](data/FINDINGS.md)).
 
-**Every design parameter is measured, not guessed.** FIFO depths, hash function,
-table geometry, price-band width and the strategy thresholds all come from a real
-full trading day of NASDAQ data ([`data/FINDINGS.md`](data/FINDINGS.md)), and
-several of those measurements reversed the intuitive choice.
+> Design rationale and per-step definition-of-done: [PLAN.md](PLAN.md) ·
+> End-to-end data-path design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
+> The measurements behind every sizing decision: [data/FINDINGS.md](data/FINDINGS.md)
 
-### Results on silicon
+## Results on silicon
 
 Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session:
 
 | | |
 |---|---|
-| **Wire-to-wire, through a real 100 G MAC** | **471.7 ns** min / 551.9 ns mean / 747.8 ns max, 70 samples, none excluded |
+| **Wire-to-wire, through a real 100 G MAC** | **471.7 ns** min / 551.9 mean / 747.8 max, 70 samples, none excluded |
 | Decoder-to-order under load | **14 core cycles** min / 27.2 mean / 64 max |
+| In-fabric only (first RX beat to first TX beat) | **166.7 ns** min / 236.4 mean |
 | Fast book path vs. the ladder | 1,174 of 1,779 BBO records answered early, **`st_bbo_mismatch = 0`** |
-| In-fabric only (first RX beat to first TX beat) | **166.7 ns** min / 236.4 ns mean |
 | Order frames vs. the software golden | **70 / 70 byte-identical**, zero drops |
 | MAC frames passed | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |
-| Full chain post-route (out of context) | **225.5 MHz** best of four directive sets (221.7 worst), above the 195.3 MHz a 100 Gb/s wire demands |
+| Full chain post-route (out of context) | **225.5 MHz** best of four directive sets, above the 195.3 MHz a 100 Gb/s wire demands |
 
-Under load the floor never moves — **14 core cycles at every offered rate**,
-down from 23 before the fast path — but from 25 to 41 M msg/s the mean grows
-1.59× while the **max grows 2.03×, to 688 ns**: quoting a mean for this design
-would mislead. Saturation is a knee rather than a shoulder, between 41 and
-47 M msg/s, which is 20–40× the real NASDAQ peak. Every non-saturated point is
-byte-identical to the golden: the pipeline degrades by **dropping and
-counting**, never by emitting a wrong order.
+- The MAC is the larger half: ~300 ns of the 471.7 ns, of which only ~9–12 ns is
+  ours. The fabric is ~167 ns.
+- The floor never moves under load — **14 core cycles at every offered rate** —
+  but from 25 to 41 M msg/s the mean grows 1.59× while the **max grows 2.03×, to
+  688 ns**. Quoting a mean for this design would mislead.
+- Saturation is a knee, between 41 and 47 M msg/s — 20–40× the real NASDAQ peak.
+  The pipeline degrades by **dropping and counting**, never by emitting a wrong
+  order; every non-saturated point is byte-identical to the golden.
+- `fast_bbo` bought **515.1 → 471.7 ns** wire-to-wire and 23 → 14 core cycles
+  loaded, moved the saturation knee not at all, and costs +1.6 % LUTs / +2.1 %
+  registers with no measurable fMAX change across four directive sets
+  ([FINDINGS §7.5–7.7](data/FINDINGS.md)).
 
-The fast path moved the whole latency curve down by a constant and **moved the
-saturation knee not at all** — the same gap saturates, dropping 389,995 messages
-against the earlier build's 389,994. It runs beside the ladder rather than
-replacing it, so the rate the design can absorb is unchanged; what it buys is
-latency, at every load (`FINDINGS` §7.5.1).
+## Data path
 
-**The wire-to-wire and loaded figures are now measured with `fast_bbo` in the
-datapath**, on the same real 5 M AAPL replay through the same MAC, so they are
-directly comparable with what the ladder-only build gave: **515.1 → 471.7 ns at
-the minimum** (−43.4 ns) and 579.1 → 551.9 ns at the mean, with the loaded floor
-going **23 → 14 core cycles**. That last number is the fast path's own claim
-landing on silicon — it was predicted to deliver most records "about ten cycles
-early", and it delivers nine. The max moved the wrong way by 2 cycles, which is
-70 samples of noise, not a finding. `st_bbo_mismatch = 0` over the whole replay:
-the fast path never contradicted the ladder on real data.
-
-Both bitstreams were rebuilt, so the whole table moves together. That also buys
-a check worth more than either number: `fast_bbo` sits *between* the two probes,
-so the MAC term (Phase B minus Phase A) and the fixed front end + back end
-(Phase A minus the loaded probe) must not move — and across four separately
-placed and routed builds they reproduce to **305.0 vs 308.4 ns** and **101.6 vs
-99.7 ns**. The improvement is where the change is. The MAC half, still the larger
-half, cannot move.
-
-This section used to add that the fast path costs 9.5 MHz of post-route frequency.
-It does not: that was one build against one build, and across four implementation
-directive sets per configuration the fast path is 3.0 MHz *faster* best-to-best
-with a 5.3 MHz spread inside either — no measurable difference, and a 9.5 MHz
-penalty excluded. Its real price is **+1.6 % LUTs and +2.1 % registers**
-([FINDINGS §7.7](data/FINDINGS.md), [step4b-book](step4b-book/)).
-
-> Design rationale and per-step definition-of-done: [PLAN.md](PLAN.md).
-> End-to-end data-path design: [ARCHITECTURE.md](ARCHITECTURE.md).
-> The measurements behind every sizing decision: [data/FINDINGS.md](data/FINDINGS.md).
-
-## Key Features
-
-### Data path
-
-**RX — market data in.** The feed arrives on two lines and is filtered, stripped
-and re-joined before a single message stream reaches the decoder.
+**RX — market data in.** The feed arrives on two lines, filtered, stripped and
+re-joined before a single message stream reaches the decoder.
 
 ```
                             ┌─► eth/ip/udp A ─► drop_fifo ─┐
@@ -110,12 +76,10 @@ QSFP28 ─► CMAC ─► cdc_fifo ─┤   filter + strip             ├─►
                                                                                └─────┬─────┘
                                                                                      ▼
                                                                                  bbo_merge
-                                                                            the ladder's records,
-                                                                                   sooner
 ```
 
 **TX — order out.** The order frame crosses back to the CMAC clock and wins
-arbitration against the control traffic, so a membership report can never delay a
+arbitration against control traffic, so a membership report can never delay a
 trade.
 
 ```
@@ -134,60 +98,44 @@ trade.
           returns on RX and the measurement spans MAC, PCS and SerDes
 ```
 
-- **No backpressure to the wire.** Bursts are absorbed by FIFOs sized from
-  measurement; overflow is dropped and counted. A market-data front end that
-  stalls the MAC is a broken one.
-- **Two clocks on purpose.** 512 bits at 322 MHz is 165 Gb/s of interface
-  bandwidth for a 100 Gb/s wire, so the throughput floor is 12.5 GB/s ÷ 64 B =
-  **195.3 MHz**. The core runs 215 MHz and joins the CMAC through dual-clock
-  FIFOs on both sides.
+## Design decisions
+
+- **No backpressure to the wire.** FIFOs sized from measurement; overflow is
+  dropped and counted. A front end that stalls the MAC is a broken one.
+- **Two clocks on purpose.** The throughput floor is 12.5 GB/s ÷ 64 B =
+  **195.3 MHz**; the core runs 215 MHz and joins the 322 MHz CMAC through
+  dual-clock FIFOs on both sides.
 - **Order table sized by measurement** — `hash(order_ref)` into 2¹³ × 16 URAM.
   A full trading day gives zero overflow, and an XOR fold beats a multiply-shift
   mixer at lower cost (`FINDINGS §4`).
-- **Several symbols, one chain.** `NSYM` replicates everything a book belongs to
-  — ladder, fast-BBO tracker, sweep detector, the strategy's edge state and
-  position — and shares everything the *wire* belongs to: one order table, one
-  TCP session, one in-flight budget. The delta stream is demultiplexed by symbol
-  and the book streams merged back tagged, so K names cost K ladders' area but
-  keep K ladders' throughput rather than sharing one. Each book's output is
-  byte-identical to what a single-symbol build tracking that name alone emits.
+- **Several symbols, one chain.** `NSYM` replicates everything a book owns —
+  ladder, fast-BBO tracker, sweep detector, edge state, position — and shares
+  everything the *wire* owns: one order table, one TCP session, one in-flight
+  budget. Each book is byte-identical to a single-symbol build tracking that
+  name. Verified at `NSYM = 2` on silicon (AAPL + QQQ); costs +58 % LUTs and
+  ~12 % of absorbable message rate.
+- **Most book updates skip the ladder scan.** `fast_bbo` answers from two
+  registers when it can prove the answer (91 % of real deltas); `bbo_merge`
+  rejoins the two so the record stream is exactly the ladder's, merged on value
+  against a shared baseline.
 - **Two signals, one risk gate.** Order-book imbalance, and sweep / momentum
-  ignition. The sweep path taps the order-table delta and skips the ladder
-  entirely — 19 core cycles against imbalance's 28. Only one of the two has a
-  forward return that beats the cost of acting on it, and the measurements say
-  which (`FINDINGS` §5, §5.3).
-- **Most book updates skip the ladder scan too.** `fast_bbo` answers a delta from
-  two registers when it can prove the answer (91 % of real deltas) and says "ask
-  the ladder" when it cannot; `bbo_merge` rejoins the two so the record stream is
-  the one the ladder alone would have produced — merged on value against a shared
-  baseline, so the two change-detectors agree by construction. On the real replay
-  that is **1,779 records, unchanged, 1,174 of them delivered ~10 cycles early,
-  zero disagreements**. On the step-8 kernel's synthetic chain the loaded-latency
-  probe's four samples move **33 → 24 core cycles** at the minimum, 51 → 47 mean.
+  ignition (19 core cycles against imbalance's 28). Only the sweep has a forward
+  return that beats the cost of acting on it (`FINDINGS §5, §5.3`).
 - **Risk gate is not deferred**: kill switch, position limit, in-flight limit,
-  and a shares-range check, each rejection counted separately so a quiet strategy
-  is distinguishable from a blocked one — and every one of those counters is in
-  the register map, so the distinction is one a host can actually make. That now
-  holds for the wrapper as a whole: **all 32 of `t2t_top`'s status outputs are
-  published, and none terminates in `t2t_axil`.** (Block-internal counters below
-  that boundary — the feed arbiter's source split, `fast_bbo`'s own tallies —
-  are still tied off where they are redundant with a published one.)
-  `step7-host/tests/test_regmap.py` checks the host's list against the RTL read
-  mux itself, so the two cannot drift apart quietly.
-- **The order session is maintained on the card.** `tcp_tx` takes its
-  acknowledgement number from `tcp_rx`, which advances it as the venue's segments
-  arrive rather than reading a shadow register software has to keep fresh;
-  `tx_replay_buf` keeps the last 16 assembled frames; and `tx_rto` re-sends the
-  oldest of them when the acknowledgement stops moving, so a lost order is
-  recovered in the fabric rather than after a host has read a capture buffer. A
-  resend is idempotent twice over — same TCP sequence number, same OUCH token,
-  which the venue is required to ignore — which is what makes it safe to do in
-  hardware at all. Login, heartbeats and fill accounting stay software's.
+  shares-range check — each rejection counted separately and published, so a
+  quiet strategy is distinguishable from a blocked one. All 32 of `t2t_top`'s
+  status outputs reach the register map, and `step7-host/tests/test_regmap.py`
+  checks the host's list against the RTL read mux.
+- **The order session is maintained on the card.** `tcp_tx` takes its ack number
+  from `tcp_rx`; `tx_replay_buf` keeps the last 16 frames; `tx_rto` re-sends the
+  oldest when the ack stops moving. A resend is idempotent twice over — same TCP
+  sequence number, same OUCH token. Login, heartbeats and fill accounting stay
+  software's.
 - **Runs on real silicon** as a Vitis kernel, replaying from HBM, with a real
   `cmac_usplus` and the GT in near-end loopback so MAC, PCS and SerDes are inside
   the measurement.
 
-### Roadmap
+## Roadmap
 
 | Step | Content | Status |
 |---|---|---|
@@ -204,30 +152,23 @@ trade.
 
 ## Quick Start
 
-### Prerequisites
-
-#### Hardware Requirements
+### Requirements
 
 | | |
 |---|---|
 | **Simulation only** | any x86-64 Linux host. No FPGA needed |
-| **On silicon** | **AMD Alveo U55C** (UltraScale+ VU35P, HBM2 16 GB, QSFP28 ×2, PCIe Gen4) |
-| Shell / platform | `xilinx_u55c_gen3x16_xdma_base_3` / `xilinx_u55c_gen3x16_xdma_3_202210_1` |
-| Host for builds | ≥ 32 GB RAM (a bitstream link peaks near 20 GB); 32 cores keeps a link near 70 minutes |
-| Disk | ~50 GB — the ITCH capture is 3.5 GB compressed, and Vitis temp directories reach 1.4 GB per build |
-| Optics | **not required.** The 100 G measurement uses the GT in near-end PMA loopback |
+| **On silicon** | **AMD Alveo U55C** (VU35P, HBM2 16 GB, QSFP28 ×2), shell `xilinx_u55c_gen3x16_xdma_base_3` |
+| Optics | **not required** — the 100 G measurement uses the GT in near-end PMA loopback |
+| Build host | ≥ 32 GB RAM, ~50 GB disk; 32 cores keeps a bitstream link near 70 minutes |
+| Vivado / Vitis | **2025.2.1**, and `vivado`/`v++`/`xvlog`/`xelab`/`xsim` must all come from the *same* install |
+| XRT | 2.18.179 — only for running on the card |
+| Python / GCC | 3.8+ (standard library only) / C++17 |
+| OS, locale | Ubuntu 22.04, and `en_US.UTF-8` must exist or xsim aborts (`sudo locale-gen en_US.UTF-8`) |
 
-#### Software Requirements
-
-| | Version used | Notes |
-|---|---|---|
-| Vivado / Vitis | **2025.2.1** | provides `vivado`, `v++`, `xvlog`, `xelab`, `xsim` — and all of them must come from the *same* install: a `.xo` packaged by one version and linked by another is refused if the linker is older, and silently accepted if it is newer. `make -C step8-hw which-tools` prints what the recipes will actually use |
-
-**Every step enforces that now**, through one shared guard in
-[`mk/xilinx.mk`](mk/xilinx.mk): each recipe sources `XILINX_SETTINGS`, fails
-loudly if it is unreadable or if sourcing it fails, and fails again if the tool
-is still not on `PATH`. Silence is never a fallback. `make which-tools` in any
-step prints what its recipes will actually use, version included.
+Every step sources `XILINX_SETTINGS` through one shared guard
+([`mk/xilinx.mk`](mk/xilinx.mk)) and fails loudly rather than falling back to
+whatever is on `PATH`; `make which-tools` in any step prints what its recipes
+will use.
 
 ```sh
 make test                                        # the pinned install
@@ -235,105 +176,63 @@ make test XILINX_SETTINGS=/opt/Xilinx/2024.2/Vivado/settings64.sh
 make test XILINX_SETTINGS=                       # deliberately, whatever is on PATH
 ```
 
-Only step 8 used to be guarded. Steps 2–6 took whatever `xvlog` came first on
-`PATH` — an older install, on this machine — so the suite had been running on
-two toolchains and reporting one. That was cosmetic until `otable_mem` became a
-vendor macro and nothing else, at which point the vendor's version stopped being
-an implementation detail. **It also means the fMAX history in
-[`data/FINDINGS.md`](data/FINDINGS.md) §7.6–7.7 was produced by the older
-install**, which is stated there rather than quietly re-baselined.
-| XRT | 2.18.179 (2024.2) | only for running on the card |
-| Python | 3.8+ | goldens and packing scripts; standard library only |
-| GCC | C++17 | host runner and the step-1 C model |
-| OS | Ubuntu 22.04, kernel 5.15 | the machine this was measured on |
-| Locale | `en_US.UTF-8` present | Vivado's launcher hard-codes it; if absent, xsim aborts with a `std::locale` error. `sudo locale-gen en_US.UTF-8` |
+A `cmac_usplus` licence is required **only** to generate the Phase B bitstream
+(AMD issues it at no cost); `make gate-license` proves the checkout in seconds.
 
-A `cmac_usplus` licence is required **only** to generate the Phase B bitstream.
-AMD issues it at no cost. Synthesis, implementation and timing closure all work
-without it; only `write_bitstream` is refused. `make gate-license` proves the
-checkout in seconds rather than failing an hour into a build.
-
-## Installation
+### Install
 
 ```sh
 git clone https://github.com/learningHWSW/hft-fpga.git
 cd hft-fpga
-```
 
-**1. Real market data (for the real-data replays).** The free NASDAQ
-TotalView-ITCH full-day capture. It is not committed:
-
-```sh
+# Real market data, for the real-data replays. Not committed: 3.5 GB, ~269 M messages.
 cd data && curl -O "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_ITCH50.gz"
 ```
 
-3.5 GB compressed, ~269 M messages, 2019-12-30. Synthetic vectors are generated
-by the testbenches and need no download, so the simulation suite runs without it.
+Synthetic vectors are generated by the testbenches, so the simulation suite runs
+without the download.
 
-**2. Xilinx tools.** No `source settings64.sh` needed for step 8 — its recipes
-source it themselves. Override the install with
-`XILINX_SETTINGS=/path/to/settings64.sh`, and check what will actually be used
-with `make which-tools`. Earlier steps expect the tools already on `PATH`.
+### Simulate
 
-## Compilation and execution
-
-### Simulation
-
-Every step's `make test` regenerates its software golden, runs the RTL, and
-passes only if the two logs are byte-identical.
-
-```sh
-cd step4b-book && make test            # xsim
-```
+Every step's `make test` regenerates its golden, runs the RTL, and passes only if
+the two logs are byte-identical.
 
 | Step | Command | What it proves |
 |---|---|---|
 | 1 | `make test` | the C golden parses a real day self-consistently |
 | 2 | `make test` | ITCH decode == golden |
 | 3a / 3b | `make test`, `make test-real-xsim` | MoldUDP64 strip and 512-bit realignment |
-| 4a | `make test`, `make test-real-xsim`, `make test-multi`, `make test-clear` | order table == golden, zero overflow, two symbols share one table, and the post-reset sweep clears what UltraRAM comes up holding |
+| 4a | `make test`, `make test-real-xsim`, `make test-multi`, `make test-clear` | order table == golden, zero overflow, two symbols share one table, post-reset sweep clears URAM |
 | 4b | `make test`, `make test-real-xsim`, `make test-merge-xsim` | BBO sequence == golden, and the fast/slow rejoin preserves it |
-| 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx`, `make test-msym` | the whole chain, two clocks, wire frames in and session frames back, and two tracked books each reproducing its own single-symbol golden |
-| 6 | `make test-xsim`, `make test-replay`, `make test-rto`, `make test-msym`, `make test-acklat` | orders and OUCH/TCP bytes == golden, when a resend is decided, that no per-book strategy state is shared between symbols, and that the acknowledgement-latency probe measures a round trip without inventing one |
+| 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx`, `make test-msym` | the whole chain, two clocks, wire frames in and session frames back |
+| 6 | `make test-xsim`, `make test-replay`, `make test-rto`, `make test-msym`, `make test-acklat` | OUCH/TCP bytes == golden, resend decisions, no per-book state shared, ack-latency probe |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
-| 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto`, `make test-real` | the Vitis kernel, HBM to HBM, through the MAC, the venue's replies back to the host, the card re-sending an unacknowledged order, and the real feed as far as the memory model holds |
+| 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto`, `make test-real` | the Vitis kernel, HBM to HBM, through the MAC, replies back to the host |
 
-### Synthesis and place & route
+### Synthesize, build, run
 
 ```sh
 cd step5-board
 make synth-t2t          # out-of-context synthesis of the full chain
 make impl-t2t           # place & route for xcu55c-fsvh2892-2L-e
-```
 
-### Building for the card
-
-```sh
-cd step8-hw
+cd ../step8-hw
 make help               # every target, grouped, with what each costs
-
 make cmac               # generate the cmac_usplus IP (once, Phase B only)
 make gate-license       # prove the licence before spending an hour
 make xclbin             # Phase A -> t2t.xclbin     (~1 h 10 m)
 make xclbin-b           # Phase B -> t2t_b.xclbin   (~1 h 15 m)
-```
 
-### Running on the card
-
-```sh
 source /opt/xilinx/xrt/setup.sh
-
 make run-card-real      # Phase A, real 5 M AAPL replay
 make run-card-b-real    # Phase B, the same replay through the real MAC
 ```
 
-Both diff the captured order frames against the golden and print `PASS` only on
-a byte-identical match. `RGAP=<n>` varies the injector spacing to sweep offered
-load; the saturation knee is between `RGAP=28` and `RGAP=24`.
+Both diff the captured order frames against the golden and print `PASS` only on a
+byte-identical match. `RGAP=<n>` varies injector spacing to sweep offered load;
+the saturation knee is between `RGAP=28` and `RGAP=24`.
 
-### Cleaning
-
-Three tiers, because they cost very different amounts to undo:
+### Clean
 
 ```sh
 make clean          # logs, sim scratch, small captures      (seconds)
@@ -341,6 +240,7 @@ make clean-build    # + packaged kernels, .xo, v++ temp dirs (minutes)
 make distclean      # + bitstreams, ip/, replay image        (HOURS — asks first)
 ```
 
+<!--
 ## What is not done
 
 Honest scope, all of it stated in the per-step READMEs.
@@ -469,14 +369,6 @@ Honest scope, all of it stated in the per-step READMEs.
   came up X, which is what would have caught the order table's post-reset clear
   sweep being deleted, and XPM's model comes up zeroed instead. `step4a make
   test-clear` replaces the accident with a test.
-- **One simulator, so no second opinion.** Everything now runs under xsim; the
-  Verilator paths are gone, and with them a cross-check that had already earned
-  its keep once. A testbench driving stimulus on the edge the DUT samples is a
-  race the two tools resolve differently, and exactly that bug was caught
-  because both were run — Verilator passed it, xsim failed, and neither was
-  reporting a design fault (`step6-strategy`). The negedge-stimulus convention
-  every testbench here follows is now the only thing standing in for that
-  check, which makes it a rule rather than a style.
 - **Inbound is complete in simulation and has never met a real venue.** The
   acknowledgement number `tcp_tx` sends is live (`cfg_ack_num` is only the initial
   value from the handshake; hardware advances it as segments arrive), the session
@@ -514,21 +406,16 @@ Honest scope, all of it stated in the per-step READMEs.
   `max_spread = 2000` selected nothing where AAPL's real regular-hours spread is
   3 cents. Test parameters stay as they are on purpose — the goldens run on that
   pre-market slice, where a tight threshold would never exercise the risk gates.
+-->
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0** — see
-[LICENSE](LICENSE) for the full text.
+**GNU General Public License v3.0** — see [LICENSE](LICENSE). Copyright (c) 2026
+jinsuklee. You may use, study, modify and redistribute this work; any derivative
+you *distribute* must also be GPL-3.0 and ship its source. Running it privately,
+including for trading, carries no obligation to publish anything.
 
-Copyright (c) 2026 jinsuklee
-
-In short: you may use, study, modify and redistribute this work, and any
-derivative you *distribute* must also be GPL-3.0 and ship its source. Running it
-privately, including for trading, carries no obligation to publish anything. The
-licence also grants patent rights from contributors, which matters more here than
-in most projects.
-
-Third-party components are **not** covered by the above and keep their own terms:
+Third-party components keep their own terms and are **not** covered by the above:
 
 | Component | Terms |
 |---|---|
@@ -537,6 +424,6 @@ Third-party components are **not** covered by the above and keep their own terms
 | `cmac_usplus` | AMD/Xilinx IP, used under the licence AMD issues for it and not included here |
 | AMD Vitis / Vivado, XRT, the U55C platform | AMD's, under their own licence terms |
 
-Note that the GPL covers this repository's own source. It does not and cannot
-relicense the AMD IP a bitstream is built against, nor the exchange
-specifications the protocol blocks implement.
+The GPL covers this repository's own source. It does not and cannot relicense the
+AMD IP a bitstream is built against, nor the exchange specifications the protocol
+blocks implement.
