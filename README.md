@@ -144,6 +144,51 @@ error bar, plus stages this table does not itemise — `bbo_merge`, `bbo_arb`, t
 delta FIFO, TX arbitration. `FINDINGS §7.6` records the same lesson in the other
 direction and larger, where a summed MAC estimate was wrong by a factor of two.
 The per-stage figures are here to say *where* the time is, not *how much*.
+-->
+
+## Strategy
+
+Two trading signals, one risk gate — all inside the `strategy` module.
+
+### 1. Order-Book Imbalance (primary)
+
+Fires on the **rising edge** of a BBO imbalance condition:
+
+```
+tight = both sides present && (ask − bid) ≤ cfg_max_spread
+buy   = tight && bid_qty ≥ (ask_qty << cfg_ratio_shift) && ask_qty ≥ cfg_min_qty
+sell  = tight && ask_qty ≥ (bid_qty << cfg_ratio_shift) && bid_qty ≥ cfg_min_qty
+```
+
+One side resting heavily with a tight spread signals an imminent move —
+a **buy lifts the offer**, a **sell hits the bid**. The ratio is a shift
+(no DSP, no rounding disagreement with the golden). Edge detection
+ensures **one order per condition change**, not one per BBO update.
+
+### 2. Sweep / Momentum Ignition (secondary, higher priority)
+
+`sweep_detect` fires when multiple price levels are consumed in rapid
+succession — a large aggressive order sweeping the book. It bypasses the
+price ladder entirely (**19 core cycles** vs imbalance's 28) and takes
+priority when both signals coincide. Only the sweep has a forward return
+that beats the cost of acting on it ([FINDINGS §5, §5.3](data/FINDINGS.md)).
+
+### Risk Gate
+
+Applied **inline** before any order leaves, never deferred:
+
+| Check | Config | Action on fail |
+|---|---|---|
+| **Kill switch** | `cfg_enable` | all orders blocked |
+| **Shares range** | 0 < qty < 1,000,000 | reject + `blk_qty_cnt++` |
+| **In-flight limit** | `cfg_max_inflight` | reject + `blk_inflight_cnt++` |
+| **Position limit** | `cfg_pos_limit` (per symbol) | reject + `blk_pos_cnt++` |
+| **TX path busy** | `o_ready` | drop + `blk_txfull_cnt++` |
+
+Position moves **optimistically** (assumes full fill) — wrong, but wrong
+in the safe direction. Each rejection reason is counted separately and
+published to the register map, so a quiet strategy is distinguishable
+from a blocked one.
 
 <!--
 ## Design decisions
