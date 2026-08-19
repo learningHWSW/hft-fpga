@@ -31,8 +31,35 @@
 // with the reader faster than the writer and the other way round -- which is the
 // difference between the feed path (ap_clk -> 322 MHz, reader faster) and a
 // hypothetical slower sink.
+//
+// FOUR CONFIGURATIONS, set with xelab -generic_top, because the module now has
+// two switches and the interesting question is what each one gives up:
+//
+//   SAME_CLOCK  bypasses the synchronisers when both ends are one clock. It must
+//               change nothing a check here can see EXCEPT latency -- the
+//               store-and-forward guarantee is untouched, so "no frame released
+//               early" is still a failure.
+//   CUT_THROUGH releases a frame before its last beat is written. Early release
+//               is then the POINT, so it stops being a failure and becomes a
+//               requirement: a run with zero early releases means the generic
+//               did not apply, or CT_MIN came out at the frame length, and the
+//               test would otherwise pass while proving nothing.
+//
+// What never stops being a failure, in any configuration, is tvalid dropping
+// mid-frame while the sink is asking. That is the CMAC underrun, and it is the
+// only thing store-and-forward was ever buying.
+//
+// The writer's behaviour has to match the W_GAP_MAX it claims. In cut-through
+// runs it therefore does not stall inside a frame, and it paces itself one frame
+// at a time so s_tready cannot stall it either -- a writer that backpressures
+// mid-frame is not a W_GAP_MAX=1 writer, and testing cut-through against a
+// source that breaks its own contract would only prove the contract matters.
 `timescale 1ns/1ps
-module tb_axis_sf_fifo;
+module tb_axis_sf_fifo #(
+  parameter bit SAME_CLOCK  = 0,
+  parameter bit CUT_THROUGH = 0,
+  parameter int W_GAP_MAX   = 1
+);
   localparam int DATA_W = 512;
   localparam int KEEP_W = DATA_W / 8;
   localparam int DEPTH  = 64;          // small on purpose: make it fill
@@ -42,42 +69,64 @@ module tb_axis_sf_fifo;
   real wper = 1.6665;                  // ap_clk, 300 MHz
   real rper = 1.5515;                  // gt_txusrclk2, 322.265625 MHz
 
-  logic w_clk = 0, r_clk = 0;
+  logic w_clk = 0, r_clk_gen = 0;
   logic w_rst_n = 0, r_rst_n = 0;
 
   initial forever #(wper) w_clk = ~w_clk;
-  initial forever #(rper) r_clk = ~r_clk;
+  initial forever #(rper) r_clk_gen = ~r_clk_gen;
+
+  // one net, not two nets that happen to agree: SAME_CLOCK is a claim about the
+  // clock, and the DUT deletes real synchronisers on the strength of it
+  wire r_clk = SAME_CLOCK ? w_clk : r_clk_gen;
+
+  // no mid-frame stalls when the DUT has been told the source cannot stall
+  localparam bit WSTALL = !CUT_THROUGH;
+  localparam bit PACE   = CUT_THROUGH;
 
   logic [DATA_W-1:0] s_tdata = '0;
   logic [KEEP_W-1:0] s_tkeep = '0;
   logic              s_tvalid = 0, s_tlast = 0, s_tready;
-  logic [31:0]       pkts_in, hwm;
+  logic [31:0]       pkts_in, hwm, starves;
 
   logic [DATA_W-1:0] m_tdata;
   logic [KEEP_W-1:0] m_tkeep;
   logic              m_tvalid, m_tlast, m_tready = 0;
 
-  axis_sf_fifo #(.DATA_W(DATA_W), .DEPTH(DEPTH)) dut (
+  axis_sf_fifo #(
+    .DATA_W(DATA_W), .DEPTH(DEPTH),
+    .SAME_CLOCK(SAME_CLOCK), .CUT_THROUGH(CUT_THROUGH),
+    .MAX_FRAME_BEATS(MAXLEN), .W_GAP_MAX(W_GAP_MAX)
+  ) dut (
     .w_clk(w_clk), .w_rst_n(w_rst_n),
     .s_tdata(s_tdata), .s_tkeep(s_tkeep), .s_tvalid(s_tvalid),
     .s_tlast(s_tlast), .s_tready(s_tready),
     .pkts_in(pkts_in), .hwm(hwm),
     .r_clk(r_clk), .r_rst_n(r_rst_n),
     .m_tdata(m_tdata), .m_tkeep(m_tkeep), .m_tvalid(m_tvalid),
-    .m_tlast(m_tlast), .m_tready(m_tready)
+    .m_tlast(m_tlast), .m_tready(m_tready), .starves(starves)
   );
 
   // ---------------- scoreboard ----------------
-  // One entry per beat, in order, plus the simulation time at which the frame
-  // that beat belongs to became COMPLETE. The reader checks against the head.
+  // One entry per beat, in order. A beat is queued as soon as the FIFO accepts
+  // it, not when its frame ends: under cut-through the reader can be emitting
+  // beat 0 while the writer is still on beat 5, and a scoreboard that only
+  // learns about the frame at tlast would report the FIFO inventing data.
   typedef struct {
     logic [DATA_W-1:0] d;
     logic [KEEP_W-1:0] k;
     logic              l;
     bit                first;       // first beat of its frame
-    realtime           committed;   // when this frame's tlast was written
+    int                id;          // which frame
   } exp_t;
   exp_t expq [$];
+
+  // When each frame became complete, and when its first beat left. Kept per
+  // frame rather than per beat because the two events are no longer ordered:
+  // that IS the property under test, and comparing them at the end works
+  // whichever way round they happened.
+  realtime commit_time [NFRAME];
+  realtime first_out   [NFRAME];
+  bit      seen_out    [NFRAME];
 
   int errors   = 0;
   int n_beats_out = 0, n_frames_out = 0;
@@ -91,7 +140,6 @@ module tb_axis_sf_fifo;
   endfunction
 
   task automatic send_frame(input int len, input int id);
-    exp_t pend [$];
     for (int i = 0; i < len; i++) begin
       exp_t e;
       // a payload that identifies its frame and its position within it, so a
@@ -103,10 +151,18 @@ module tb_axis_sf_fifo;
       e.k = (i == len-1) ? ({KEEP_W{1'b1}} >> (rnd() % 8)) : {KEEP_W{1'b1}};
       e.l = (i == len-1);
       e.first = (i == 0);
-      pend.push_back(e);
+      e.id = id;
 
-      // stall the writer sometimes, including mid-frame
-      while ((rnd() % 5) == 0) @(negedge w_clk);
+      // Stall the writer sometimes, including mid-frame -- but only where the
+      // DUT has not been promised otherwise. Without a stall the beats go out
+      // back to back, one per w_clk, which is what W_GAP_MAX=1 means and what
+      // the old driver did NOT do: it dropped tvalid between beats and so
+      // delivered one beat every two cycles.
+      if (WSTALL) while ((rnd() % 5) == 0) begin
+        @(negedge w_clk);
+        s_tvalid = 1'b0;
+        s_tlast  = 1'b0;
+      end
 
       @(negedge w_clk);
       s_tdata  = e.d;
@@ -115,15 +171,15 @@ module tb_axis_sf_fifo;
       s_tvalid = 1'b1;
       // hold until accepted: this is the tready contract under test
       do @(posedge w_clk); while (!s_tready);
-      @(negedge w_clk);
-      s_tvalid = 1'b0;
-      s_tlast  = 1'b0;
+      // queued the instant the FIFO took it, which is the instant it could
+      // legally come back out under cut-through
+      expq.push_back(e);
+      // the frame is complete the moment its last beat is ACCEPTED
+      if (e.l) commit_time[id] = $realtime;
     end
-    // the frame is complete NOW; stamp every one of its beats with that time
-    foreach (pend[j]) begin
-      pend[j].committed = $realtime;
-      expq.push_back(pend[j]);
-    end
+    @(negedge w_clk);
+    s_tvalid = 1'b0;
+    s_tlast  = 1'b0;
   endtask
 
   // ---------------- reader ----------------
@@ -155,13 +211,12 @@ module tb_axis_sf_fifo;
                    n_beats_out, m_tlast, e.l);
           errors++;
         end
-        // THE store-and-forward check: a frame's first beat must not leave
-        // before its last beat was written.
-        if (e.first && ($realtime < e.committed)) begin
-          $display("FAIL: frame released early -- first beat out at %t, frame \
-completed at %t", $realtime, e.committed);
-          early++;
-          errors++;
+        // stamp when this frame's first beat left; the comparison against the
+        // frame's completion time is made at the end, because under cut-through
+        // the completion has not happened yet
+        if (e.first) begin
+          first_out[e.id] = $realtime;
+          seen_out[e.id]  = 1'b1;
         end
         n_beats_out++;
         if (m_tlast) n_frames_out++;
@@ -202,6 +257,9 @@ this is a CMAC underrun", $realtime);
         default: len = 1 + (rnd() % MAXLEN);
       endcase
       total_beats += len;
+      // one frame in flight at a time, so s_tready can never stall the writer
+      // mid-frame and break the W_GAP_MAX the DUT was given
+      if (PACE) wait (n_frames_out == f);
       send_frame(len, f);
       // sometimes let the FIFO drain, sometimes hammer it towards full
       if ((rnd() % 3) == 0) repeat (rnd() % 40) @(negedge w_clk);
@@ -235,11 +293,43 @@ this is a CMAC underrun", $realtime);
       $display("FAIL: hwm = %0d, outside 1..%0d", hwm, DEPTH);
       errors++;
     end
+    // the DUT's own underrun counter, which is what the register map would read
+    if (starves != 0) begin
+      $display("FAIL: starves = %0d -- the port went idle mid-frame", starves);
+      errors++;
+    end
+    // The release-time comparison, per frame, now that both times exist.
+    for (int f = 0; f < NFRAME; f++) begin
+      if (!seen_out[f]) begin
+        $display("FAIL: frame %0d never produced a first beat", f);
+        errors++;
+      end else if (first_out[f] < commit_time[f]) begin
+        early++;
+        if (!CUT_THROUGH) begin
+          $display("FAIL: frame %0d released early -- first beat out at %t, \
+complete at %t", f, first_out[f], commit_time[f]);
+          errors++;
+        end
+      end
+    end
 
-    $display("TB: %0d frames / %0d beats through, hwm=%0d of %0d, early releases=%0d",
-             n_frames_out, n_beats_out, hwm, DEPTH, early);
+    // A cut-through run that released nothing early did not cut through: either
+    // the generic never applied, or CT_MIN came out at the whole frame. Both are
+    // silent passes without this.
+    if (CUT_THROUGH && early == 0) begin
+      $display("FAIL: CUT_THROUGH=1 but no frame was released before it was \
+complete -- CT_MIN=%0d for MAX_FRAME_BEATS=%0d, W_GAP_MAX=%0d",
+               dut.CT_MIN, MAXLEN, W_GAP_MAX);
+      errors++;
+    end
+
+    $display("TB: %0d frames / %0d beats through, hwm=%0d of %0d, early releases=%0d, starves=%0d",
+             n_frames_out, n_beats_out, hwm, DEPTH, early, starves);
+    $display("TB: SAME_CLOCK=%0d CUT_THROUGH=%0d W_GAP_MAX=%0d -> CT_MIN=%0d",
+             SAME_CLOCK, CUT_THROUGH, W_GAP_MAX, dut.CT_MIN);
     if (errors == 0)
-      $display("PASS: axis_sf_fifo -- order, tkeep, tlast, store-and-forward, no underrun");
+      $display("PASS: axis_sf_fifo -- order, tkeep, tlast, %s, no underrun",
+               CUT_THROUGH ? "cut-through" : "store-and-forward");
     else
       $display("FAIL: %0d checks failed", errors);
     $finish;

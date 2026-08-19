@@ -165,6 +165,15 @@ module tb_t2t_kernel;
   // the CMAC's gt_loopback_in, and in simulation cmac_wrap models it directly.
   logic [3:0] gt_txp, gt_txn;
 
+  // ---- order FIFO fill latency, in wire_clk cycles ----
+  // From the cycle the FIFO ACCEPTS a frame's first beat to the cycle its first
+  // beat appears at the read port. That whole interval is inside the Phase B
+  // wire-to-wire measurement, and it is what SAME_CLOCK and cut-through both
+  // act on -- so it is measured here rather than reasoned about.
+  int ordfifo_cyc = 0, ordfifo_t0 = -1;
+  int ordfifo_min = 32'h7fff_ffff, ordfifo_max = 0, ordfifo_n = 0;
+  bit ordfifo_open = 0;
+
   t2t_kernel_b #(.DATA_W(DATA_W), .ADDR_W(ADDR_W)) dut (
     .gt_refclk_p(1'b0), .gt_refclk_n(1'b1),
     .gt_rxp_in(4'b0), .gt_rxn_in(4'hF),
@@ -216,6 +225,45 @@ module tb_t2t_kernel;
     .m_axi_gmem1_RRESP(rresp1), .m_axi_gmem1_RVALID(rvalid1),
     .m_axi_gmem1_RREADY(rready1)
   );
+
+`ifdef PHASE_B
+  // The instrument for the counters declared above. Both ports are on wire_clk,
+  // so one counter and two frame-boundary flags are enough; the small queue is
+  // there because nothing forbids a second order entering while the first is
+  // still in the FIFO.
+  int  ordfifo_t0q [$];
+  bit  of_w_first = 1, of_r_first = 1;
+
+  always @(posedge dut.wire_clk) begin
+    if (!dut.wire_rst_n) begin
+      ordfifo_cyc <= 0;
+      of_w_first  <= 1'b1;
+      of_r_first  <= 1'b1;
+    end else begin
+      ordfifo_cyc <= ordfifo_cyc + 1;
+      // write port: stamp the frame's first accepted beat
+      if (dut.tx_tvalid && dut.tx_tready) begin
+        if (of_w_first) begin
+          ordfifo_t0q.push_back(ordfifo_cyc);
+          of_w_first <= 1'b0;
+        end
+        if (dut.tx_tlast) of_w_first <= 1'b1;
+      end
+      // read port: the same frame's first beat leaving
+      if (dut.ord_tvalid && dut.ord_tready) begin
+        if (of_r_first && ordfifo_t0q.size() > 0) begin
+          automatic int d = ordfifo_cyc - ordfifo_t0q.pop_front();
+          if (d < ordfifo_min) ordfifo_min <= d;
+          if (d > ordfifo_max) ordfifo_max <= d;
+          ordfifo_n  <= ordfifo_n + 1;
+          of_r_first <= 1'b0;
+        end
+        if (dut.ord_tlast) of_r_first <= 1'b1;
+      end
+    end
+  end
+`endif
+
 
   // ================= memory models =================
   byte unsigned rmem [0:RMEM_BYTES-1];
@@ -653,6 +701,22 @@ module tb_t2t_kernel;
     if (ncap != ntx + nsess)
       $display("FAIL: %0d order frames + %0d session frames, %0d captured",
                ntx, nsess, ncap);
+
+    // ---- the two store-and-forward FIFOs, from the inside ----
+    // R_C_UNF above is the MAC's own underrun flag and is the authority; these
+    // are the same event seen one stage earlier, per FIFO, so a non-zero count
+    // says WHICH source starved rather than only that one did. They must be
+    // zero: both instances are store-and-forward, so a frame is complete before
+    // its first beat is visible, whatever the writer does afterwards.
+    if (dut.ord_starves != 0)
+      $display("FAIL: order FIFO starved its port for %0d cycles", dut.ord_starves);
+    if (dut.feed_starves != 0)
+      $display("FAIL: feed FIFO starved its port for %0d cycles", dut.feed_starves);
+    // Measured, not asserted: how long an order frame actually sits in the
+    // order FIFO. SAME_CLOCK deleted two synchroniser stages from this path, so
+    // the number is the evidence that it did.
+    $display("TB: order FIFO fill = %0d wire cycles min / %0d max (%0d frames)",
+             ordfifo_min, ordfifo_max, ordfifo_n);
 `endif
 
     // ---- latency probe: the measurement that replaces FINDINGS 7.1's sum ----

@@ -182,12 +182,44 @@ include ../mk/xilinx.mk
 PART ?= xcu55c-fsvh2892-2L-e
 XPFM ?= /opt/xilinx/platforms/xilinx_u55c_gen3x16_xdma_3_202210_1/xilinx_u55c_gen3x16_xdma_3_202210_1.xpfm
 
-.PHONY: help which-tools test-latprobe test test-xsim test-session test-b-session test-rto test-latency test-gap-independent test-real test-real-latency \
-        test-b test-b-latency test-b-real test-sffifo cmac gate-license xo-b xclbin-b run-card-b run-card-b-latency run-card-b-msym \
+.PHONY: help which-tools design-test design-bitstream design-run test-latprobe test test-xsim test-session test-b-session test-rto test-latency test-gap-independent test-real test-real-latency \
+        test-b test-b-latency test-b-real test-sffifo test-sffifo-ct cmac gate-license xo-b xclbin-b run-card-b run-card-b-latency run-card-b-msym \
         golden clean clean-build distclean real-image run-card-real run-card-b-real elab synth xo xclbin host run-card run-card-latency card-info
 
-# alias: the xsim recipe is the only one now.
-test: test-xsim  ## Simulate|full chain HBM->HBM, diffed against golden
+# ---------- WHICH PHASE IS THE DESIGN ----------
+# Phase B is. Phase A -- eth_replay standing in for the MAC, HBM to HBM -- was
+# the safe way onto silicon when the CMAC was unproven, and it is still the only
+# build that measures the FABRIC alone (no 300 ns MAC term sitting on top of a
+# 4.65 ns change). But the shipping datapath is the one behind a real
+# cmac_usplus, and every headline number in the README is Phase B's.
+#
+# So PHASE selects what the phase-neutral targets do, and it defaults to b.
+# What is deliberately NOT done here is repointing `xclbin` at the Phase B
+# link: that target produces t2t.xclbin, `xclbin-b` produces t2t_b.xclbin, and
+# a target that quietly emits a different artefact than its name says is the
+# OTABLE_XPM shape this project keeps paying for. The explicit names stay
+# explicit; the neutral ones are new.
+PHASE ?= b
+ifeq ($(PHASE),b)
+  PHASE_TEST    = test-b
+  PHASE_XCLBIN  = xclbin-b
+  PHASE_RUNREAL = run-card-b-real
+else ifeq ($(PHASE),a)
+  PHASE_TEST    = test-xsim
+  PHASE_XCLBIN  = xclbin
+  PHASE_RUNREAL = run-card-real
+else
+  $(error PHASE must be a or b, got '$(PHASE)')
+endif
+
+# The default design, end to end. `make design-test PHASE=a` for the other one.
+design-test:    $(PHASE_TEST)    ## Simulate|the default design (PHASE=b), against the golden
+design-bitstream: $(PHASE_XCLBIN) ## Build|the default design's bitstream (PHASE=b)
+design-run:     $(PHASE_RUNREAL) ## Card|the default design on the real 5M AAPL replay
+
+# alias: the xsim recipe is the only one now. Still Phase A -- see PHASE above;
+# `test` keeps meaning what every reference to it in the READMEs means.
+test: test-xsim  ## Simulate|Phase A, full chain HBM->HBM, diffed against golden
 
 test-xsim: golden $(REPLAY) $(GEOM_PKG) ## Simulate|same, in xsim -- the flow that works where the card is
 	@$(XSETUP) xvlog -sv $(SRC) $(TB)
@@ -789,6 +821,30 @@ test-sffifo: ## Simulate|store-and-forward FIFO at four clock ratios
 	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.6665 -testplusarg rper=5.0
 	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=5.0    -testplusarg rper=1.5515
 	@$(XSETUP) xsim tb_sf_sim -runall -testplusarg wper=1.5515 -testplusarg rper=1.5515
+
+# The same FIFO with its synchronisers bypassed, and with cut-through.
+#
+#   sf-same  one clock, store-and-forward. The bypass deletes two ASYNC_REG
+#            stages, so this run is the proof it deleted only latency: every
+#            check the four-ratio run makes still has to hold, including "no
+#            frame left before it was complete".
+#   ct-same  one clock, cut-through, a writer that cannot stall inside a frame
+#            (W_GAP_MAX=1 -> CT_MIN=1). Frames MUST leave early and the port
+#            must still never starve.
+#   ct-cross 300 MHz writer into a 322 MHz reader. Back-to-back writing is then
+#            one beat per 1.07 reader cycles, so W_GAP_MAX=2 and CT_MIN=13 of a
+#            24-beat frame -- the arithmetic in axis_sf_fifo.sv's header, run.
+test-sffifo-ct: ## Simulate|the same FIFO with SAME_CLOCK and CUT_THROUGH
+	@$(XSETUP) xvlog -sv rtl/axis_sf_fifo.sv tb/tb_axis_sf_fifo.sv
+	@$(XSETUP) xelab -debug typical -L xpm tb_axis_sf_fifo -s tb_sf_same \
+	   -generic_top "SAME_CLOCK=1"
+	@$(XSETUP) xsim tb_sf_same -runall -testplusarg wper=1.5515
+	@$(XSETUP) xelab -debug typical -L xpm tb_axis_sf_fifo -s tb_sf_ct_same \
+	   -generic_top "SAME_CLOCK=1" -generic_top "CUT_THROUGH=1" -generic_top "W_GAP_MAX=1"
+	@$(XSETUP) xsim tb_sf_ct_same -runall -testplusarg wper=1.5515
+	@$(XSETUP) xelab -debug typical -L xpm tb_axis_sf_fifo -s tb_sf_ct_cross \
+	   -generic_top "CUT_THROUGH=1" -generic_top "W_GAP_MAX=2"
+	@$(XSETUP) xsim tb_sf_ct_cross -runall -testplusarg wper=1.6665 -testplusarg rper=1.5515
 
 # Convenience alias: build the replay image and nothing else.
 real-image: real_replay.bin ## Data|build real_replay.bin from the full-day capture

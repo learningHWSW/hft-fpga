@@ -576,7 +576,19 @@ module t2t_kernel_b #(
   logic [KEEP_W-1:0] feed_tkeep;
   logic              feed_tvalid, feed_tlast, feed_tready;
   logic [31:0]       feed_pkts;
+  // Cycles either port went idle mid-frame with its sink asking -- the CMAC
+  // underrun itself. Zero by construction while both FIFOs are
+  // store-and-forward; they exist so that stops being an assumption.
+  logic [31:0]       feed_starves, ord_starves;
 
+  // Store-and-forward, and not a candidate for cut-through: the writer is
+  // eth_replay pulling 1518-byte frames out of HBM through an AXI read channel,
+  // so the gap between two beats of one frame is whatever the memory system
+  // feels like -- unbounded, which is W_GAP_MAX = infinity, which is CT_MIN =
+  // the whole frame. FINDINGS §7.6.1 said this in words; axis_sf_fifo now says
+  // it in arithmetic. It is also not in any measured path: lat_probe stamps the
+  // feed frame when it arrives at the MAC's RX port, which is downstream of
+  // here.
   axis_sf_fifo #(.DATA_W(DATA_W), .DEPTH(512)) u_feed_fifo (
     .w_clk(ap_clk), .w_rst_n(dp_rst_n),
     .s_tdata(rp_tdata), .s_tkeep(rp_tkeep), .s_tvalid(rp_tvalid),
@@ -584,7 +596,7 @@ module t2t_kernel_b #(
     .pkts_in(feed_pkts), .hwm(feed_hwm),
     .r_clk(wire_clk), .r_rst_n(wire_rst_n),
     .m_tdata(feed_tdata), .m_tkeep(feed_tkeep), .m_tvalid(feed_tvalid),
-    .m_tlast(feed_tlast), .m_tready(feed_tready)
+    .m_tlast(feed_tlast), .m_tready(feed_tready), .starves(feed_starves)
   );
 
   // gmem0 is read-only
@@ -632,23 +644,45 @@ module t2t_kernel_b #(
   );
 
   // The order path gets a store-and-forward stage too, same clock in and out.
-  // Two beats of latency (~6 ns) buys the guarantee that once the arbiter grants
-  // this source the MAC will never be starved mid-frame -- and the arbiter is
-  // frame-locked, so a starved order frame would stall the feed behind it as
-  // well as corrupting itself.
+  // The guarantee is what it was: once the arbiter grants this source the MAC
+  // will never be starved mid-frame -- and the arbiter is frame-locked, so a
+  // starved order frame would stall the feed behind it as well as corrupting
+  // itself.
+  //
+  // SAME_CLOCK=1 is where the ~6 ns FINDINGS §7.6.1 attributes to this block
+  // actually was. Both ports are on wire_clk, so the frame-count handshake was
+  // spending SYNC_FF = 2 cycles of 322 MHz in ASYNC_REG flops resolving a
+  // metastability that a single clock domain cannot produce. 6.2 ns, given up
+  // for nothing, INSIDE the wire-to-wire measurement -- lat_probe resolves on
+  // the order frame's return through the MAC, so everything between t2t_axil's
+  // tx port and the CMAC is in the number. The guarantee is untouched: the
+  // frame is still complete before its first beat is visible.
+  //
+  // CUT_THROUGH stays 0 here, and the arithmetic is the reason rather than the
+  // caution. The frame is 2 beats (PAYLD_B=52 -> 106 bytes) and the writer is
+  // t2t_top's core->wire cdc_fifo, 215 MHz into 322 MHz, so consecutive beats
+  // of one frame can be 2 wire cycles apart: W_GAP_MAX = 2. That gives
+  //     CT_MIN = 2 - (2-1)/2 = 2
+  // which is the whole frame. A 2-beat frame has no interior to cut through.
+  // Setting CUT_THROUGH=1 with these numbers would be exactly this behaviour
+  // with more logic, so it is left off and the numbers are written down.
   logic [DATA_W-1:0] ord_tdata;
   logic [KEEP_W-1:0] ord_tkeep;
   logic              ord_tvalid, ord_tlast, ord_tready;
   logic [31:0]       ord_pkts;
 
-  axis_sf_fifo #(.DATA_W(DATA_W), .DEPTH(64)) u_ord_fifo (
+  axis_sf_fifo #(
+    .DATA_W(DATA_W), .DEPTH(64),
+    .SAME_CLOCK(1'b1), .CUT_THROUGH(1'b0),
+    .MAX_FRAME_BEATS(2), .W_GAP_MAX(2)
+  ) u_ord_fifo (
     .w_clk(wire_clk), .w_rst_n(wire_rst_n),
     .s_tdata(tx_tdata), .s_tkeep(tx_tkeep), .s_tvalid(tx_tvalid),
     .s_tlast(tx_tlast), .s_tready(tx_tready),
     .pkts_in(ord_pkts), .hwm(ord_hwm_w),
     .r_clk(wire_clk), .r_rst_n(wire_rst_n),
     .m_tdata(ord_tdata), .m_tkeep(ord_tkeep), .m_tvalid(ord_tvalid),
-    .m_tlast(ord_tlast), .m_tready(ord_tready)
+    .m_tlast(ord_tlast), .m_tready(ord_tready), .starves(ord_starves)
   );
 
   // Orders take priority over the feed, which is the right way round: an order
