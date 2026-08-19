@@ -104,6 +104,53 @@ trade.
           returns on RX and the measurement spans MAC, PCS and SerDes
 ```
 
+### Where the minimum goes
+
+Two probes bracket the design, so the coarse split is **arithmetic on measured
+numbers**, not a sum of estimates. Phase A stamps first RX beat to first TX beat;
+Phase B stamps the feed frame arriving at MAC RX and the order frame returning
+through it.
+
+| segment | min | how it is known |
+|---|---|---|
+| **wire to wire** | **459.2 ns** | Phase B probe, 70 samples, 0 excluded |
+| ↳ MAC TX + GT loop + MAC RX, plus Phase B's own order FIFO and frame filter | 299.2 | Phase B minus Phase A |
+| ↳ ↳ of which GT PMA — serialise, CDR, deserialise | 9.3 | measured, PCS vs PMA loopback ([FINDINGS §7.6.1](data/FINDINGS.md)) |
+| **in fabric** | **160.0 ns** | Phase A probe, same replay |
+
+That middle row is also a check on itself. The MAC is vendor IP and nothing done
+here touched it, so its term **must not move** — and across the rebuild it went
+305.0 → 299.2 ns, −5.8, against the **6.21 ns** `SAME_CLOCK` removed from the
+order FIFO, which is the one thing in that segment that is ours. The residual is
+**0.41 ns**, inside the sampling noise of a 70-sample minimum. The improvement
+is where the change is, and the MAC half — still the larger half — did not move.
+
+Inside that 160 ns, by stage. These are **summed FSM depth, ±1 cycle per stage**
+— not probe measurements — at Phase A's 215 MHz core and the 322.265625 MHz CMAC:
+
+| stage | cycles | ns |
+|---|---|---|
+| `cdc_fifo` RX, CMAC → core | ~3 | 14.0 |
+| `eth_ip_udp_rx` — header strip and realign | ~2 | 9.3 |
+| beat FIFO + `mold_splitter`, to the first message | ~2 | 9.3 |
+| `itch_decoder` — **1 with cut-through, 2 without** | 1 | 4.7 |
+| msg FIFO + `order_table` | 5 | 23.3 |
+| `fast_bbo` (91 % of deltas) **or** `sweep_detect` | ~1 | 4.7 |
+| — instead of `price_ladder`, when the fast path defers | ~10 | 46.5 |
+| `strategy` — evaluate, then gate and emit | 2 | 9.3 |
+| `ouch_builder` | 1 | 4.7 |
+| `tcp_tx`, first beat | ~2 | 9.3 |
+| `cdc_fifo` TX, core → CMAC | ~3 CMAC | 9.3 |
+| **fast path total** | **19 core + 3 CMAC** | **97.7** |
+| **via the ladder** | **28 core + 3 CMAC** | **139.5** |
+
+**The sum under-counts the measurement, and the measurement is the one to
+trust.** 139.5 ns of summed depth against 160.0 ns on silicon: the ±1-per-stage
+error bar, plus stages this table does not itemise — `bbo_merge`, `bbo_arb`, the
+delta FIFO, TX arbitration. `FINDINGS §7.6` records the same lesson in the other
+direction and larger, where a summed MAC estimate was wrong by a factor of two.
+The per-stage figures are here to say *where* the time is, not *how much*.
+
 ## Design decisions
 
 - **No backpressure to the wire.** FIFOs sized from measurement; overflow is
