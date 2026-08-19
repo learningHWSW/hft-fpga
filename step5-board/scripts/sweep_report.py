@@ -39,7 +39,7 @@ def parse(path):
     """One transcript -> a dict, or None if it never got to a build line."""
     txt = open(path, errors="replace").read()
     m = re.search(r"SUMMARY_BUILD: fast=(\d+) dirset=(\S+)(?: nsym=(\d+))?"
-                  r"(?: sets=(\d+))?(?: ways=\d+)?(?: ct=(\d+))? period=(\S+)", txt)
+                  r"(?: sets=(\d+))?(?: ways=\d+)?(?: ct=(\d+))?(?: fs=(\d+))? period=(\S+)", txt)
     if not m:
         return None
     r = {"path": path, "fast": int(m.group(1)), "dirset": m.group(2),
@@ -57,7 +57,10 @@ def parse(path):
          # transcript predating ct= was built before CUT_THROUGH existed, so it
          # can only have been 0 -- that is a fact about the source, not a guess.
          "ct": int(m.group(5)) if m.group(5) else 0,
-         "period": float(m.group(6))}
+         # same reasoning as ct: a transcript predating fs= was built before
+         # FLAT_SCAN existed, so it can only have been 0.
+         "fs": int(m.group(6)) if m.group(6) else 0,
+         "period": float(m.group(7))}
 
     def grab(pat, cast=float):
         g = re.search(pat, txt)
@@ -118,17 +121,17 @@ def main(argv):
         print(f"!! {len(unknown)} transcript(s) predate the sets= field, so their table")
         print("!! geometry is unknown and shown as '?'. Two builds differing only in")
         print("!! geometry are indistinguishable here -- re-run them to get it labelled.\n")
-    hdr = ("{:<8} {:>4} {:>5} {:>3} {:<9} {:>9} {:>9} {:>9} {:>8} {:<9}  {}"
-           .format("fast_bbo", "nsym", "sets", "ct", "dirset", "fMAX MHz", "WNS ns",
+    hdr = ("{:<8} {:>4} {:>5} {:>3} {:>3} {:<9} {:>9} {:>9} {:>9} {:>8} {:<9}  {}"
+           .format("fast_bbo", "nsym", "sets", "ct", "fs", "dirset", "fMAX MHz", "WNS ns",
                    "TNS ns", "failing", "tool", "worst core_clk path is in"))
     print(hdr)
     print("-" * len(hdr))
     for r in sorted(runs, key=lambda x: (x["nsym"], x["sets"] or 0, x["fast"],
-                                         x["ct"], -x["fmax"])):
+                                         x["ct"], x["fs"], -x["fmax"])):
         src = r["worst"].split(" -> ")[0]
-        print("{:<8} {:>4} {:>5} {:>3} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8} {:<9}  {}"
+        print("{:<8} {:>4} {:>5} {:>3} {:>3} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8} {:<9}  {}"
               .format(r["fast"], r["nsym"], (f"2^{r['sets']}" if r["sets"] else "?"),
-                      r["ct"], r["dirset"],
+                      r["ct"], r["fs"], r["dirset"],
                       r["fmax"], r["wns"],
                       r["tns"] if r["tns"] is not None else float("nan"),
                       r["failing"] if r["failing"] is not None else "?",
@@ -141,7 +144,7 @@ def main(argv):
     # move together: a table holding NSYM=1 at 2^13 and NSYM=2 at 2^14 was
     # reported as the cost of "a second symbol", when the geometry had moved too.
     KNOBS = (("fast_bbo", "fast"), ("NSYM", "nsym"), ("sets", "sets"),
-             ("cut_through", "ct"))
+             ("cut_through", "ct"), ("flat_scan", "fs"))
 
     def key(r):
         return tuple(r[k] for _, k in KNOBS)

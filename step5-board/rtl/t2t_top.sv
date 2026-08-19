@@ -37,6 +37,8 @@ module t2t_top #(
   // Cut-through ITCH decode -- see itch_decoder.sv. Off by default: it trades
   // one core cycle for combinational depth in the domain that closes tightest.
   parameter bit CUT_THROUGH   = 1,
+  // price_ladder's group-select structure; see price_ladder.sv.
+  parameter bit FLAT_SCAN     = 0,
   // Tracked symbols. One order table holds all of them; everything downstream
   // of it is replicated per name (fh_core's header, FINDINGS §4.4). NSYM moves
   // together with OT_SETS_BITS -- raising it alone is a choice to drop orders.
@@ -328,7 +330,7 @@ module t2t_top #(
 
   fh_core #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS),
             .USE_FAST_BBO(USE_FAST_BBO), .CUT_THROUGH(CUT_THROUGH),
-            .NSYM(NSYM)) u_fh (
+            .FLAT_SCAN(FLAT_SCAN), .NSYM(NSYM)) u_fh (
     .clk(core_clk), .rst_n(core_rst_n),
     .track_locate(cfg_track_locate), .cfg_base(cfg_band_base),
     .s_tdata(mrg_tdata), .s_tkeep(mrg_tkeep), .s_tvalid(mrg_tvalid), .s_tlast(mrg_tlast),

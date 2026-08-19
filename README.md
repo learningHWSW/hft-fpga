@@ -30,7 +30,7 @@ Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session
 |---|---|
 | **Wire-to-wire, through a real 100 G MAC** | **459.2 ns** min / 539.9 mean / 735.4 max, 70 samples, none excluded |
 | Decoder-to-order under load | **14 core cycles** min / 27.2 mean / 64 max |
-| In-fabric only (first RX beat to first TX beat) | **166.7 ns** min / 236.4 mean |
+| In-fabric only (first RX beat to first TX beat) | **160.0 ns** min / 231.8 mean |
 | Fast book path vs. the ladder | 1,174 of 1,779 BBO records answered early, **`st_bbo_mismatch = 0`** |
 | Order frames vs. the software golden | **70 / 70 byte-identical**, zero drops |
 | MAC frames passed | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |

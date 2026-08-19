@@ -158,12 +158,13 @@ here. Nothing in this section needs more RTL written.
    finding to record, not a run to repeat. Do this before step 4 either way, so
    the two changes are never measured together.
 
-4. **Rebuild Phase A too, for the fabric-only number.** Phase B is the default
-   design now, but Phase A is the only build that measures the fabric without a
-   ~300 ns MAC term on top: 4.65 ns is 2.8 % of its 166.7 ns against 1.0 % of
-   Phase B's 471.7 ns. If cut-through's cycle is going to be visible anywhere on
-   silicon, it is here — which makes this the measurement, not the afterthought
-   it was when the default was still undecided.
+4. **DONE — rebuilt and measured, 2026-08-19.** In-fabric **166.7 → 160.0 ns**
+   at the minimum (236.4 → 231.8 mean), 70/70 byte-identical, `st_bbo_mismatch
+   = 0`. The probe counts `ap_clk` at 300 MHz, so that is 2 probe cycles for one
+   215 MHz core cycle plus quantisation. `decode->order` stayed at 14 core
+   cycles, which is the control: that probe starts at the decoder's output, so
+   the saving must not appear there, and it does not. The build closed with
+   WNS +0.003 and no auto-scaling, unlike Phase B.
 
 Optional, and only if a card run comes out ambiguous: **publish `starves` in the
 register map.** `axis_sf_fifo` counts port-idle-mid-frame cycles per instance,

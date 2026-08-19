@@ -15,9 +15,14 @@ LOC  ?= 1
 BASE ?= 1500000
 
 # ---------- xsim (Vivado 2025.2) — primary; source settings64.sh first ----------
+# price_ladder's group-select structure (price_ladder.sv). The BBO sequence is
+# identical either way -- the two forms differ only on an empty side, which
+# never reaches an output -- so the same golden diff is the check, run twice.
+FS ?= 0
+
 test: golden
 	$(XSETUP) xvlog -sv $(SRC) $(TB)
-	$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
+	$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim -generic_top "FLAT_SCAN=$(FS)"
 	$(XSETUP) xsim $(TOP)_sim -runall -testplusarg itch=$(ITCH) -testplusarg loc=$(LOC) -testplusarg base=$(BASE)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(ITCH) loc=$(LOC))"
 
@@ -60,7 +65,14 @@ test-real: real.itch
 test-real-xsim: real.itch
 	$(MAKE) test ITCH=real.itch LOC=13 BASE=2800000
 
+# the same golden, one-hot group select
+test-flat-xsim:
+	$(MAKE) test FS=1
+
+test-flat-real-xsim:
+	$(MAKE) test-real-xsim FS=1
+
 clean:
 	rm -rf xsim.dir *.log *.jou *.pb *.wdb bbo_*.log real.itch
 
-.PHONY: test test-merge test-merge-xsim golden test-real test-real-xsim clean
+.PHONY: test test-merge test-merge-xsim golden test-real test-real-xsim test-flat-xsim test-flat-real-xsim clean

@@ -807,6 +807,26 @@ decode adds.
 So §7.1.1's arithmetic was right about the size of the prize and wrong about the
 price. The cycle is free.
 
+**On the card, isolated.** Phase A is the only build that measures the fabric
+without a ~300 ns MAC term on top, so it is where one core cycle is actually
+visible. Rebuilt with cut-through and re-run on the real 5 M AAPL replay:
+
+| Phase A, in-fabric | before | after |
+|---|---|---|
+| min | 166.7 ns (50 cyc) | **160.0 ns (48 cyc)** |
+| mean | 236.4 ns | 231.8 ns |
+| `decode->order` | 14 core cycles | **14** |
+
+The probe counts `ap_clk` at 300 MHz, so −6.7 ns is 2 probe cycles: one 215 MHz
+core cycle of decode, 4.65 ns, plus quantisation across a cycle boundary. That
+`decode->order` did NOT move is the check that this is the right cycle — that
+probe starts at the decoder's OUTPUT, so a change upstream of it must not appear
+there, and it does not. 70/70 frames byte-identical, `st_bbo_mismatch = 0`.
+
+The Phase A build also closes without help: WNS +0.003, **0 failing of 562,212**,
+and `ap_clk` needed no auto-scaling (its scaled frequency came out above the
+300 MHz requested, so the request stands) — where Phase B needed 294.4 MHz.
+
 **THE PART WORTH KEEPING IS THE MISTAKE.** Sharing one `decode_msg` between the
 two paths meant giving it the message as a packed vector, and the collector was
 converted to match: `mvec_q[8*(wr_ptr+i) +: 8] <= s_tdata[8*i +: 8]`. That reads

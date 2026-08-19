@@ -62,6 +62,11 @@ set nsym [expr {[lindex $argv 7] ne "" ? [lindex $argv 7] : 1}]
 # combinational type dispatch costs THIS clock, which is what a sweep at both
 # settings answers. A -generic for exactly the reason USE_FAST_BBO is one.
 set ct [expr {[lindex $argv 8] ne "" ? [lindex $argv 8] : 1}]
+
+# FLAT_SCAN: price_ladder's group-select structure. The ladder is 51 % of the
+# kernel's LUTs and owns the core-clock critical path, so this is swept for an
+# AREA delta as much as an fMAX one.
+set fs [expr {[lindex $argv 9] ne "" ? [lindex $argv 9] : 0}]
 set dset [expr {[lindex $argv 6] ne "" ? [lindex $argv 6] : "default"}]
 if {![info exists dirsets($dset)]} {
   error "unknown directive set '$dset'; have: [lsort [array names dirsets]]"
@@ -81,7 +86,7 @@ set repo   [file dirname $root]
 set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
 set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
 
-set outdir $here/out_t2t-f$fast-$dset[expr {$nsym > 1 ? "-n$nsym" : ""}][expr {$ot_sets_bits != 13 ? "-s$ot_sets_bits" : ""}][expr {$ct ? "-ct" : ""}]
+set outdir $here/out_t2t-f$fast-$dset[expr {$nsym > 1 ? "-n$nsym" : ""}][expr {$ot_sets_bits != 13 ? "-s$ot_sets_bits" : ""}][expr {$ct ? "-ct" : ""}][expr {$fs ? "-fs" : ""}]
 file mkdir $outdir
 
 set srcs [list \
@@ -135,10 +140,11 @@ read_xdc $gen_xdc
 # (ot_sets_bits and ot_ways are read near the top, with the output directory
 # name that depends on them.)
 
-puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} fast_bbo=$fast nsym=$nsym cut_through=$ct ==="
+puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} fast_bbo=$fast nsym=$nsym cut_through=$ct flat_scan=$fs ==="
 synth_design -top t2t_top -part $part -mode out_of_context \
   -generic OT_SETS_BITS=$ot_sets_bits -generic OT_WAYS=$ot_ways \
-  -generic USE_FAST_BBO=$fast -generic NSYM=$nsym -generic CUT_THROUGH=$ct
+  -generic USE_FAST_BBO=$fast -generic NSYM=$nsym -generic CUT_THROUGH=$ct \
+  -generic FLAT_SCAN=$fs
 
 # Cheap insurance against the generic silently not applying: with USE_FAST_BBO=0
 # the generate block leaves no fast_bbo cells at all, and with 1 it must leave
@@ -221,5 +227,5 @@ if {$mode eq "impl"} {
   write_checkpoint -force $outdir/post_route.dcp
   summarize IMPL $period
 }
-puts "SUMMARY_BUILD: fast=$fast dirset=$dset nsym=$nsym sets=$ot_sets_bits ways=$ot_ways ct=$ct period=$period outdir=[file tail $outdir]"
+puts "SUMMARY_BUILD: fast=$fast dirset=$dset nsym=$nsym sets=$ot_sets_bits ways=$ot_ways ct=$ct fs=$fs period=$period outdir=[file tail $outdir]"
 puts "=== DONE mode=$mode ==="

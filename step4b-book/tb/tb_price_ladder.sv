@@ -10,7 +10,10 @@
 // Runs under xsim.
 `timescale 1ns/1ps
 
-module tb_price_ladder;
+module tb_price_ladder #(
+  // Set from the Makefile with xelab -generic_top. The BBO golden must not move.
+  parameter bit FLAT_SCAN = 0
+);
   import itch5_pkg::*;
 
   localparam int DATA_W = 64;
@@ -106,7 +109,7 @@ module tb_price_ladder;
     .drop_cnt(df_drop), .level(df_lvl), .level_max(df_hwm)
   );
 
-  price_ladder #(.LEVELS(4096), .TICK(100)) pl (
+  price_ladder #(.LEVELS(4096), .TICK(100), .FLAT_SCAN(FLAT_SCAN)) pl (
     .clk(clk), .rst_n(rst_n), .cfg_base(cfg_base),
     .i_valid(df_valid),
     .i_ts       (df_data[185:138]),

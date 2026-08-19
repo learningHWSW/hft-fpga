@@ -29,7 +29,12 @@
 `timescale 1ns/1ps
 module price_ladder #(
   parameter int LEVELS = 4096,                    // 12-bit band
-  parameter int TICK   = 100                      // $0.01 in 1e-4 units
+  parameter int TICK   = 100,                     // $0.01 in 1e-4 units
+  // How the best-of-book scan picks the winning group. 0 = encode the group
+  // index, then part-select it out of the occupancy register. 1 = isolate the
+  // winning group as a one-hot, mask every group with it and OR them together,
+  // so the group WORD stops waiting on the group ENCODE. See the header.
+  parameter bit FLAT_SCAN = 0
 )(
   input  logic         clk,
   input  logic         rst_n,
@@ -177,17 +182,65 @@ module price_ladder #(
     return |w;
   endfunction
 
+  // ---- FLAT_SCAN: the same answer without a register-driven part-select ----
+  // occ[g*GRP +: GRP] with g coming out of an encoder is a 64:1 mux of 64-bit
+  // words that cannot start until the encode finishes -- the whole reason this
+  // path is encode -> mux -> encode in one cycle. The alternative isolates the
+  // winning group as a one-hot straight off the gany bits (two levels: an
+  // increment and an AND), masks all 64 groups with it and ORs them together.
+  // The group word and the group index are then computed in PARALLEL from the
+  // same source instead of one waiting on the other.
+  //
+  // Lowest set bit is v & -v. Highest has no such trick, so the vector is
+  // reversed, the lowest taken, and the result reversed back -- reversal is
+  // wiring, not logic.
+  function automatic logic [NGRP-1:0] rev_g(input logic [NGRP-1:0] v);
+    rev_g = '0;
+    for (int i = 0; i < NGRP; i++) rev_g[i] = v[NGRP-1-i];
+  endfunction
+  function automatic logic [NGRP-1:0] lo_oh(input logic [NGRP-1:0] v);
+    return v & (~v + 1'b1);
+  endfunction
+  function automatic logic [NGRP-1:0] hi_oh(input logic [NGRP-1:0] v);
+    return rev_g(lo_oh(rev_g(v)));
+  endfunction
+  function automatic logic [NGW-1:0] oh2bin(input logic [NGRP-1:0] oh);
+    oh2bin = '0;
+    for (int i = 0; i < NGRP; i++) oh2bin |= {NGW{oh[i]}} & NGW'(i);
+  endfunction
+  function automatic logic [GRP-1:0] sel_grp(input logic [LEVELS-1:0] occ,
+                                             input logic [NGRP-1:0]   oh);
+    sel_grp = '0;
+    for (int g = 0; g < NGRP; g++)
+      sel_grp |= occ[g*GRP +: GRP] & {GRP{oh[g]}};
+  endfunction
+
   // ---- best-of-book: two-level scan ----
+  // The two structures differ on an EMPTY side: the part-select form returns
+  // group 0's real contents, the one-hot form returns zero. Neither reaches an
+  // output -- q_bbi/q_bai are consumed only under q_has_bid/q_has_ask below --
+  // and the goldens are run at both settings to keep that true.
   logic            has_bid, has_ask;
   logic [LEVW-1:0] bbi, bai;
   always_comb begin
-    automatic logic [NGW-1:0] gb, ga;
+    automatic logic [NGW-1:0]   gb, ga;
+    automatic logic [NGRP-1:0]  ohb, oha;
     has_bid = |bid_gany;
-    gb      = hi_grp(bid_gany);
-    bbi     = {gb, hi_in_grp(bidocc[gb*GRP +: GRP])};
     has_ask = |ask_gany;
-    ga      = lo_grp(ask_gany);
-    bai     = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};
+    if (FLAT_SCAN) begin
+      ohb = hi_oh(bid_gany);
+      oha = lo_oh(ask_gany);
+      gb  = oh2bin(ohb);
+      ga  = oh2bin(oha);
+      bbi = {gb, hi_in_grp(sel_grp(bidocc, ohb))};
+      bai = {ga, lo_in_grp(sel_grp(askocc, oha))};
+    end else begin
+      ohb = '0; oha = '0;
+      gb  = hi_grp(bid_gany);
+      ga  = lo_grp(ask_gany);
+      bbi = {gb, hi_in_grp(bidocc[gb*GRP +: GRP])};
+      bai = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};
+    end
   end
 
   typedef enum logic [3:0] { IDLE, S_SUB, S_IDX, S_RD, S_REM, S_REMW, S_ADD, S_BQ, S_RDQ, S_PX, S_OUT } state_t;

@@ -50,6 +50,10 @@ module fh_core
   // combinational depth ahead of a register in this domain -- off until a
   // directive sweep prices it.
   parameter bit CUT_THROUGH  = 1,
+  // price_ladder's group-select structure -- see price_ladder.sv. An area knob
+  // first and a timing knob second: the ladder is 51 % of the kernel's LUTs and
+  // is replicated per symbol.
+  parameter bit FLAT_SCAN    = 0,
   // Tracked symbols. Moves together with OT_SETS_BITS -- see order_table, and
   // FINDINGS §4.4 for the measured zero-overflow geometry at each K.
   parameter int NSYM         = 1,
@@ -340,7 +344,8 @@ module fh_core
     wire sel   = (df_sym == SYMW'(k));
     wire issue = df_pop_valid && sel;
 
-    price_ladder #(.LEVELS(PL_LEVELS), .TICK(PL_TICK)) u_ladder (
+    price_ladder #(.LEVELS(PL_LEVELS), .TICK(PL_TICK),
+                   .FLAT_SCAN(FLAT_SCAN)) u_ladder (
       .clk(clk), .rst_n(rst_n),
       // the band is per symbol: two names do not trade near the same price
       .cfg_base   (cfg_base[32*k +: 32]),

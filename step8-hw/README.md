@@ -225,6 +225,8 @@ PASS: the venue's OUCH replies == golden, decoded from the capture
 | ↳ its routed timing | core `+0.080` / GT `+0.032`, **0 failing on both**; `ap_clk` auto-scaled 300 → **294.4 MHz** (`AUTO-FREQ-SCALING-04`, 55 endpoints pre-scaling) |
 | **That bitstream on the card** | **PASS**, 2026-08-19 — link up, 70/70 frames == golden, `rx_err=0 underrun=0 overflow=0`, `st_bbo_mismatch=0` |
 | **Wire-to-wire re-measured** | **471.7 → 459.2 ns** min (551.9 → 539.9 mean, 747.8 → 735.4 max) — exactly 4 wire cycles, 70 samples, 0 excluded |
+| Phase A rebuilt with cut-through | DONE — `t2t.xclbin`, 49.8 MB, 2026-08-19; WNS **+0.003**, **0 failing of 562,212**, no auto-scaling needed |
+| **Phase A on the card, in-fabric re-measured** | **PASS** — **166.7 → 160.0 ns** min (236.4 → 231.8 mean); `decode->order` unchanged at 14 core cycles, which is the check that this is the decoder's cycle |
 
 Both phases are on the card and measured. **Phase B ran**: the `cmac_usplus`
 brought its link up in near-end PMA loopback (`aligned=1 link_up=1`), passed
