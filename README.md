@@ -192,6 +192,14 @@ The per-stage figures are here to say *where* the time is, not *how much*.
   both ports on one clock, and deleting them gave up nothing — also on the card,
   and the other half of the 12.5 ns
   ([FINDINGS §7.1.1a, §7.6.1a](data/FINDINGS.md)).
+- **The ladder's group select stays a mux, measured.** `price_ladder`'s
+  best-of-book path is encode → part-select → encode, and flattening it to a
+  one-hot mask-and-OR (`FLAT_SCAN=1`) does work: **+4.5 MHz** best-to-best and
+  the critical path leaves the ladder entirely. It costs **+13.3 % LUTs**, +18.8 %
+  on the ladder alone — and the ladder is what is replicated per symbol. fMAX is
+  not the binding constraint here (223.6 against the 195.3 MHz the wire needs);
+  LUTs are. Kept as a parameter, default off, for the day that reverses
+  ([FINDINGS §7.1.2](data/FINDINGS.md)).
 - **Two signals, one risk gate.** Order-book imbalance, and sweep / momentum
   ignition (19 core cycles against imbalance's 28). Only the sweep has a forward
   return that beats the cost of acting on it (`FINDINGS §5, §5.3`).

@@ -210,6 +210,15 @@ register, a row in `step7-host/host/regmap.py`, and a line in
 
 ## Deliberately not doing
 
+- **Flattening `price_ladder`'s group select, as the default.** Measured, not
+  assumed: the one-hot mask-and-OR form is **+4.5 MHz** best-to-best with the
+  critical path leaving the ladder, and **+13.3 % LUTs** (+18.8 % on the ladder,
+  which is the block replicated per symbol). fMAX is not the binding constraint
+  — 223.6 MHz against the 195.3 the wire demands — and LUTs are, so this buys
+  headroom that is not needed with the resource that is. `FLAT_SCAN` stays as a
+  parameter, default 0, and becomes correct the day the core clock is what
+  limits the design (`FINDINGS` §7.1.2).
+
 Recorded so they are not re-opened. Each was decided on a measurement.
 
 - **Cycle-shaving the fabric datapath, as a priority.** The MAC is ~300 ns of a

@@ -881,6 +881,60 @@ same as a person asking for something impossible.
 Re-verified green at the new default: steps 2, 3a, 3b (both paths), 4a, 4b, 5, 6
 and both step-8 kernels.
 
+
+### 7.1.2 Flattening the ladder's group select: real, small, and the wrong trade
+
+**2026-08-19.** `price_ladder`'s best-of-book path is encode → part-select →
+encode in one cycle:
+
+    ga  = lo_grp(ask_gany);                        // 64 -> 6 encode
+    bai = {ga, lo_in_grp(askocc[ga*GRP +: GRP])};  // 64:1 mux of 64-bit words
+
+The mux cannot start until the encode finishes, and that chain was the worst
+core_clk path in every baseline build (`ask_gany_reg -> q_bai_reg`, 10 levels).
+`FLAT_SCAN=1` isolates the winning group as a one-hot off the `gany` bits
+(`v & -v`), masks all 64 groups and ORs them, so the group WORD and the group
+INDEX are computed in parallel instead of one waiting on the other.
+
+Four directives per arm, `fast_bbo=1`, `NSYM=1`, 2^13 x 16, cut-through on:
+
+| | closes | best | worst | spread | LUT |
+|---|---|---|---|---|---|
+| `FLAT_SCAN = 0` | 4/4 | 223.6 MHz | 218.8 | 4.8 | 55,101 |
+| `FLAT_SCAN = 1` | 4/4 | **228.1 MHz** | 224.7 | 3.4 | **62,410** |
+
+**+4.5 MHz best-to-best, +7,309 LUTs (+13.3 %)**, of which +5,126 is the ladder
+itself: 27,331 → 32,457, +18.8 %.
+
+**Two readings of the timing number, and they disagree.** The test §7.7 uses --
+best-to-best against the largest within-arm spread -- says 4.5 < 4.8 and calls it
+not measurable. But the two arms do not overlap *at all*: `FLAT_SCAN=1` ranges
+[224.7, 228.1] and `FLAT_SCAN=0` ranges [218.8, 223.6], and complete separation
+of four against four happens in 2 of C(8,4)=70 arrangements by chance, p ≈ 0.03.
+The effect is real and small, and the blunt test is too blunt here. Recording
+both rather than picking the flattering one.
+
+The mechanism is confirmed independently: with `FLAT_SCAN=1` the worst path
+**leaves the ladder scan** entirely, moving to `askq_reg_uram_0` and `u_tcp`'s
+FSM. The serialisation was really there, and flattening really removed it.
+
+**Default stays 0, because it is the wrong trade for this design.** fMAX is not
+the binding constraint -- 223.6 MHz against the 195.3 MHz the wire demands, and
+the shipped Phase B core runs at 200 MHz for congestion reasons that have
+nothing to do with this path. LUTs *are* binding: the ladder is replicated per
+symbol and a second name already costs +58 % (§4.4), so +18.8 % on the ladder is
++10,252 LUTs at `NSYM = 2`. This buys headroom that is not needed with the
+resource that is.
+
+It becomes the right trade the day the core clock is the constraint, which is
+why it is a parameter and not a deleted branch.
+
+**The prior was wrong in both directions**, which is the reason to build rather
+than argue: it was expected to be an area win and a timing wash. Vivado maps the
+64:1 select onto dedicated F7/F8/F9 mux primitives, which are extremely
+LUT-cheap -- so the "expensive mux" being removed was the cheap part, and 4,096
+AND gates plus 64-wide OR trees are not.
+
 ### 7.2 Burst tail latency (full day 268.7M messages, itch_hist 3-server)
 
 The same 100G arrival trace drains splitter, iterative and II=1 pipe at their own
