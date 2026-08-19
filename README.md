@@ -8,24 +8,17 @@ signals, and assembles the OUCH / SoupBinTCP / TCP order frame — wire to wire,
 with no host in the hot path. Software owns only what is stateful and not
 latency-critical: session login, heartbeats, ack/fill feedback, register config.
 
-Two commitments shape the project:
+Design Philosophy:
 
-- **Every stage is diffed against a software golden.** A C or Python reference
-  emits a canonical log, the self-checking testbench emits the same format, and
-  `make test` diffs them; an empty diff is the only pass. The OUCH/TCP output is
-  checked a third time by an independent decoder.
-- **Every design parameter is measured, not guessed.** FIFO depths, hash
-  function, table geometry, price-band width and the strategy thresholds all come
+- **Every design parameter is measured.** FIFO depths, hash
+  function, price-band width and the strategy thresholds all come
   from a full trading day of NASDAQ data ([`data/FINDINGS.md`](data/FINDINGS.md)).
-
-> Design rationale and per-step definition-of-done: [PLAN.md](PLAN.md) ·
-> End-to-end data-path design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
-> The measurements behind every sizing decision: [data/FINDINGS.md](data/FINDINGS.md)
 
 ## Results on silicon
 
 Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session:
 
+<!--
 | | |
 |---|---|
 | **Wire-to-wire, through a real 100 G MAC** | **459.2 ns** min / 539.9 mean / 735.4 max, 70 samples, none excluded |
@@ -54,15 +47,16 @@ Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session
   loaded, moved the saturation knee not at all, and costs +1.6 % LUTs / +2.1 %
   registers with no measurable fMAX change across four directive sets
   ([FINDINGS §7.5–7.7](data/FINDINGS.md)).
+-->
 
 ## Data path
 
-**RX — market data in.** The feed arrives on two lines, filtered, stripped and
+**RX** The feed arrives on two lines, filtered, stripped and
 re-joined before a single message stream reaches the decoder.
 
 ```
                             ┌─► eth/ip/udp A ─► drop_fifo ─┐
-QSFP28 ─► CMAC ─► cdc_fifo ─┤   filter + strip             ├─► feed_ab_arb ─► mold_splitter
+QSFP28 ─► CMAC ─► cdc_fifo ─┤                              ├─► feed_ab_arb ─► mold_splitter
   RX      100G    322→215   │                              │   redundant-feed   realign to
           322MHz    MHz     └─► eth/ip/udp B ─► drop_fifo ─┘   gap recovery      messages
                             │                                                        │
@@ -84,7 +78,7 @@ QSFP28 ─► CMAC ─► cdc_fifo ─┤   filter + strip             ├─►
                                                                                  bbo_merge
 ```
 
-**TX — order out.** The order frame crosses back to the CMAC clock and wins
+**TX** The order frame crosses back to the CMAC clock and wins
 arbitration against control traffic, so a membership report can never delay a
 trade.
 
@@ -103,7 +97,7 @@ trade.
        └─ Phase B puts the GT in near-end loopback, so everything transmitted
           returns on RX and the measurement spans MAC, PCS and SerDes
 ```
-
+<!--
 ### Where the minimum goes
 
 Two probes bracket the design, so the coarse split is **arithmetic on measured
@@ -151,6 +145,7 @@ delta FIFO, TX arbitration. `FINDINGS §7.6` records the same lesson in the othe
 direction and larger, where a summed MAC estimate was wrong by a factor of two.
 The per-stage figures are here to say *where* the time is, not *how much*.
 
+<!--
 ## Design decisions
 
 - **No backpressure to the wire.** FIFOs sized from measurement; overflow is
@@ -231,6 +226,7 @@ The per-stage figures are here to say *where* the time is, not *how much*.
 | 6 | Strategy, risk gate, OUCH + SoupBinTCP + TCP transmit, replay buffer | Done — [step6-strategy](step6-strategy/) |
 | 7 | Host software — session, register config, ack/fill feedback | Done — [step7-host](step7-host/) |
 | 8 | On real silicon — Vitis kernel, HBM replay, measured latency | Done — [step8-hw](step8-hw/) |
+-->
 
 ## Quick Start
 
@@ -245,7 +241,6 @@ The per-stage figures are here to say *where* the time is, not *how much*.
 | Vivado / Vitis | **2025.2.1**, and `vivado`/`v++`/`xvlog`/`xelab`/`xsim` must all come from the *same* install |
 | XRT | 2.18.179 — only for running on the card |
 | Python / GCC | 3.8+ (standard library only) / C++17 |
-| OS, locale | Ubuntu 22.04, and `en_US.UTF-8` must exist or xsim aborts (`sudo locale-gen en_US.UTF-8`) |
 
 Every step sources `XILINX_SETTINGS` through one shared guard
 ([`mk/xilinx.mk`](mk/xilinx.mk)) and fails loudly rather than falling back to
