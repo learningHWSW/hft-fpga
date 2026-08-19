@@ -15,7 +15,10 @@
 // +mold=<path>, +loc=<n>, +base=<n>, +gap=<n>.
 `timescale 1ns/1ps
 
-module tb_fh_core;
+module tb_fh_core #(
+  // Set from the Makefile with xelab -generic_top. The BBO golden must not move.
+  parameter bit CUT_THROUGH = 1
+);
   import itch5_pkg::*;
 
   localparam int DATA_W = 512;
@@ -44,7 +47,7 @@ module tb_fh_core;
   logic [9:0]  st_beat_lvl, st_msg_lvl, st_delta_lvl;
   logic [31:0] st_bbo_early, st_bbo_late, st_bbo_mismatch;
 
-  fh_core #(.DATA_W(DATA_W)) dut (
+  fh_core #(.DATA_W(DATA_W), .CUT_THROUGH(CUT_THROUGH)) dut (
     .init_done(init_done),
     .cfg_sweep_min_levels(32'd3), .cfg_sweep_gap(48'd1000000),
     .o_sweep(), .o_sweep_is_buy(), .st_sweep_cnt(),

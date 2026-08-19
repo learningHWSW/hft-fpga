@@ -12,7 +12,23 @@ step 3b. The output follows the step-2 decoder input contract exactly, so
 ```sh
 make test              # synthetic test.mold (with gap+dup+hb+eos)
 make test-real         # real data, 1M messages
+make test-noct-xsim    # the same golden, store-then-decode
+make test-noct-real-xsim
 ```
+
+`itch_decoder`'s `CUT_THROUGH` decodes the beat's wires instead of registering
+the beat and decoding the register, so `m_valid` arrives one core cycle sooner —
+2 → 1 — and at 512-bit width that is every message, since each one lands complete
+in a single beat. **It is on by default here**, because the default is derived
+from the width (`DATA_W >= 8*MAX_MSG_BYTES`) and this is the 512-bit step; the
+64-bit steps get the store-then-decode path from the same expression. This is
+where it is proven, because the golden is unmoved by it: the same decode log,
+produced a cycle earlier, and `test-noct-xsim` is the other path against the
+same file. The testbench also
+asserts the latency, because a generic that fails to apply produces a *passing*
+golden diff, and its event-delay constant is derived from the decoder latency for
+the same reason — a silent non-application would show up as event ordering.
+`FINDINGS` §7.1.1a has the rest, including why the default is still 0.
 
 Real data is BinaryFILE format, so it does not stimulate realignment as-is.
 `step1-sw-parser/itch2mold.py` repacks the real messages into multi-message

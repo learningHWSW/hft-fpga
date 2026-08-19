@@ -21,10 +21,17 @@ LOC  ?= 1
 BASE ?= 1500000
 GAP  ?= 24
 
+# CUT_THROUGH decodes the splitter's beat combinationally instead of the cycle
+# after it (itch_decoder.sv), and is the DEFAULT -- so this follows the RTL
+# default instead of quietly overriding it back to the path that does not ship.
+# Every golden in this directory must be unmoved by it: the message stream is
+# the same stream, one cycle earlier. CT=0 runs the store-then-decode path.
+CT ?= 1
+
 # ---------- functional: end-to-end 512-bit chain vs BBO golden ----------
 test: golden
 	$(XSETUP) xvlog -sv $(SRC) $(TB)
-	$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim
+	$(XSETUP) xelab -debug typical -L xpm $(TOP) -s $(TOP)_sim -generic_top "CUT_THROUGH=$(CT)"
 	$(XSETUP) xsim $(TOP)_sim -runall -testplusarg mold=$(MOLD) -testplusarg loc=$(LOC) \
 	     -testplusarg base=$(BASE) -testplusarg gap=$(GAP)
 	diff bbo_gold.log bbo_rtl.log && echo "PASS: BBO == golden ($(MOLD) loc=$(LOC) gap=$(GAP))"
@@ -125,10 +132,23 @@ test-t2t: real.eth
 	python3 $(STEP6)/scripts/dump_ouch.py t2t_orders.log > t2t_ouch.log
 	python3 $(STEP6)/scripts/dump_tcp.py t2t_ouch.log > t2t_gold.log
 	$(XSETUP) xvlog -sv $(SRC) rtl/eth_ip_udp_rx.sv rtl/cdc_fifo.sv $(STEP6)/rtl/strategy.sv $(STEP6)/rtl/ouch_builder.sv $(STEP6)/rtl/tcp_tx.sv $(STEP6)/rtl/tx_replay_buf.sv $(STEP6)/rtl/tx_rto.sv $(STEP6)/rtl/ack_latency.sv rtl/feed_ab_arb.sv rtl/igmp_query_detect.sv rtl/tcp_rx.sv rtl/t2t_top.sv tb/tb_t2t.sv
-	$(XSETUP) xelab -debug typical -L xpm tb_t2t -s tb_t2t_sim
+	$(XSETUP) xelab -debug typical -L xpm tb_t2t -s tb_t2t_sim -generic_top "CUT_THROUGH=$(CT)"
 	$(XSETUP) xsim tb_t2t_sim -runall -testplusarg eth=real.eth -testplusarg loc=13 \
 	     -testplusarg base=2800000 -testplusarg gap=48 -testplusarg frm=t2t_rtl.log
 	diff t2t_gold.log t2t_rtl.log && echo "PASS: wire -> order frames == golden"
+
+# explicit either way -- the default is CT=1
+test-ct-xsim:
+	$(MAKE) test CT=1
+
+test-t2t-ct:
+	$(MAKE) test-t2t CT=1
+
+test-noct-xsim:
+	$(MAKE) test CT=0
+
+test-t2t-noct:
+	$(MAKE) test-t2t CT=0
 
 # full chain with the II=1 pipelined order table
 test-t2t-pipe: real.eth
@@ -154,9 +174,9 @@ DIRSET     ?= default
 NSYM       ?= 1
 T2T_ARGS    = $(PART) impl $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD)
 synth-t2t:
-	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) $(FAST) $(DIRSET) $(NSYM)
+	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(PART) synth $(OT_SETS_BITS) $(OT_WAYS) $(T2T_PERIOD) $(FAST) $(DIRSET) $(NSYM) $(CT)
 impl-t2t:
-	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(T2T_ARGS) $(FAST) $(DIRSET) $(NSYM)
+	$(XSETUP) vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl -tclargs $(T2T_ARGS) $(FAST) $(DIRSET) $(NSYM) $(CT)
 
 # The fast_bbo timing question: is the post-route fMAX difference between
 # FAST=0 and FAST=1 a real cost of the feature, or is it the tool's run-to-run
@@ -177,15 +197,23 @@ SWEEP_NSYM   ?= 1
 # the same output directories. Tagged the same way synth_t2t.tcl tags the
 # directory -- omitted at the default so existing artefacts keep their names.
 SWEEP_SETS_TAG = $(if $(filter-out 13,$(OT_SETS_BITS)),-s$(OT_SETS_BITS))
+# Cut-through decode is swept the same way and tagged the same way, because the
+# question it leaves open is exactly the one a sweep answers: what the
+# combinational type dispatch costs the core clock (FINDINGS §7.1.1a). `make
+# sweep-t2t CT="0 1"` is the run that decides its default.
+SWEEP_CT     ?= 0
 sweep-t2t:
 	@$(XSETUP) for n in $(SWEEP_NSYM); do \
 	  for f in $(SWEEP_FAST); do \
-	    for d in $(SWEEP_DIRSETS); do \
-	      echo "=== launching fast=$$f nsym=$$n dirset=$$d ==="; \
-	      vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl \
-	        -tclargs $(T2T_ARGS) $$f $$d $$n > syn/sweep-f$$f-n$$n$(SWEEP_SETS_TAG)-$$d.log 2>&1 & \
+	    for c in $(SWEEP_CT); do \
+	      for d in $(SWEEP_DIRSETS); do \
+	        ctag=$$([ "$$c" = "0" ] && echo "" || echo "-ct"); \
+	        echo "=== launching fast=$$f nsym=$$n ct=$$c dirset=$$d ==="; \
+	        vivado -mode batch -nojournal -nolog -notrace -source syn/synth_t2t.tcl \
+	          -tclargs $(T2T_ARGS) $$f $$d $$n $$c > syn/sweep-f$$f-n$$n$(SWEEP_SETS_TAG)$$ctag-$$d.log 2>&1 & \
+	      done; \
+	      wait; \
 	    done; \
-	    wait; \
 	  done; \
 	done
 	@$(MAKE) --no-print-directory sweep-t2t-report
@@ -203,7 +231,7 @@ clean:
 	rm -rf xsim.dir *.log *.jou *.pb *.wdb *.mem *.hex *.frames bbo_*.log real.itch real.mold syn/out syn/out_t2t syn/out_axil
 	rm -f  realsmall-*.itch realsmall-*.mold realsmall-*.eth
 
-.PHONY: test-msym test-tcprx test-axil-xsim test-axil-msym-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
+.PHONY: test-ct-xsim test-t2t-ct test-noct-xsim test-t2t-noct test-msym test-tcprx test-axil-xsim test-axil-msym-xsim test-cfgcdc-xsim test-txarb-xsim test-cdc-xsim test-units-xsim test golden test-real test-cdc test-t2t test-axil test-igmp test-igmpq test-arp test-ab test-cfgcdc test-txarb test-axil-top test-axil-full lint-opennic stress synth impl synth-t2t impl-t2t sweep-t2t sweep-t2t-report synth-axil impl-axil clean
 
 # The self-checking unit tests. These began as xsim twins of Verilator targets,
 # written because Verilator was absent on the machine with the actual U55C --

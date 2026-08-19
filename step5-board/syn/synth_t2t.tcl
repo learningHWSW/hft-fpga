@@ -55,6 +55,13 @@ array set dirsets {
 # need 2^14 sets), and a build that silently resized the table would hide the
 # fact that the area answer has two halves.
 set nsym [expr {[lindex $argv 7] ne "" ? [lindex $argv 7] : 1}]
+
+# CUT_THROUGH: decode the splitter's beat combinationally instead of the cycle
+# after it (itch_decoder.sv). Simulation already says the message stream is
+# identical and arrives a core cycle sooner; the only open question is what the
+# combinational type dispatch costs THIS clock, which is what a sweep at both
+# settings answers. A -generic for exactly the reason USE_FAST_BBO is one.
+set ct [expr {[lindex $argv 8] ne "" ? [lindex $argv 8] : 1}]
 set dset [expr {[lindex $argv 6] ne "" ? [lindex $argv 6] : "default"}]
 if {![info exists dirsets($dset)]} {
   error "unknown directive set '$dset'; have: [lsort [array names dirsets]]"
@@ -74,7 +81,7 @@ set repo   [file dirname $root]
 set ot_sets_bits [expr {[lindex $argv 2] ne "" ? [lindex $argv 2] : 13}]
 set ot_ways      [expr {[lindex $argv 3] ne "" ? [lindex $argv 3] : 16}]
 
-set outdir $here/out_t2t-f$fast-$dset[expr {$nsym > 1 ? "-n$nsym" : ""}][expr {$ot_sets_bits != 13 ? "-s$ot_sets_bits" : ""}]
+set outdir $here/out_t2t-f$fast-$dset[expr {$nsym > 1 ? "-n$nsym" : ""}][expr {$ot_sets_bits != 13 ? "-s$ot_sets_bits" : ""}][expr {$ct ? "-ct" : ""}]
 file mkdir $outdir
 
 set srcs [list \
@@ -128,10 +135,10 @@ read_xdc $gen_xdc
 # (ot_sets_bits and ot_ways are read near the top, with the output directory
 # name that depends on them.)
 
-puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} fast_bbo=$fast nsym=$nsym ==="
+puts "=== synth_design: part=$part core=${period}ns cmac=3.103ns OT=2^${ot_sets_bits}x${ot_ways} fast_bbo=$fast nsym=$nsym cut_through=$ct ==="
 synth_design -top t2t_top -part $part -mode out_of_context \
   -generic OT_SETS_BITS=$ot_sets_bits -generic OT_WAYS=$ot_ways \
-  -generic USE_FAST_BBO=$fast -generic NSYM=$nsym
+  -generic USE_FAST_BBO=$fast -generic NSYM=$nsym -generic CUT_THROUGH=$ct
 
 # Cheap insurance against the generic silently not applying: with USE_FAST_BBO=0
 # the generate block leaves no fast_bbo cells at all, and with 1 it must leave
@@ -149,6 +156,15 @@ set nlad [llength [get_cells -hier -quiet -filter {REF_NAME =~ "price_ladder*"}]
 if {$nlad != $nsym} {
   error "NSYM=$nsym did not take: $nlad price_ladder instances in the netlist"
 }
+# CUT_THROUGH gets NO equivalent check, deliberately, rather than a guessed one.
+# The other two knobs add or remove whole instances, which is a signature that
+# cannot be mistaken. This one moves a register barrier: at DATA_W=512 the byte
+# collector goes dead and synthesis removes ~512 flops, which IS a signature but
+# a flop count is not a stable thing to assert against across tool versions, and
+# a guard that fails a good build is worse than no guard. The simulation side
+# does have one -- step 3b's testbench asserts the decode latency, so a generic
+# that misses there fails rather than passing a golden diff.
+puts "=== CUT_THROUGH=$ct (no netlist assertion; see the comment above) ==="
 
 file mkdir $outdir
 report_utilization -hierarchical -file $outdir/util_synth.rpt
@@ -205,5 +221,5 @@ if {$mode eq "impl"} {
   write_checkpoint -force $outdir/post_route.dcp
   summarize IMPL $period
 }
-puts "SUMMARY_BUILD: fast=$fast dirset=$dset nsym=$nsym sets=$ot_sets_bits ways=$ot_ways period=$period outdir=[file tail $outdir]"
+puts "SUMMARY_BUILD: fast=$fast dirset=$dset nsym=$nsym sets=$ot_sets_bits ways=$ot_ways ct=$ct period=$period outdir=[file tail $outdir]"
 puts "=== DONE mode=$mode ==="

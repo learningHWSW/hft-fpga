@@ -39,7 +39,10 @@
 //
 // +eth=<path> stimulus, +frm=<path> emitted frames, +gap=<n> idle beats.
 `timescale 1ns/1ps
-module tb_t2t;
+module tb_t2t #(
+  // Set from the Makefile with xelab -generic_top. The order frames must not move.
+  parameter bit CUT_THROUGH = 1
+);
   localparam int DATA_W = 512;
   localparam int KEEP_W = DATA_W / 8;
 
@@ -70,7 +73,7 @@ module tb_t2t;
   logic signed [31:0] st_position;
   logic [31:0] st_seq_num, st_frame_cnt, st_tx_drop;
 
-  t2t_top #(.DATA_W(DATA_W)) dut (
+  t2t_top #(.DATA_W(DATA_W), .CUT_THROUGH(CUT_THROUGH)) dut (
     .cmac_clk(cmac_clk), .cmac_rst_n(cmac_rst_n),
     .rx_tdata(rx_tdata), .rx_tkeep(rx_tkeep), .rx_tvalid(rx_tvalid), .rx_tlast(rx_tlast),
     .tx_tdata(tx_tdata), .tx_tkeep(tx_tkeep), .tx_tvalid(tx_tvalid), .tx_tlast(tx_tlast),

@@ -39,7 +39,7 @@ def parse(path):
     """One transcript -> a dict, or None if it never got to a build line."""
     txt = open(path, errors="replace").read()
     m = re.search(r"SUMMARY_BUILD: fast=(\d+) dirset=(\S+)(?: nsym=(\d+))?"
-                  r"(?: sets=(\d+))?(?: ways=\d+)? period=(\S+)", txt)
+                  r"(?: sets=(\d+))?(?: ways=\d+)?(?: ct=(\d+))? period=(\S+)", txt)
     if not m:
         return None
     r = {"path": path, "fast": int(m.group(1)), "dirset": m.group(2),
@@ -51,7 +51,13 @@ def parse(path):
          # such a transcript. Backfilling the default would print a specific
          # wrong number where the honest answer is that the build did not say.
          "sets": int(m.group(4)) if m.group(4) else None,
-         "period": float(m.group(5))}
+         # ct DOES default, and the asymmetry with sets is deliberate. A
+         # transcript predating the sets= field could have been built at any
+         # geometry, so guessing one would print a specific wrong number. A
+         # transcript predating ct= was built before CUT_THROUGH existed, so it
+         # can only have been 0 -- that is a fact about the source, not a guess.
+         "ct": int(m.group(5)) if m.group(5) else 0,
+         "period": float(m.group(6))}
 
     def grab(pat, cast=float):
         g = re.search(pat, txt)
@@ -112,15 +118,17 @@ def main(argv):
         print(f"!! {len(unknown)} transcript(s) predate the sets= field, so their table")
         print("!! geometry is unknown and shown as '?'. Two builds differing only in")
         print("!! geometry are indistinguishable here -- re-run them to get it labelled.\n")
-    hdr = ("{:<8} {:>4} {:>5} {:<9} {:>9} {:>9} {:>9} {:>8} {:<9}  {}"
-           .format("fast_bbo", "nsym", "sets", "dirset", "fMAX MHz", "WNS ns",
+    hdr = ("{:<8} {:>4} {:>5} {:>3} {:<9} {:>9} {:>9} {:>9} {:>8} {:<9}  {}"
+           .format("fast_bbo", "nsym", "sets", "ct", "dirset", "fMAX MHz", "WNS ns",
                    "TNS ns", "failing", "tool", "worst core_clk path is in"))
     print(hdr)
     print("-" * len(hdr))
-    for r in sorted(runs, key=lambda x: (x["nsym"], x["sets"] or 0, x["fast"], -x["fmax"])):
+    for r in sorted(runs, key=lambda x: (x["nsym"], x["sets"] or 0, x["fast"],
+                                         x["ct"], -x["fmax"])):
         src = r["worst"].split(" -> ")[0]
-        print("{:<8} {:>4} {:>5} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8} {:<9}  {}"
-              .format(r["fast"], r["nsym"], (f"2^{r['sets']}" if r["sets"] else "?"), r["dirset"],
+        print("{:<8} {:>4} {:>5} {:>3} {:<9} {:>9.1f} {:>9.3f} {:>9.3f} {:>8} {:<9}  {}"
+              .format(r["fast"], r["nsym"], (f"2^{r['sets']}" if r["sets"] else "?"),
+                      r["ct"], r["dirset"],
                       r["fmax"], r["wns"],
                       r["tns"] if r["tns"] is not None else float("nan"),
                       r["failing"] if r["failing"] is not None else "?",
@@ -132,7 +140,8 @@ def main(argv):
     # being built. Grouping on one knob at a time was wrong the moment two could
     # move together: a table holding NSYM=1 at 2^13 and NSYM=2 at 2^14 was
     # reported as the cost of "a second symbol", when the geometry had moved too.
-    KNOBS = (("fast_bbo", "fast"), ("NSYM", "nsym"), ("sets", "sets"))
+    KNOBS = (("fast_bbo", "fast"), ("NSYM", "nsym"), ("sets", "sets"),
+             ("cut_through", "ct"))
 
     def key(r):
         return tuple(r[k] for _, k in KNOBS)
@@ -147,6 +156,11 @@ def main(argv):
     for r in runs:
         groups.setdefault(key(r), []).append(r)
 
+    # The label line grew a fourth knob and outran the fixed 34-column field it
+    # used to be printed in, which silently pushed every number out of line.
+    # Width it to what is actually there.
+    LBLW = max(34, max(len(label(k)) for k in groups) + 2)
+
     # Builds that MISSED TIMING are not part of a spread. A configuration where
     # three of four directives fail is not "noisy", it is a configuration that
     # does not close, and averaging the failures in reports a closure problem as
@@ -156,7 +170,7 @@ def main(argv):
         g = groups[k]
         closing = [r for r in g if r["failing"] == 0]
         failed = [r for r in g if r["failing"] != 0]
-        line = "{:<34} n={}".format(label(k), len(g))
+        line = "{:<{w}} n={}".format(label(k), len(g), w=LBLW)
         if closing:
             f = [r["fmax"] for r in closing]
             stats[k] = (max(f), max(f) - min(f))
@@ -167,9 +181,9 @@ def main(argv):
             line += "  closes 0/{}  NO DIRECTIVE MEETS TIMING".format(len(g))
         print(line)
         if failed:
-            print("{:<34}    missed timing: {}".format(
+            print("{:<{w}}    missed timing: {}".format(
                 "", ", ".join(f"{r['dirset']}({r['failing']})" for r in
-                              sorted(failed, key=lambda x: x["dirset"]))))
+                              sorted(failed, key=lambda x: x["dirset"])), w=LBLW))
 
     if len(groups) == 2:
         a, b = sorted(groups, key=lambda t: tuple(x or 0 for x in t))

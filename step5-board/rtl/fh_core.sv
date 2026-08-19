@@ -45,6 +45,11 @@ module fh_core
   parameter int PL_LEVELS    = 4096,
   parameter int PL_TICK      = 100,
   parameter bit USE_FAST_BBO = 1,    // 0 = ladder only, the pre-integration path
+  // Decode the splitter's beat combinationally rather than the cycle after it
+  // (itch_decoder.sv). One core cycle off every message, paid for in
+  // combinational depth ahead of a register in this domain -- off until a
+  // directive sweep prices it.
+  parameter bit CUT_THROUGH  = 1,
   // Tracked symbols. Moves together with OT_SETS_BITS -- see order_table, and
   // FINDINGS §4.4 for the measured zero-overflow geometry at each K.
   parameter int NSYM         = 1,
@@ -169,7 +174,7 @@ module fh_core
   itch_msg_t dec_msg;
   logic      dec_valid, dec_len_err, dec_ready_unused;
 
-  itch_decoder #(.DATA_W(DATA_W)) u_dec (
+  itch_decoder #(.DATA_W(DATA_W), .CUT_THROUGH(CUT_THROUGH)) u_dec (
     .clk(clk), .rst_n(rst_n),
     .s_tdata(sp_tdata), .s_tkeep(sp_tkeep), .s_tvalid(sp_tvalid), .s_tlast(sp_tlast),
     .s_tready(dec_ready_unused),

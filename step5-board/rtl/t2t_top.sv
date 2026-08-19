@@ -34,6 +34,9 @@ module t2t_top #(
   // ladder's scan. The emitted BBO stream is identical either way -- bbo_merge
   // is what guarantees that -- so 0 exists to bisect, not to trade off.
   parameter bit USE_FAST_BBO  = 1,
+  // Cut-through ITCH decode -- see itch_decoder.sv. Off by default: it trades
+  // one core cycle for combinational depth in the domain that closes tightest.
+  parameter bit CUT_THROUGH   = 1,
   // Tracked symbols. One order table holds all of them; everything downstream
   // of it is replicated per name (fh_core's header, FINDINGS §4.4). NSYM moves
   // together with OT_SETS_BITS -- raising it alone is a choice to drop orders.
@@ -324,7 +327,8 @@ module t2t_top #(
   logic        sweep_pulse, sweep_is_buy;
 
   fh_core #(.DATA_W(DATA_W), .OT_SETS_BITS(OT_SETS_BITS), .OT_WAYS(OT_WAYS),
-            .USE_FAST_BBO(USE_FAST_BBO), .NSYM(NSYM)) u_fh (
+            .USE_FAST_BBO(USE_FAST_BBO), .CUT_THROUGH(CUT_THROUGH),
+            .NSYM(NSYM)) u_fh (
     .clk(core_clk), .rst_n(core_rst_n),
     .track_locate(cfg_track_locate), .cfg_base(cfg_band_base),
     .s_tdata(mrg_tdata), .s_tkeep(mrg_tkeep), .s_tvalid(mrg_tvalid), .s_tlast(mrg_tlast),

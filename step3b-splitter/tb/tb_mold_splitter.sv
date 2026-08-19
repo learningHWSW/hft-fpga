@@ -11,7 +11,11 @@
 // Runs under xsim.
 `timescale 1ns/1ps
 
-module tb_mold_splitter;
+module tb_mold_splitter #(
+  // Set from the Makefile with xelab -generic_top. The decode log must be
+  // byte-identical either way; what changes is when it appears.
+  parameter bit CUT_THROUGH = 1
+);
   import itch5_pkg::*;
 
   localparam int DATA_W = 512;
@@ -60,7 +64,7 @@ module tb_mold_splitter;
     .frame_err_cnt(frame_err_cnt)
   );
 
-  itch_decoder #(.DATA_W(DATA_W)) dec (
+  itch_decoder #(.DATA_W(DATA_W), .CUT_THROUGH(CUT_THROUGH)) dec (
     .clk      (clk),
     .rst_n    (rst_n),
     .s_tdata  (x_tdata),
@@ -82,10 +86,13 @@ module tb_mold_splitter;
   initial fd_log = $fopen("splitter_rtl.log", "w");
 
   // The splitter co-registers message output and event pulses in one stage,
-  // but a message then traverses the decoder (x_tvalid -> m_valid = 2 cycles)
-  // while events reach the log directly. Delaying event logging by that same
-  // decoder latency restores the single-stream order the golden expects.
-  localparam int EV_DELAY = 2;
+  // but a message then traverses the decoder while events reach the log
+  // directly. Delaying event logging by that same decoder latency restores the
+  // single-stream order the golden expects -- so this constant tracks the
+  // decoder, and cut-through moves it. If the generic silently failed to apply,
+  // the golden diff fails on event ORDER rather than passing quietly.
+  localparam int DEC_LAT  = CUT_THROUGH ? 1 : 2;
+  localparam int EV_DELAY = DEC_LAT;
   logic        gp [1:EV_DELAY], hp [1:EV_DELAY], ep [1:EV_DELAY];
   logic [63:0] sp [1:EV_DELAY], xp [1:EV_DELAY];
 
@@ -147,6 +154,45 @@ module tb_mold_splitter;
         $fdisplay(fd_log, "%c locate=%0d ts=%0d",
                   msg.msg_type, msg.locate, msg.timestamp);
     endcase
+  endtask
+
+  // ---------- decoder latency, measured rather than asserted ----------
+  // The decoder is strictly in-order and never stalls, so matching the nth beat
+  // out of the splitter to the nth m_valid is exact. Cycles are counted, not
+  // times, because the whole claim is "one register stage".
+  int cyc = 0;
+  int lat_q[$];
+  int lat_min = 32'h7fffffff, lat_max = 0;
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) cyc <= 0;
+    else        cyc <= cyc + 1;
+  end
+
+  always @(posedge clk) if (rst_n) begin
+    int t0, d;
+    if (x_tvalid) lat_q.push_back(cyc);
+    if (mvalid) begin
+      if (lat_q.size() == 0) begin
+        $display("** DECODE LATENCY: m_valid with no beat outstanding");
+        $fatal(1);
+      end
+      t0 = lat_q.pop_front();
+      d  = cyc - t0;
+      if (d < lat_min) lat_min = d;
+      if (d > lat_max) lat_max = d;
+    end
+  end
+
+  task automatic check_latency();
+    $display("DECODE LATENCY: min=%0d max=%0d cycles (CUT_THROUGH=%0d, expected %0d)",
+             lat_min, lat_max, CUT_THROUGH, DEC_LAT);
+    if (n_decoded > 0 && (lat_min != DEC_LAT || lat_max != DEC_LAT)) begin
+      $display("** FAIL: decoder latency is not %0d cycles -- the generic did not apply,",
+               DEC_LAT);
+      $display("**       or the decode path grew a stage.");
+      $fatal(1);
+    end
   endtask
 
   // ---------- driver: one packet -> ceil(len/64) beats (honors s_tready) ---
@@ -234,6 +280,7 @@ module tb_mold_splitter;
     $display("TB done: %0d messages decoded, %0d length errors", n_decoded, n_len_err);
     $display("splitter: gap_total=%0d dup=%0d frame_err=%0d eos=%0d",
              gap_total, dup_cnt, frame_err_cnt, eos_seen);
+    check_latency();
     if (n_len_err != 0 || frame_err_cnt != 0 || !eos_seen)
       $display("FAIL: unexpected error counters");
     $finish;
