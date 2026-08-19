@@ -751,6 +751,116 @@ has gone the other way: *adding* register stages to break combinational depth.
 than left looking undone. If the datapath ever narrows again, the idea comes back
 with it.
 
+#### 7.1.1a Built after all, behind a parameter, and still not switched on
+
+**2026-08-18.** The arithmetic above is unchanged and so is the conclusion; what
+changed is that "not built" was doing two jobs, and only one of them was earned.
+It is honest as a statement about the shipping default. It was dishonest as a
+statement about what is known, because a claim that a cycle costs more fMAX than
+it is worth cannot be settled by a paragraph — and there was no way to run the
+experiment without writing the RTL first.
+
+So `itch_decoder` now has `CUT_THROUGH`, **default 0**. It decodes the beat's
+wires and registers once, in place of registering the beat and decoding the
+register, and it fires only when a message arrives complete in one beat — which
+at `DATA_W=512` is every message and below it is none, checked at elaboration
+rather than discovered as a silent fallback.
+
+The two paths share one `decode_msg`. That is the §4.5 lesson applied before it
+had to be relearned: two field-extraction bodies, each reached by different
+traffic, is `otable_mem`'s `` `ifdef `` again, and no golden here could tell them
+apart either.
+
+Proven where the parameter actually does something — 512-bit, `step3b-splitter`:
+
+| | store-then-decode | cut-through |
+|---|---|---|
+| `mold_splitter` beat → `m_valid` | 2 core cycles | **1** |
+| decode log vs `dump_mold.py` golden | identical | **identical** |
+| `step5-board make test` (BBO golden) | pass | pass |
+| `step5-board make test-t2t` (order frames, real feed) | pass | pass |
+
+`make test-ct-xsim` in step 3b and step 5, `make test-t2t-ct` for the full chain.
+The step 3b testbench asserts the latency it expects rather than only diffing the
+log, because a generic that fails to apply produces a *passing* golden diff — the
+same trap `synth_t2t.tcl:136` guards against by counting `fast_bbo` cells. Its
+event-delay constant is derived from the decoder latency too, so a silent
+non-application shows up as event ordering in the golden.
+
+#### 7.1.1b Swept, and it costs nothing — plus the 83 MHz the refactor cost first
+
+**2026-08-19.** Four implementation directives at each setting, `fast_bbo=1`,
+`NSYM=1`, 2^13 x 16, out of context, one toolchain:
+
+| | closes | best | worst | spread |
+|---|---|---|---|---|
+| `CUT_THROUGH = 0` | 4/4 | 222.2 MHz | 220.0 | 2.2 MHz |
+| **`CUT_THROUGH = 1`** | **4/4** | **223.6 MHz** | 218.8 | 4.8 MHz |
+
+Best-to-best the cut-through build is **1.4 MHz faster**, against a 4.8 MHz
+spread inside a single configuration — no measurable difference, which is the
+same verdict §7.7 reached about `fast_bbo` and by the same test. Every directive
+produces a shippable build. Area goes the right way too: **−1,161 LUTs and −361
+flops**, because deleting the byte collector removes more than the combinational
+decode adds.
+
+So §7.1.1's arithmetic was right about the size of the prize and wrong about the
+price. The cycle is free.
+
+**THE PART WORTH KEEPING IS THE MISTAKE.** Sharing one `decode_msg` between the
+two paths meant giving it the message as a packed vector, and the collector was
+converted to match: `mvec_q[8*(wr_ptr+i) +: 8] <= s_tdata[8*i +: 8]`. That reads
+like the unpacked `mbuf[wr_ptr+i] <= ...` it replaced. It is not. An unpacked
+array of bytes is 64 eight-bit registers with an enable each; a packed vector
+whose base index is a *register* is a barrel shifter in front of 512 flops.
+
+| store-then-decode collector | post-synth core_clk | failing endpoints |
+|---|---|---|
+| unpacked (before, and now) | 222.4 MHz | 0 |
+| packed, variable part-select | **139.6 MHz** | **230** |
+
+83 MHz, from a change that looked like a type change. It is fixed by keeping the
+array unpacked and flattening to the packed vector *after* the register, where
+the byte lanes are constant and it is pure wiring.
+
+Two things about how it was found are worth more than the fix. First, it hid in
+the path nobody was looking at: `CUT_THROUGH=1` deletes the collector entirely,
+so the configuration under test measured 222.4 MHz and looked like a clean
+result while the OTHER configuration was broken. Second, it produced a plausible
+wrong explanation — the first symptom was read as "synthesis kept both decoders
+alive", the generate-branch restructure appeared to confirm it, and the theory
+survived until a post-route build of the *baseline* came back at 191.6 MHz with
+230 failing endpoints. A fix that works by deleting the code containing the bug
+is not evidence for the theory that motivated it.
+
+The sweep is what caught it, one build in. That is the argument for running it
+even when the decision has already been made.
+
+---
+
+**2026-08-18, later the same day: the default is now ON, by decision rather
+than by this measurement.** Phase B is the shipping design and cut-through goes
+with it. The paragraph this replaces said the default stays 0 until a sweep
+prices it, and that is no longer the order things happened — so what the sweep
+now reports is the price and, more importantly, whether the shipped
+configuration still CLOSES at 216.5 MHz. A default that does not build is worse
+than a default that is slow.
+
+The default is not a constant. It is
+
+    CUT_THROUGH = (DATA_W >= 8*MAX_MSG_BYTES)
+
+— the width's answer, on at 512 bits and off at 64. A flat 1 was tried first and
+broke all five 64-bit instantiations at once (steps 2, 3a, 4a, 4b, 6), every one
+of which names no parameter, on the elaboration guard added two paragraphs
+above. That is the guard doing its job, and it is the reason the default has to
+be a function of the width rather than a preference. An *explicit*
+`CUT_THROUGH=1` at 64 bits is still an error: the width answering is not the
+same as a person asking for something impossible.
+
+Re-verified green at the new default: steps 2, 3a, 3b (both paths), 4a, 4b, 5, 6
+and both step-8 kernels.
+
 ### 7.2 Burst tail latency (full day 268.7M messages, itch_hist 3-server)
 
 The same 100G arrival trace drains splitter, iterative and II=1 pipe at their own
@@ -1156,7 +1266,7 @@ bother with the parts we own:
 | term | ns | ours? |
 |---|---|---|
 | core clock, 215 → 200 MHz across the core-domain path | ~10 | yes, and deliberate |
-| `axis_sf_fifo` store-and-forward fill, 2-beat order frame | ~6 | yes |
+| `axis_sf_fifo` on the order path — **its CDC synchronisers, not its fill** (§7.6.1a) | ~6 | yes, and taken |
 | `axis_frame_filter`, decided on the first beat | ~3–6 | yes |
 | **CMAC TX + GT SerDes round trip + CMAC RX** | **~285** | **no — vendor IP** |
 
@@ -1173,6 +1283,9 @@ Making `axis_sf_fifo` cut-through would recover ~6 ns of that and reintroduce
 exactly the MAC underrun it was written to prevent — `tx_axis_tvalid` must be
 followed by a beat every cycle until `tlast`, and a source fed from HBM through an
 arbiter cannot promise that. Not a trade worth taking.
+
+**That last paragraph misattributed its own number, and §7.6.1a is the
+correction.** The ~6 ns is not the fill and cut-through is not what recovers it.
 
 **The honest conclusion is that this term is close to irreducible with this IP.**
 The only real lever is to stop using the vendor MAC — a thin custom PCS/MAC that
@@ -1208,6 +1321,93 @@ pessimistic case, where the PMA dominates and a custom block is chasing scraps,
 is excluded. What this does *not* say is that 276 ns is recoverable: a custom
 block still frames, encodes, scrambles, locks and deskews. It bounds the prize,
 not the winnings ([step8-hw/PCS_MAC_SCOPE.md](../step8-hw/PCS_MAC_SCOPE.md)).
+
+
+### 7.6.1a The order FIFO's ~6 ns was the synchronisers, and it cost nothing to take
+
+**2026-08-18.** §7.6.1's table has one line reading `axis_sf_fifo`
+store-and-forward fill, 2-beat order frame, ~6 ns, ours. Two of those three
+claims are wrong, and the third is the interesting one.
+
+`u_ord_fifo` has **both ports on `wire_clk`**. `axis_sf_fifo` is written to work
+across two clocks and was reused unchanged for the same-clock instance, which is
+the right instinct — one module rather than two — but it carried its CDC with it:
+the committed-frame count crossed through `SYNC_FF = 2` ASYNC_REG stages before
+the read side could see it. Two 322 MHz cycles spent resolving a metastability
+that a single clock domain cannot produce. **6.2 ns, given up for nothing.**
+
+`SAME_CLOCK` bypasses the synchronisers when the instantiator declares the two
+clocks are one net. It gives up nothing in exchange: the frame is still complete
+before its first beat is visible, so the underrun guarantee is exactly what it
+was. Measured in the Phase B kernel simulation, from the cycle the FIFO accepts
+an order frame's first beat to the cycle that beat appears at its read port:
+
+| | fill, wire cycles | ns at 322.265625 MHz |
+|---|---|---|
+| `SAME_CLOCK = 0` (as shipped) | 5 min / 7 max | 15.5 / 21.7 |
+| **`SAME_CLOCK = 1`** | **3 min / 5 max** | **9.3 / 15.5** |
+
+Exactly 2 cycles, **6.21 ns**, which is where §7.6.1's ~6 ns actually lived. It
+is inside the wire-to-wire measurement — `lat_probe` resolves on the order
+frame's return through the MAC, so everything between `t2t_axil`'s tx port and
+the CMAC is in the 471.7 ns.
+
+~~**This is a simulation result. The card number does not move until Phase B is
+rebuilt**, and no bitstream has been built for it.~~ **Rebuilt and run,
+2026-08-19**: wire-to-wire **471.7 → 459.2 ns** at the minimum, 551.9 → 539.9
+mean, 747.8 → 735.4 max, 70 samples, 0 excluded, 70/70 frames byte-identical,
+`st_bbo_mismatch = 0`, MAC `underrun = 0`.
+
+That is **exactly 4 wire cycles** (152 → 148 at 322.265625 MHz), against a
+prediction of 2 cycles from `SAME_CLOCK` plus one 200 MHz core cycle from
+cut-through decode — 3.6 cycles, which rounds to the 4 measured. Both changes
+landed, and the mean and max move by the same ~12 ns as the minimum, which is
+what a fixed cost coming out of the path looks like rather than a lucky sample.
+
+#### And cut-through, which is what §7.6.1 thought the ~6 ns was
+
+`axis_sf_fifo` also gained `CUT_THROUGH`, which releases a frame before its last
+beat is written. The safety condition is arithmetic rather than judgement. Let
+the reader take one beat per `r_clk` and let the writer stall up to `W_GAP_MAX`
+reader cycles between beats of one frame; starting with `H` beats resident, at
+reader cycle `k` the reader needs beat `k` and has `H + floor(k/W_GAP_MAX)`, so
+it never runs dry iff
+
+    CT_MIN = MAX_FRAME_BEATS - (MAX_FRAME_BEATS - 1) / W_GAP_MAX
+
+(integer division). The module computes it; the instantiator supplies the two
+numbers that decide it. Run against the DUT in `tb_axis_sf_fifo`:
+
+| configuration | CT_MIN | frames released early | port starved |
+|---|---|---|---|
+| one clock, store-and-forward | — | 0 of 300 | 0 |
+| one clock, gap-free writer, `W_GAP_MAX=1` | 1 | **202 of 300** | **0** |
+| 300 MHz → 322 MHz, `W_GAP_MAX=2` | 13 of 24 | 95 of 300 | 0 |
+
+The testbench requires the early releases rather than merely tolerating them: a
+cut-through run that released nothing is a generic that did not apply, and would
+otherwise pass while proving nothing. The FIFO counts port-idle-mid-frame cycles
+itself (`starves`), so the underrun is a number rather than an inference.
+
+**And on the two instances this design actually has, cut-through recovers
+nothing** — which is the result, not a disappointment:
+
+- `u_ord_fifo`: the frame is 2 beats and the writer is `t2t_top`'s core→wire
+  `cdc_fifo`, 215 MHz into 322 MHz, so `W_GAP_MAX = 2` and `CT_MIN = 2`. A
+  2-beat frame has no interior to cut through. §7.6.1's "not a trade worth
+  taking" was right about the trade and wrong about the size: there was no trade
+  on offer.
+- `u_feed_fifo`: `eth_replay` pulls from HBM over an AXI read channel, so the
+  gap between beats is unbounded — `W_GAP_MAX = ∞`, `CT_MIN` = the whole frame.
+  §7.6.1's argument, now expressible in the parameter. It is also downstream of
+  nothing measured: `lat_probe` stamps the feed frame at the MAC's RX port.
+
+The remaining lever on this path is structural rather than a switch: an order
+frame crosses `u_tx_cdc` (core→wire `cdc_fifo`, inside `t2t_top`) and *then*
+`u_ord_fifo`, two FIFOs back to back where one cross-clock `axis_sf_fifo` would
+do both jobs. Estimated at ~5 ns from the stage's pop pipeline and synchronisers,
+unmeasured, and it moves an interface that Phase A, step 5 and step 6 all share —
+so it is recorded here rather than done.
 
 ### 7.6.2 What multi-symbol costs the single-symbol build — real, and mostly structural
 

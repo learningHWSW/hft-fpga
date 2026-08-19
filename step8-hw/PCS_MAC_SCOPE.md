@@ -27,7 +27,7 @@ path.
 | term | ns | ours? |
 |---|---|---|
 | core clock, 215 → 200 MHz across the core-domain path | ~10 | yes, deliberate |
-| `axis_sf_fifo` store-and-forward fill, 2-beat order frame | ~6 | yes |
+| `axis_sf_fifo` on the order path — **its CDC synchronisers, not its fill** (`FINDINGS` §7.6.1a) | ~6 | yes, and taken |
 | `axis_frame_filter`, decided on the first beat | ~3–6 | yes |
 | **CMAC TX + GT SerDes round trip + CMAC RX** | **~285** | **no — vendor IP** |
 
@@ -46,10 +46,16 @@ PG203 further states the RX path buffers nothing beyond the pipelining its
 operations require and passes data through cut-through. There is no idle buffer
 to delete.
 
-Of the ~19 ns we *do* own, §7.6.1 already rejected the one candidate: making
+Of the ~19 ns we *do* own, §7.6.1 rejected the one candidate: making
 `axis_sf_fifo` cut-through recovers ~6 ns and reintroduces the MAC underrun it
 exists to prevent, because a source fed from HBM through an arbiter cannot
-promise a beat every cycle until `tlast`. That trade stays rejected.
+promise a beat every cycle until `tlast`. **That trade stays rejected, and the
+~6 ns was collected anyway** — it was never the fill. `u_ord_fifo` has both ports
+on `wire_clk` and was still crossing its frame count through two ASYNC_REG
+stages; `SAME_CLOCK` deletes them, measured at 2 wire cycles in simulation, with
+the store-and-forward guarantee untouched (`FINDINGS` §7.6.1a). Cut-through
+itself is built and parameterised, and its own arithmetic says it recovers
+nothing on either instance here.
 
 So the question is entirely about the ~285 ns inside the vendor IP.
 

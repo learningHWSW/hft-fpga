@@ -28,7 +28,7 @@ Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session
 
 | | |
 |---|---|
-| **Wire-to-wire, through a real 100 G MAC** | **471.7 ns** min / 551.9 mean / 747.8 max, 70 samples, none excluded |
+| **Wire-to-wire, through a real 100 G MAC** | **459.2 ns** min / 539.9 mean / 735.4 max, 70 samples, none excluded |
 | Decoder-to-order under load | **14 core cycles** min / 27.2 mean / 64 max |
 | In-fabric only (first RX beat to first TX beat) | **166.7 ns** min / 236.4 mean |
 | Fast book path vs. the ladder | 1,174 of 1,779 BBO records answered early, **`st_bbo_mismatch = 0`** |
@@ -36,8 +36,14 @@ Measured on a real Alveo U55C, replaying a 5-million-message NASDAQ AAPL session
 | MAC frames passed | 1,127,130 with `rx_err=0 underrun=0 overflow=0` |
 | Full chain post-route (out of context) | **225.5 MHz** best of four directive sets, above the 195.3 MHz a 100 Gb/s wire demands |
 
-- The MAC is the larger half: ~300 ns of the 471.7 ns, of which only ~9–12 ns is
+- The MAC is the larger half: ~300 ns of the 459.2 ns, of which only ~9–12 ns is
   ours. The fabric is ~167 ns.
+- **471.7 → 459.2 ns** at the minimum, measured on the card: exactly **4 wire
+  cycles**, from deleting two CDC synchronisers on a single-clock FIFO
+  (`SAME_CLOCK`) and one core cycle of decode (`CUT_THROUGH`). Mean 551.9 → 539.9
+  and max 747.8 → 735.4 move by the same 12 ns, which is what a fixed cost coming
+  out looks like. 70/70 frames still byte-identical, `st_bbo_mismatch = 0`, MAC
+  `underrun = 0`.
 - The floor never moves under load — **14 core cycles at every offered rate** —
   but from 25 to 41 M msg/s the mean grows 1.59× while the **max grows 2.03×, to
   688 ns**. Quoting a mean for this design would mislead.
@@ -118,6 +124,27 @@ trade.
   registers when it can prove the answer (91 % of real deltas); `bbo_merge`
   rejoins the two so the record stream is exactly the ladder's, merged on value
   against a shared baseline.
+- **Cut-through decode is on by default, and it is free.** `itch_decoder`
+  decodes the beat's wires rather than registering the beat and decoding the
+  register: one core cycle, 4.65 ns, byte-identical decode log. Swept at four
+  directives per setting, it closes **4/4** at **223.6 MHz** best against the
+  ladder-only build's 222.2 — 1.4 MHz *faster*, inside a 4.8 MHz spread, so no
+  measurable cost — and it is **−1,161 LUTs and −361 flops**, because deleting
+  the byte collector removes more than the combinational decode adds
+  ([FINDINGS §7.1.1b](data/FINDINGS.md)). It is on the card: its cycle is part of
+  the 471.7 → 459.2 ns above. The default is the width's answer
+  rather than a preference — `CUT_THROUGH = (DATA_W >= 8*MAX_MSG_BYTES)` — on at
+  the 512-bit datapath that ships, off at the 64 bits steps 2–4 drive their
+  goldens through, where a message spans beats and it could never fire. Asking
+  for it at 64 bits is still an elaboration error.
+- **Cut-through on the order FIFO, by contrast, recovers nothing, and the
+  formula says so.** `axis_sf_fifo` releases a frame once
+  `CT_MIN = L − (L−1)/W_GAP_MAX` beats are resident, which for a 2-beat order
+  frame behind a 215 MHz writer is the whole frame: no interior to cut through.
+  The 6.21 ns on that path turned out to be CDC synchronisers on a FIFO with
+  both ports on one clock, and deleting them gave up nothing — also on the card,
+  and the other half of the 12.5 ns
+  ([FINDINGS §7.1.1a, §7.6.1a](data/FINDINGS.md)).
 - **Two signals, one risk gate.** Order-book imbalance, and sweep / momentum
   ignition (19 core cycles against imbalance's 28). Only the sweep has a forward
   return that beats the cost of acting on it (`FINDINGS §5, §5.3`).
@@ -201,13 +228,13 @@ the two logs are byte-identical.
 |---|---|---|
 | 1 | `make test` | the C golden parses a real day self-consistently |
 | 2 | `make test` | ITCH decode == golden |
-| 3a / 3b | `make test`, `make test-real-xsim` | MoldUDP64 strip and 512-bit realignment |
+| 3a / 3b | `make test`, `make test-real-xsim`, `make test-ct-xsim` | MoldUDP64 strip, 512-bit realignment, and the same decode log a cycle earlier under cut-through |
 | 4a | `make test`, `make test-real-xsim`, `make test-multi`, `make test-clear` | order table == golden, zero overflow, two symbols share one table, post-reset sweep clears URAM |
 | 4b | `make test`, `make test-real-xsim`, `make test-merge-xsim` | BBO sequence == golden, and the fast/slow rejoin preserves it |
-| 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx`, `make test-msym` | the whole chain, two clocks, wire frames in and session frames back |
+| 5 | `make test-t2t`, `make test-units-xsim`, `make test-tcprx`, `make test-msym`, `make test-t2t-ct` | the whole chain, two clocks, wire frames in and session frames back, and order frames unmoved by cut-through decode |
 | 6 | `make test-xsim`, `make test-replay`, `make test-rto`, `make test-msym`, `make test-acklat` | OUCH/TCP bytes == golden, resend decisions, no per-book state shared, ack-latency probe |
 | 7 | `make test` | session, register map, two independent OUCH sessions |
-| 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto`, `make test-real` | the Vitis kernel, HBM to HBM, through the MAC, replies back to the host |
+| 8 | `make test-xsim`, `make test-b`, `make test-session`, `make test-rto`, `make test-real`, `make test-sffifo-ct` | the Vitis kernel, HBM to HBM, through the MAC, replies back to the host, and that a cut-through FIFO releases frames early without ever starving its port |
 
 ### Synthesize, build, run
 
@@ -220,10 +247,21 @@ cd ../step8-hw
 make help               # every target, grouped, with what each costs
 make cmac               # generate the cmac_usplus IP (once, Phase B only)
 make gate-license       # prove the licence before spending an hour
+
+make design-bitstream   # the default design (Phase B) -> t2t_b.xclbin (~1 h 15 m)
+source /opt/xilinx/xrt/setup.sh
+make design-run         # the default design, real 5 M AAPL replay through the MAC
+```
+
+**Phase B is the default design** — the datapath behind a real `cmac_usplus`,
+which is what every headline number above is measured on. `PHASE=a` selects the
+CMAC-less build, which is kept because it is the only one that measures the
+fabric alone. The explicitly named targets are unchanged and still say which
+artefact they produce:
+
+```sh
 make xclbin             # Phase A -> t2t.xclbin     (~1 h 10 m)
 make xclbin-b           # Phase B -> t2t_b.xclbin   (~1 h 15 m)
-
-source /opt/xilinx/xrt/setup.sh
 make run-card-real      # Phase A, real 5 M AAPL replay
 make run-card-b-real    # Phase B, the same replay through the real MAC
 ```

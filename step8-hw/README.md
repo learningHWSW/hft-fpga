@@ -86,9 +86,28 @@ banks are tagged `HBM[0]` and `HBM[1]` with *Bank Used: Yes*, which is exactly
 what `mem_index()` in `host/t2t_run.cpp` matches, rather than assuming bank 0 and
 1 and silently reading zeroes off the wrong one.
 
-## Phase A (this build): the datapath on silicon, CMAC-less
+## Which phase is the design
 
-The QSFP cages are empty, so the first thing to prove on the card is the
+**Phase B is.** `PHASE ?= b` in the Makefile, and the phase-neutral targets —
+`design-test`, `design-bitstream`, `design-run` — take it from there;
+`PHASE=a` selects the other one and anything else is a build error rather than
+a silent default. The shipping datapath is the one behind a real `cmac_usplus`,
+and every headline number in the top-level README is Phase B's.
+
+What is deliberately NOT renamed: `xclbin` still produces `t2t.xclbin` and
+`xclbin-b` still produces `t2t_b.xclbin`. A target that quietly emits a
+different artefact than its name says is the `OTABLE_XPM` shape this project
+has already paid for once, so the explicit names stayed explicit and the
+neutral ones are new.
+
+Phase A is not deprecated, and keeping it is not sentiment: it is the only build
+that measures the **fabric alone**. A 4.65 ns change is 2.8 % of Phase A's
+166.7 ns and 1.0 % of Phase B's 471.7 ns, because Phase B has a ~300 ns MAC term
+sitting on top of it. When something small moves, Phase A is where it is visible.
+
+## Phase A: the datapath on silicon, CMAC-less
+
+The QSFP cages are empty, so the first thing to prove on the card was the
 datapath, not the optics. Two blocks stand in for the MAC:
 
 ```
@@ -194,13 +213,18 @@ PASS: the venue's OUCH replies == golden, decoded from the capture
 | Phase B packaged as a `.xo` with the CMAC IP inside | DONE |
 | GT connects to `io_gt_qsfp0_00` on the real kernel | "SERIAL PORT CONNECTED" |
 | Three clock domains found and cut at implementation | "three asynchronous groups APPLIED" |
-| **Phase B routes with all timing met** (300 / 200 / **322.269** MHz) | DONE — 0 of 538,495 endpoints failing |
+| **Phase B routes with all timing met** (300 / 200 / **322.269** MHz) | DONE — 0 of 538,495 endpoints failing *as shipped*, i.e. after `v++` auto-scales `ap_clk`; see the Makefile's `AP_CLK_B` comment and the rebuild rows below |
 | `cmac_usplus` bitstream licence | DONE — **granted**, `make gate-license` PASSES |
 | **Phase B bitstream** | DONE — `t2t_b.xclbin`, 53.1 MB, linked in 1 h 13 m |
 | **Phase B on the card, through a real 100 G MAC** | **PASS on silicon**, 70/70 frames == golden, link up, 0 MAC errors |
 | **Wire-to-wire latency measured** | **515.1 ns min / 579.1 ns mean**, 70 samples, 0 excluded |
 | Card-vs-simulation disagreement at gap 512 | RESOLVED — the card now matches at every gap from 48 to 4096 |
 | **Saturation wedge (`sent=0` until a device reset)** | **FIXED** — ladder BRAM had no clear-on-reset; verified recovering with no reset |
+| Cut-through decode swept against fMAX | DONE — 4/4 directives close at each setting, **1.4 MHz faster** best-to-best, −1,161 LUTs (`FINDINGS` §7.1.1b) |
+| Phase B rebuilt with cut-through on and `SAME_CLOCK` | DONE — `t2t_b.xclbin`, **52.1 MB**, 2026-08-19; supersedes the 53.1 MB row above |
+| ↳ its routed timing | core `+0.080` / GT `+0.032`, **0 failing on both**; `ap_clk` auto-scaled 300 → **294.4 MHz** (`AUTO-FREQ-SCALING-04`, 55 endpoints pre-scaling) |
+| **That bitstream on the card** | **PASS**, 2026-08-19 — link up, 70/70 frames == golden, `rx_err=0 underrun=0 overflow=0`, `st_bbo_mismatch=0` |
+| **Wire-to-wire re-measured** | **471.7 → 459.2 ns** min (551.9 → 539.9 mean, 747.8 → 735.4 max) — exactly 4 wire cycles, 70 samples, 0 excluded |
 
 Both phases are on the card and measured. **Phase B ran**: the `cmac_usplus`
 brought its link up in near-end PMA loopback (`aligned=1 link_up=1`), passed
@@ -1168,6 +1192,21 @@ Run at four clock ratios, because the failure modes are not symmetric:
 | early releases | 0 | 0 | 0 | 0 |
 | result | pass | pass | pass | pass |
 
+`make test-sffifo-ct` runs the two switches the module grew afterwards
+(`FINDINGS` §7.6.1a): `SAME_CLOCK`, which deletes the CDC synchronisers when both
+ports are one clock and must therefore change nothing this table can see except
+latency; and `CUT_THROUGH`, which releases a frame before its last beat and so
+turns "no early releases" from a requirement into its opposite — a cut-through run
+that released nothing early is a generic that did not apply, and the testbench
+fails it.
+
+| | one clock, S&F | one clock, cut-through | 300 → 322, cut-through |
+|---|---|---|---|
+| `W_GAP_MAX` → `CT_MIN` | — | 1 → **1** | 2 → **13** of 24 |
+| early releases | 0 | **202 / 300** | 95 / 300 |
+| port starved (`starves`) | 0 | **0** | 0 |
+| result | pass | pass | pass |
+
 The slow-reader column is the one worth having: the array goes completely full,
 `s_tready` deasserts and the writer has to honour it, and still no frame is
 released early and `tvalid` never drops mid-frame with the reader asking — which
@@ -1577,7 +1616,7 @@ ladder or adding cut-through decode attacks the smaller term.
 | term | ns | ours? |
 |---|---|---|
 | core clock, 215 → 200 MHz across the core-domain path | ~10 | yes, and deliberate |
-| `axis_sf_fifo` store-and-forward fill, 2-beat order frame | ~6 | yes |
+| `axis_sf_fifo` on the order path — **its CDC synchronisers, not its fill** (§7.6.1a) | ~6 | yes, and taken |
 | `axis_frame_filter`, decided on the first beat | ~3–6 | yes |
 | **CMAC TX + GT SerDes round trip + CMAC RX** | **~285** | **no — vendor IP** |
 
@@ -1593,6 +1632,21 @@ underrun the module exists to prevent — once `tx_axis_tvalid` rises the MAC wa
 a beat every cycle to `tlast`, and a source fed from HBM through an arbiter cannot
 promise that. The earlier suggestion in this document that the FIFO was worth
 attacking does not survive the arithmetic.
+
+**The ~6 ns was collected anyway, and cut-through is not what collected it**
+(`FINDINGS` §7.6.1a). `u_ord_fifo` has both ports on `wire_clk` and was still
+sending its committed-frame count through two ASYNC_REG stages — two 322 MHz
+cycles resolving a metastability one clock domain cannot produce. `SAME_CLOCK`
+deletes them and gives up nothing: the frame is still complete before its first
+beat is visible. Measured in the Phase B kernel simulation, the order frame's
+time in that FIFO falls from 5 wire cycles to 3 at the minimum, **6.21 ns**,
+inside the wire-to-wire number. No bitstream has been built for it, so the
+471.7 ns on the card has not moved yet.
+
+Cut-through itself is built, parameterised and tested (`make test-sffifo-ct`),
+and its own arithmetic says it recovers nothing on either instance here: a 2-beat
+order frame behind a 215 MHz writer has no interior to cut through, and the feed
+FIFO's writer is an HBM read channel that can stall for as long as it likes.
 
 **So the term is close to irreducible with this IP.** The only real lever is not
 using the vendor MAC — a thin custom PCS/MAC skipping the standards-compliant
